@@ -80,10 +80,10 @@
 //!
 //! Kani 0.67.0 builds with rustc 1.93 and refuses the workspace's
 //! `rust-version`, so lower it first, in a scratch copy or a CI checkout.
-//! All 137 harnesses take about 19 minutes with four jobs:
+//! All 141 harnesses take about 19 minutes with four jobs:
 //!
 //! ```sh
-//! sed -i 's/^rust-version = "1.98"/rust-version = "1.93"/' Cargo.toml
+//! sed -i 's/^rust-version = .*/rust-version = "1.93"/' Cargo.toml
 //! cargo kani -p nanonbt-kani -Z stubbing -Z unstable-options \
 //!     --harness-timeout 300 --output-format terse -j 4
 //! ```

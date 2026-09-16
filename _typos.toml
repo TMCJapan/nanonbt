@@ -5,5 +5,5 @@ aci = "aci"
 pn = "pn"
 
 [default.extend-identifiers]
-# fastnbt's own spelling, called from the differential tests.
+# fastnbt's own spelling, called from the options tests.
 expect_coumpound_names = "expect_coumpound_names"

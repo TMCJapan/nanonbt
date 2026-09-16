@@ -343,6 +343,9 @@ fn skipping_a_list_of_end_with_elements_is_refused() {
         bytes
     };
     assert!(nanonbt::from_bytes::<Empty>(&skipped(1)).is_err());
+    // The divergence only exists while fastnbt still panics.
+    let fast = std::panic::catch_unwind(|| fastnbt::from_bytes::<Empty>(&skipped(1)));
+    assert!(fast.is_err(), "fastnbt no longer panics: {:?}", fast.ok());
     assert_same_value::<()>(&skipped(0));
     assert!(fastnbt::from_bytes::<Empty>(&skipped(0)).is_ok());
     assert!(nanonbt::from_bytes::<Empty>(&skipped(0)).is_ok());

@@ -110,7 +110,10 @@ to_values! {
     to_i32: i32;
     to_i64: i64;
     to_u8: u8;
+    to_u16: u16;
     to_u32: u32;
+    to_u64: u64;
+    to_f32: f32;
     to_f64: f64;
     to_bool: bool;
     to_char: char;
@@ -119,6 +122,7 @@ to_values! {
 proofs! {
     /// A UUID-style int array of four ints.
     fn to_i128() unwind 22 { check_to(&kani::any::<i128>(), true) }
+    fn to_u128() unwind 22 { check_to(&kani::any::<u128>(), true) }
     fn to_unit_variant() unwind 4 { check_to(&Unit::Bb, true) }
 
     /// fastnbt panics on these, so only nanonbt is checked: it refuses them.

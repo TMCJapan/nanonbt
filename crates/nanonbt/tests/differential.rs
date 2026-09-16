@@ -12,7 +12,7 @@ use std::{
 
 use common::{from_fast, to_fast};
 use nanonbt::Value;
-use rt_testkit::{Pcg32, check, check_n, ensure, ensure_eq, generate};
+use rt_testkit::{Pcg32, check_n, ensure, ensure_eq, generate};
 use serde::{Deserialize, Serialize};
 
 /// fastnbt's result, or `None` where it panics.
@@ -93,9 +93,17 @@ fn compound(rng: &mut Pcg32, depth: u32, max_entries: usize) -> Value {
 }
 
 /// A document that is valid, or a mutation of one.
+///
+/// A root whose keys include an array token beside others is one fastnbt
+/// refuses, and mutating nothing is no test at all, so keep drawing.
 fn document(rng: &mut Pcg32) -> Vec<u8> {
-    let root = to_fast(compound(rng, 3, 5));
-    let valid = fastnbt::to_bytes(&root).unwrap_or_default();
+    let mut valid = Vec::new();
+    for _ in 0..8 {
+        if let Ok(bytes) = fastnbt::to_bytes(&to_fast(compound(rng, 3, 5))) {
+            valid = bytes;
+            break;
+        }
+    }
     if rng.ratio(1, 3) {
         valid
     } else {
@@ -105,6 +113,34 @@ fn document(rng: &mut Pcg32) -> Vec<u8> {
 
 fn debug<T: std::fmt::Debug>(value: &T) -> String {
     format!("{value:?}")
+}
+
+/// [`debug`] of a tree, but floats by their bits.
+///
+/// `Debug` prints every NaN as `NaN`, and the generator makes NaNs of
+/// arbitrary payload on purpose, so `Debug` alone cannot tell them apart.
+fn show(value: &Value) -> String {
+    match value {
+        Value::Float(v) => format!("Float({:#010x})", v.to_bits()),
+        Value::Double(v) => format!("Double({:#018x})", v.to_bits()),
+        Value::List(list) => {
+            let shown: Vec<String> = list.iter().map(show).collect();
+            format!("List([{}])", shown.join(", "))
+        }
+        Value::Compound(map) => {
+            let shown: Vec<String> = map
+                .iter()
+                .map(|(key, value)| format!("{key:?}: {}", show(value)))
+                .collect();
+            format!("Compound({{{}}})", shown.join(", "))
+        }
+        other => debug(other),
+    }
+}
+
+/// [`show`] of a tree that may be missing.
+fn show_opt(value: Option<&Value>) -> String {
+    value.map_or_else(|| String::from("None"), show)
 }
 
 #[derive(Deserialize, PartialEq, Debug)]
@@ -134,25 +170,25 @@ fn documents_deserialize_like_fastnbt() {
         let nano = nanonbt::from_bytes::<Value>(&bytes).ok();
         match fast {
             Some(fast) => ensure_eq!(
-                debug(&nano),
-                debug(&fast.map(from_fast)),
+                show_opt(nano.as_ref()),
+                show_opt(fast.map(from_fast).as_ref()),
                 "Value {bytes:02x?}"
             ),
             None => ensure!(nano.is_none(), "fastnbt panicked on {bytes:02x?}"),
         }
 
+        let as_tree = |m: BTreeMap<String, Value>| Value::Compound(m);
         let fast = fastnbt_outcome(|| {
             fastnbt::from_bytes::<BTreeMap<String, fastnbt::Value>>(&bytes).ok()
         });
         let nano = nanonbt::from_bytes::<BTreeMap<String, Value>>(&bytes).ok();
         match fast {
             Some(fast) => ensure_eq!(
-                debug(&nano),
-                debug(&fast.map(|m| {
-                    m.into_iter()
-                        .map(|(k, v)| (k, from_fast(v)))
-                        .collect::<BTreeMap<_, _>>()
-                })),
+                show_opt(nano.map(as_tree).as_ref()),
+                show_opt(
+                    fast.map(|m| as_tree(m.into_iter().map(|(k, v)| (k, from_fast(v))).collect()))
+                        .as_ref()
+                ),
                 "map {bytes:02x?}"
             ),
             None => ensure!(nano.is_none(), "fastnbt panicked on {bytes:02x?}"),
@@ -228,6 +264,22 @@ fn prune(value: Value) -> Value {
     }
 }
 
+/// Whether every list holds one element type, as NBT requires.
+///
+/// A list that does not serializes, deliberately, to bytes no reader can
+/// resynchronize, so what comes back depends on where the entry landed.
+fn single_typed_lists(value: &Value) -> bool {
+    let kind = std::mem::discriminant::<Value>;
+    match value {
+        Value::List(list) => {
+            list.windows(2).all(|pair| kind(&pair[0]) == kind(&pair[1]))
+                && list.iter().all(single_typed_lists)
+        }
+        Value::Compound(map) => map.values().all(single_typed_lists),
+        _ => true,
+    }
+}
+
 /// Whether fastnbt's answer depends on its hash order: it tells an array
 /// wrapper from a compound by whichever key its map yields first.
 fn order_sensitive(value: &Value) -> bool {
@@ -274,6 +326,43 @@ fn trees_serialize_like_fastnbt() {
     });
 }
 
+/// What multi-entry compounds serialize to, which bytes cannot be compared.
+///
+/// `prune` keeps the byte-for-byte suite above to one entry per compound,
+/// because the two crates order entries differently. Reading each crate's
+/// bytes back through fastnbt drops the ordering and leaves the rest:
+/// headers, lengths, End tags and where each entry lands.
+#[test]
+fn multi_entry_trees_serialize_to_the_same_document() {
+    check_n(
+        "multi_entry_trees_serialize_to_the_same_document",
+        4096,
+        |rng| {
+            let tree = compound(rng, 3, 4);
+            // Which key fastnbt sees first decides whether a compound is an
+            // array at all, so those trees have no single answer to compare,
+            // and a mixed list has no readable answer at all.
+            if order_sensitive(&tree) || !single_typed_lists(&tree) {
+                return Ok(());
+            }
+            let nano = nanonbt::to_bytes(&tree).ok();
+            let fast = fastnbt_outcome(|| fastnbt::to_bytes(&to_fast(tree.clone())).ok()).flatten();
+            let read = |bytes: &Option<Vec<u8>>| {
+                bytes.as_ref().map(|bytes| {
+                    show_opt(
+                        fastnbt::from_bytes::<fastnbt::Value>(bytes)
+                            .map(from_fast)
+                            .ok()
+                            .as_ref(),
+                    )
+                })
+            };
+            ensure_eq!(read(&nano), read(&fast), "round trip {tree:?}");
+            Ok(())
+        },
+    );
+}
+
 #[test]
 fn trees_convert_like_fastnbt() {
     check_n("trees_convert_like_fastnbt", 4096, |rng| {
@@ -285,8 +374,8 @@ fn trees_convert_like_fastnbt() {
         let nano = nanonbt::to_value(&tree).ok();
         match fast {
             Some(fast) => ensure_eq!(
-                debug(&nano),
-                debug(&fast.map(from_fast)),
+                show_opt(nano.as_ref()),
+                show_opt(fast.map(from_fast).as_ref()),
                 "to_value {tree:?}"
             ),
             None => ensure!(nano.is_none(), "fastnbt panicked on {tree:?}"),
@@ -299,8 +388,8 @@ fn trees_convert_like_fastnbt() {
         let nano = nanonbt::from_value::<Value>(&tree).ok();
         match fast {
             Some(fast) => ensure_eq!(
-                debug(&nano),
-                debug(&fast.map(from_fast)),
+                show_opt(nano.as_ref()),
+                show_opt(fast.map(from_fast).as_ref()),
                 "from_value {tree:?}"
             ),
             None => ensure!(nano.is_none(), "fastnbt panicked on {tree:?}"),
@@ -318,7 +407,9 @@ fn trees_convert_like_fastnbt() {
 
 #[test]
 fn modified_utf8_matches_the_cesu8_crate() {
-    check("modified_utf8_matches_the_cesu8_crate", |rng| {
+    // 4096, not the default: the encoder has no proof at all, and the
+    // decoder's covers one byte, so this suite carries the module.
+    check_n("modified_utf8_matches_the_cesu8_crate", 4096, |rng| {
         let text = generate::string(rng, 12);
         let encoded = nanonbt::cesu8::to_java_cesu8(&text);
         ensure_eq!(&*encoded, &*cesu8::to_java_cesu8(&text), "encode {text:?}");

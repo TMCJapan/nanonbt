@@ -278,6 +278,9 @@ fn strings_longer_than_a_u16_length_are_refused() {
         long: "x".repeat(usize::from(u16::MAX) + 1),
     };
     assert!(nanonbt::to_bytes(&too_long).is_err());
+    // The divergence only exists while fastnbt still writes the corrupt NBT.
+    let corrupt = fastnbt::to_bytes(&too_long).expect("fastnbt no longer truncates");
+    assert!(fastnbt::from_bytes::<fastnbt::Value>(&corrupt).is_err());
 }
 
 #[test]

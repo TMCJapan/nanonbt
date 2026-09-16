@@ -1,7 +1,5 @@
 //! Helpers shared by the differential test suites.
 
-#![allow(dead_code)] // each suite uses a different subset
-
 use nanonbt::Value;
 
 /// The same tree, with the compound maps swapped.
