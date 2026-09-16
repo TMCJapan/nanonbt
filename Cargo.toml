@@ -24,6 +24,10 @@ rt-testkit = { path = "crates/rt-testkit" }
 lto = true
 codegen-units = 1
 
+[workspace.lints.rust]
+# Kani proofs are compiled only under `cargo kani`.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
+
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }

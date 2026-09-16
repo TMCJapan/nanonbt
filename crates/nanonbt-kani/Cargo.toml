@@ -1,0 +1,17 @@
+[package]
+name = "nanonbt-kani"
+description = "Kani model-checking proofs that nanonbt agrees with fastnbt byte for byte"
+publish = false
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+cesu8 = "1.1"
+fastnbt = "2.6.3"
+nanonbt = { path = "../nanonbt" }
+serde = { version = "1", features = ["derive"] }
+
+[lints]
+workspace = true

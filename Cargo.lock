@@ -108,6 +108,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "nanonbt-kani"
+version = "0.1.0"
+dependencies = [
+ "cesu8",
+ "fastnbt",
+ "nanonbt",
+ "serde",
+]
+
+[[package]]
 name = "proc-macro2"
 version = "1.0.107"
 source = "registry+https://github.com/rust-lang/crates.io-index"
