@@ -48,6 +48,10 @@ impl Error {
         Self(Kind::Static("size greater than max sequence length"))
     }
 
+    pub(crate) const fn too_deep() -> Self {
+        Self(Kind::Static("nesting deeper than max depth"))
+    }
+
     pub(crate) const fn expected_value() -> Self {
         Self(Kind::Static("expected value, found end tag"))
     }

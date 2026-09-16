@@ -12,21 +12,11 @@ use crate::{
     arrays::{BYTE_ARRAY_TOKEN, INT_ARRAY_TOKEN, LONG_ARRAY_TOKEN},
     cesu8,
     error::{Error, Result},
+    tag::{
+        TAG_BYTE, TAG_BYTE_ARRAY, TAG_COMPOUND, TAG_DOUBLE, TAG_END, TAG_FLOAT, TAG_INT,
+        TAG_INT_ARRAY, TAG_LIST, TAG_LONG, TAG_LONG_ARRAY, TAG_SHORT, TAG_STRING,
+    },
 };
-
-const TAG_END: u8 = 0;
-const TAG_BYTE: u8 = 1;
-const TAG_SHORT: u8 = 2;
-const TAG_INT: u8 = 3;
-const TAG_LONG: u8 = 4;
-const TAG_FLOAT: u8 = 5;
-const TAG_DOUBLE: u8 = 6;
-const TAG_STRING: u8 = 8;
-const TAG_LIST: u8 = 9;
-const TAG_COMPOUND: u8 = 10;
-const TAG_BYTE_ARRAY: u8 = 7;
-const TAG_INT_ARRAY: u8 = 11;
-const TAG_LONG_ARRAY: u8 = 12;
 
 /// The array tag a compound key stands for, if it is an array token.
 fn array_tag(name: &[u8]) -> Option<u8> {

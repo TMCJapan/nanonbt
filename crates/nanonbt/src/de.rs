@@ -12,26 +12,18 @@ use crate::{
     arrays::{BYTE_ARRAY_TOKEN, INT_ARRAY_TOKEN, LONG_ARRAY_TOKEN},
     cesu8,
     error::{Error, Result},
+    tag::{
+        TAG_BYTE, TAG_BYTE_ARRAY, TAG_COMPOUND, TAG_DOUBLE, TAG_END, TAG_FLOAT, TAG_INT,
+        TAG_INT_ARRAY, TAG_LIST, TAG_LONG, TAG_LONG_ARRAY, TAG_MAX, TAG_SHORT, TAG_STRING,
+    },
 };
-
-const TAG_END: u8 = 0;
-const TAG_BYTE: u8 = 1;
-const TAG_SHORT: u8 = 2;
-const TAG_INT: u8 = 3;
-const TAG_LONG: u8 = 4;
-const TAG_FLOAT: u8 = 5;
-const TAG_DOUBLE: u8 = 6;
-const TAG_BYTE_ARRAY: u8 = 7;
-const TAG_STRING: u8 = 8;
-const TAG_LIST: u8 = 9;
-const TAG_COMPOUND: u8 = 10;
-const TAG_INT_ARRAY: u8 = 11;
-const TAG_LONG_ARRAY: u8 = 12;
 
 /// Reads a document from a byte slice, borrowing from it where possible.
 pub struct Deserializer<'de> {
     input: &'de [u8],
     seen_root: bool,
+    /// How many lists and compounds are open, which bounds the recursion.
+    depth: usize,
     opts: DeOpts,
 }
 
@@ -40,8 +32,26 @@ impl<'de> Deserializer<'de> {
         Self {
             input,
             seen_root: false,
+            depth: 0,
             opts,
         }
+    }
+
+    /// Opens a list or compound, refusing input that nests too deeply.
+    ///
+    /// Reading recurses once per level, and a stack overflow is an abort no
+    /// `Result` can carry, so the depth is bounded like the length is.
+    const fn enter(&mut self) -> Result<()> {
+        self.depth += 1;
+        if self.depth > self.opts.max_depth {
+            return Err(Error::too_deep());
+        }
+        Ok(())
+    }
+
+    /// Closes the list or compound [`Self::enter`] opened.
+    const fn leave(&mut self) {
+        self.depth -= 1;
     }
 
     const fn take(&mut self, n: usize) -> Result<&'de [u8]> {
@@ -62,7 +72,7 @@ impl<'de> Deserializer<'de> {
 
     fn tag(&mut self) -> Result<u8> {
         let [tag] = self.take_array()?;
-        if tag > 12 {
+        if tag > TAG_MAX {
             return Err(Error::invalid_tag(tag));
         }
         Ok(tag)
@@ -104,20 +114,27 @@ impl<'de> Deserializer<'de> {
             TAG_BYTE_ARRAY => self.skip_array(1),
             TAG_INT_ARRAY => self.skip_array(4),
             TAG_LONG_ARRAY => self.skip_array(8),
-            TAG_COMPOUND => loop {
-                let tag = self.tag()?;
-                if tag == TAG_END {
-                    break Ok(());
+            TAG_COMPOUND => {
+                self.enter()?;
+                loop {
+                    let tag = self.tag()?;
+                    if tag == TAG_END {
+                        break;
+                    }
+                    self.skip_str()?;
+                    self.skip_value(tag)?;
                 }
-                self.skip_str()?;
-                self.skip_value(tag)?;
-            },
+                self.leave();
+                Ok(())
+            }
             TAG_LIST => {
                 let element = self.tag()?;
                 let len = i32::from_be_bytes(self.take_array()?);
+                self.enter()?;
                 for _ in 0..len {
                     self.skip_value(element)?;
                 }
+                self.leave();
                 Ok(())
             }
             // fastnbt panics here, skipping a list of End with elements.
@@ -156,10 +173,13 @@ impl<'de> de::Deserializer<'de> for &mut Deserializer<'de> {
             }
             self.seen_root = true;
         }
-        visitor.visit_map(Compound {
-            de: self,
+        self.enter()?;
+        let map = visitor.visit_map(Compound {
+            de: &mut *self,
             tag: TAG_END,
-        })
+        })?;
+        self.leave();
+        Ok(map)
     }
 
     serde::forward_to_deserialize_any! {
@@ -287,9 +307,24 @@ impl<'de> de::Deserializer<'de> for Payload<'_, 'de> {
                 if remaining > de.opts.max_seq_len {
                     return Err(Error::seq_too_long());
                 }
-                visitor.visit_seq(List { de, tag, remaining })
+                de.enter()?;
+                let seq = visitor.visit_seq(List {
+                    de: &mut *de,
+                    tag,
+                    remaining,
+                })?;
+                de.leave();
+                Ok(seq)
             }
-            TAG_COMPOUND => visitor.visit_map(Compound { de, tag: TAG_END }),
+            TAG_COMPOUND => {
+                de.enter()?;
+                let map = visitor.visit_map(Compound {
+                    de: &mut *de,
+                    tag: TAG_END,
+                })?;
+                de.leave();
+                Ok(map)
+            }
             TAG_BYTE_ARRAY => Payload { de, ..self }.array(visitor, BYTE_ARRAY_TOKEN, 1),
             TAG_INT_ARRAY => Payload { de, ..self }.array(visitor, INT_ARRAY_TOKEN, 4),
             TAG_LONG_ARRAY => Payload { de, ..self }.array(visitor, LONG_ARRAY_TOKEN, 8),

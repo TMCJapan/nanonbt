@@ -96,7 +96,9 @@ pub fn to_java_cesu8(text: &str) -> Cow<'_, [u8]> {
     if text.bytes().all(|b| b != 0 && b < 0xf0) {
         return Cow::Borrowed(text.as_bytes());
     }
-    let mut out = Vec::with_capacity(text.len() + text.len() / 2);
+    // NUL doubles and a four-byte sequence grows by half, so twice the
+    // length is the exact bound and never has to grow.
+    let mut out = Vec::with_capacity(text.len() * 2);
     for c in text.chars() {
         match c {
             '\0' => out.extend_from_slice(&[0xc0, 0x80]),

@@ -130,7 +130,12 @@ macro_rules! array {
 
             /// The elements as big-endian bytes, as NBT stores them.
             pub(crate) fn to_be_bytes(&self) -> Vec<u8> {
-                self.data.iter().flat_map(|e| e.to_be_bytes()).collect()
+                const SIZE: usize = size_of::<$element>();
+                let mut bytes = Vec::with_capacity(self.data.len() * SIZE);
+                for element in &self.data {
+                    bytes.extend_from_slice(&element.to_be_bytes());
+                }
+                bytes
             }
         }
 

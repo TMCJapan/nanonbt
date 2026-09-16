@@ -94,9 +94,15 @@ impl<'de> Deserializer<'de> for &'de Value {
             Value::Float(v) => visitor.visit_f32(*v),
             Value::Double(v) => visitor.visit_f64(*v),
             Value::String(v) => visitor.visit_borrowed_str(v),
-            Value::ByteArray(_) => visitor.visit_map(ArrayAccess::new(BYTE_ARRAY_TOKEN, self)),
-            Value::IntArray(_) => visitor.visit_map(ArrayAccess::new(INT_ARRAY_TOKEN, self)),
-            Value::LongArray(_) => visitor.visit_map(ArrayAccess::new(LONG_ARRAY_TOKEN, self)),
+            Value::ByteArray(v) => {
+                visitor.visit_map(ArrayAccess::new(BYTE_ARRAY_TOKEN, v.to_be_bytes()))
+            }
+            Value::IntArray(v) => {
+                visitor.visit_map(ArrayAccess::new(INT_ARRAY_TOKEN, v.to_be_bytes()))
+            }
+            Value::LongArray(v) => {
+                visitor.visit_map(ArrayAccess::new(LONG_ARRAY_TOKEN, v.to_be_bytes()))
+            }
             Value::List(v) => visit_list(v, visitor),
             Value::Compound(v) => visit_compound(v, visitor),
         }
@@ -298,21 +304,22 @@ fn wide(value: &Value) -> Result<i128> {
 /// An array, as the single-entry map its wrapper type expects.
 ///
 /// fastnbt's version never runs out of entries; this one has exactly one.
-struct ArrayAccess<'de> {
+struct ArrayAccess {
     token: Option<&'static str>,
-    value: &'de Value,
+    data: Vec<u8>,
 }
 
-impl<'de> ArrayAccess<'de> {
-    const fn new(token: &'static str, value: &'de Value) -> Self {
+impl ArrayAccess {
+    /// Holds the payload, so that the kind cannot be mismatched later.
+    const fn new(token: &'static str, data: Vec<u8>) -> Self {
         Self {
             token: Some(token),
-            value,
+            data,
         }
     }
 }
 
-impl<'de> MapAccess<'de> for ArrayAccess<'de> {
+impl<'de> MapAccess<'de> for ArrayAccess {
     type Error = Error;
 
     fn next_key_seed<K: DeserializeSeed<'de>>(&mut self, seed: K) -> Result<Option<K::Value>> {
@@ -323,13 +330,7 @@ impl<'de> MapAccess<'de> for ArrayAccess<'de> {
     }
 
     fn next_value_seed<V: DeserializeSeed<'de>>(&mut self, seed: V) -> Result<V::Value> {
-        let data: Vec<u8> = match self.value {
-            Value::ByteArray(v) => v.to_be_bytes(),
-            Value::IntArray(v) => v.to_be_bytes(),
-            Value::LongArray(v) => v.to_be_bytes(),
-            _ => Vec::new(),
-        };
-        seed.deserialize(BytesDeserializer::new(&data))
+        seed.deserialize(BytesDeserializer::new(&self.data))
     }
 }
 

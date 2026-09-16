@@ -23,8 +23,8 @@ use crate::{
 };
 
 macro_rules! array_refuse {
-    ($($method:ident($($arg:ty),*);)*) => {
-        $(fn $method(self, $(_: $arg),*) -> Result<Value> {
+    ($($method:ident($($arg:ty),*) -> $ret:ty;)*) => {
+        $(fn $method(self, $(_: $arg),*) -> Result<$ret> {
             Err(Error::array_not_bytes())
         })*
     };
@@ -772,29 +772,30 @@ impl ser::Serializer for NativeArraySerializer {
     }
 
     array_refuse! {
-        serialize_bool(bool);
-        serialize_i8(i8);
-        serialize_i16(i16);
-        serialize_i32(i32);
-        serialize_i64(i64);
-        serialize_u8(u8);
-        serialize_u16(u16);
-        serialize_u32(u32);
-        serialize_u64(u64);
-        serialize_f32(f32);
-        serialize_f64(f64);
-        serialize_char(char);
-        serialize_str(&str);
-        serialize_unit_struct(&'static str);
-        serialize_unit_variant(&'static str, u32, &'static str);
-    }
-
-    fn serialize_none(self) -> Result<Value> {
-        Err(Error::array_not_bytes())
-    }
-
-    fn serialize_unit(self) -> Result<Value> {
-        Err(Error::array_not_bytes())
+        serialize_bool(bool) -> Value;
+        serialize_i8(i8) -> Value;
+        serialize_i16(i16) -> Value;
+        serialize_i32(i32) -> Value;
+        serialize_i64(i64) -> Value;
+        serialize_u8(u8) -> Value;
+        serialize_u16(u16) -> Value;
+        serialize_u32(u32) -> Value;
+        serialize_u64(u64) -> Value;
+        serialize_f32(f32) -> Value;
+        serialize_f64(f64) -> Value;
+        serialize_char(char) -> Value;
+        serialize_str(&str) -> Value;
+        serialize_none() -> Value;
+        serialize_unit() -> Value;
+        serialize_unit_struct(&'static str) -> Value;
+        serialize_unit_variant(&'static str, u32, &'static str) -> Value;
+        serialize_seq(Option<usize>) -> Self::SerializeSeq;
+        serialize_tuple(usize) -> Self::SerializeTuple;
+        serialize_tuple_struct(&'static str, usize) -> Self::SerializeTupleStruct;
+        serialize_tuple_variant(&'static str, u32, &'static str, usize) -> Self::SerializeTupleVariant;
+        serialize_map(Option<usize>) -> Self::SerializeMap;
+        serialize_struct(&'static str, usize) -> Self::SerializeStruct;
+        serialize_struct_variant(&'static str, u32, &'static str, usize) -> Self::SerializeStructVariant;
     }
 
     fn serialize_some<T: Serialize + ?Sized>(self, _value: &T) -> Result<Value> {
@@ -816,50 +817,6 @@ impl ser::Serializer for NativeArraySerializer {
         _variant: &'static str,
         _value: &T,
     ) -> Result<Value> {
-        Err(Error::array_not_bytes())
-    }
-
-    fn serialize_seq(self, _len: Option<usize>) -> Result<Self::SerializeSeq> {
-        Err(Error::array_not_bytes())
-    }
-
-    fn serialize_tuple(self, _len: usize) -> Result<Self::SerializeTuple> {
-        Err(Error::array_not_bytes())
-    }
-
-    fn serialize_tuple_struct(
-        self,
-        _name: &'static str,
-        _len: usize,
-    ) -> Result<Self::SerializeTupleStruct> {
-        Err(Error::array_not_bytes())
-    }
-
-    fn serialize_tuple_variant(
-        self,
-        _name: &'static str,
-        _variant_index: u32,
-        _variant: &'static str,
-        _len: usize,
-    ) -> Result<Self::SerializeTupleVariant> {
-        Err(Error::array_not_bytes())
-    }
-
-    fn serialize_map(self, _len: Option<usize>) -> Result<Self::SerializeMap> {
-        Err(Error::array_not_bytes())
-    }
-
-    fn serialize_struct(self, _name: &'static str, _len: usize) -> Result<Self::SerializeStruct> {
-        Err(Error::array_not_bytes())
-    }
-
-    fn serialize_struct_variant(
-        self,
-        _name: &'static str,
-        _variant_index: u32,
-        _variant: &'static str,
-        _len: usize,
-    ) -> Result<Self::SerializeStructVariant> {
         Err(Error::array_not_bytes())
     }
 }

@@ -13,14 +13,19 @@
 //! `differential` test suite checks it on seeded random documents, trees and
 //! mutations, which is what covers malformed input, string contents,
 //! compounds of several entries and lists inside a [`Value`] — the shapes
-//! the proofs cannot reach. The `cesu8` module is proven only one byte at a
-//! time, so there too the random tests carry the weight.
+//! the proofs cannot reach. Of the `cesu8` module only the decoder is
+//! proven, and only one byte at a time, which reaches no multi-byte form;
+//! the encoder is not proven at all, so there the random tests carry the
+//! whole weight.
 //!
 //! # Where fastnbt is not followed
 //!
 //! - Where fastnbt panics, this returns an error: skipping a list of End
 //!   tags that has elements, and [`to_value`] of `None`, units, newtype
 //!   variants or a malformed array wrapper.
+//! - Documents nested deeper than [`DeOpts::max_depth`], 512 by default, are
+//!   refused. Reading is recursive, so fastnbt instead overflows the stack
+//!   and aborts, which no error can report and no `catch_unwind` can catch.
 //! - Strings longer than 65535 bytes are refused; fastnbt truncates their
 //!   length and writes corrupt NBT.
 //! - [`Value::Compound`] is ordered by key, fastnbt's by hash, so compounds
@@ -40,6 +45,7 @@ pub mod cesu8;
 pub mod de;
 pub mod error;
 pub mod ser;
+mod tag;
 pub mod value;
 
 use alloc::{string::String, vec::Vec};
@@ -72,20 +78,21 @@ pub struct SerOpts {
 
 impl Default for SerOpts {
     fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl SerOpts {
+    /// `const`, so that the builders below can be used in a `const` too.
+    pub const fn new() -> Self {
         Self {
             root_name: String::new(),
             serialize_root_name: true,
         }
     }
-}
-
-impl SerOpts {
-    pub fn new() -> Self {
-        Self::default()
-    }
 
     /// "Network NBT": the root compound has no name at all.
-    pub fn network_nbt() -> Self {
+    pub const fn network_nbt() -> Self {
         Self::new().serialize_root_compound_name(false)
     }
 
@@ -108,25 +115,28 @@ impl SerOpts {
 #[derive(Debug, Clone)]
 pub struct DeOpts {
     max_seq_len: usize,
+    max_depth: usize,
     expect_compound_names: bool,
 }
 
 impl Default for DeOpts {
     fn default() -> Self {
-        Self {
-            max_seq_len: 100_000_000,
-            expect_compound_names: true,
-        }
+        Self::new()
     }
 }
 
 impl DeOpts {
-    pub fn new() -> Self {
-        Self::default()
+    /// `const`, so that the builders below can be used in a `const` too.
+    pub const fn new() -> Self {
+        Self {
+            max_seq_len: 100_000_000,
+            max_depth: 512,
+            expect_compound_names: true,
+        }
     }
 
     /// "Network NBT": the root compound has no name at all.
-    pub fn network_nbt() -> Self {
+    pub const fn network_nbt() -> Self {
         Self::new().expect_compound_names(false)
     }
 
@@ -134,6 +144,19 @@ impl DeOpts {
     #[must_use]
     pub const fn max_seq_len(mut self, max_seq_len: usize) -> Self {
         self.max_seq_len = max_seq_len;
+        self
+    }
+
+    /// The deepest nesting of lists and compounds accepted.
+    ///
+    /// Reading a document recurses once per level, so a bound is what keeps
+    /// untrusted input from overflowing the stack; the default 512 is the
+    /// depth Minecraft itself accepts, and fits a stack of about half a
+    /// megabyte. A smaller stack needs a smaller bound: measured here, a
+    /// level costs a few hundred bytes, so 64 KiB holds about 70 of them.
+    #[must_use]
+    pub const fn max_depth(mut self, max_depth: usize) -> Self {
+        self.max_depth = max_depth;
         self
     }
 

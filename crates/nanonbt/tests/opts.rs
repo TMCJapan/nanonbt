@@ -1,5 +1,6 @@
 //! Serialization and deserialization options behave like fastnbt's.
 
+use nanonbt::Value;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
@@ -83,4 +84,64 @@ fn network_nbt_and_sequence_limits_deserialize_like_fastnbt() {
             );
         }
     }
+}
+
+/// The root compound, then `depth - 1` nested compounds, as a document.
+fn nested_compounds(depth: usize) -> Vec<u8> {
+    let mut bytes = vec![10, 0, 0];
+    for _ in 1..depth {
+        bytes.extend_from_slice(&[10, 0, 1, b'x']);
+    }
+    bytes.resize(bytes.len() + depth, 0);
+    bytes
+}
+
+/// The root compound, then `depth - 1` nested lists of one element.
+fn nested_lists(depth: usize) -> Vec<u8> {
+    let mut bytes = vec![10, 0, 0];
+    if depth > 1 {
+        bytes.extend_from_slice(&[9, 0, 1, b'x']);
+        for _ in 2..depth {
+            bytes.push(9);
+            bytes.extend_from_slice(&1i32.to_be_bytes());
+        }
+        bytes.push(1);
+        bytes.extend_from_slice(&0i32.to_be_bytes());
+    }
+    bytes.push(0);
+    bytes
+}
+
+/// A depth bound, because reading recurses and an overflow cannot be caught.
+///
+/// fastnbt has no such option, so it is not compared here; past its own stack
+/// it aborts the process rather than returning an error.
+#[test]
+fn nesting_deeper_than_max_depth_is_refused() {
+    #[derive(Deserialize, Debug)]
+    struct Empty {}
+
+    for document in [nested_compounds, nested_lists] {
+        for depth in [1, 2, 8, 512] {
+            let bytes = document(depth);
+            let opts = nanonbt::DeOpts::new().max_depth(depth);
+            assert!(
+                nanonbt::from_bytes_with_opts::<Value>(&bytes, opts.clone()).is_ok(),
+                "depth {depth} refused at its own limit"
+            );
+            // Skipping the whole document counts the same levels.
+            assert!(nanonbt::from_bytes_with_opts::<Empty>(&bytes, opts).is_ok());
+
+            let opts = nanonbt::DeOpts::new().max_depth(depth - 1);
+            assert!(
+                nanonbt::from_bytes_with_opts::<Value>(&bytes, opts.clone()).is_err(),
+                "depth {depth} accepted one level past the limit"
+            );
+            assert!(nanonbt::from_bytes_with_opts::<Empty>(&bytes, opts).is_err());
+        }
+    }
+
+    // The default keeps a document that would overflow a small stack out.
+    assert!(nanonbt::from_bytes::<Value>(&nested_lists(100_000)).is_err());
+    assert!(nanonbt::from_bytes::<Empty>(&nested_compounds(100_000)).is_err());
 }
