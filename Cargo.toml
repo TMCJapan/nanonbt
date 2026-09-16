@@ -10,6 +10,7 @@ license = "MIT OR Apache-2.0"
 rust-version = "1.98"
 
 [workspace.dependencies]
+nanonbt = { path = "crates/nanonbt" }
 rt-client = { path = "crates/rt-client" }
 rt-core = { path = "crates/rt-core" }
 rt-derive = { path = "crates/rt-derive" }

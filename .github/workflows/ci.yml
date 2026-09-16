@@ -140,18 +140,29 @@ jobs:
   # Model-checked agreement between nanonbt and fastnbt (crates/nanonbt-kani).
   kani:
     runs-on: ubuntu-24.04
+    # The proofs take about 19 minutes; `--harness-timeout` alone would let a
+    # blown-up harness hold the required check for hours.
+    timeout-minutes: 45
     env:
       KANI_VERSION: 0.67.0
     steps:
       - uses: actions/checkout@v7
       # Kani builds with its own pinned toolchain, which predates the
       # workspace's rust-version; the proofs use nothing newer than it has.
+      # The grep is what fails the job if a bump ever leaves the sed with
+      # nothing to rewrite, which sed itself reports as success.
       - name: match rust-version to Kani's toolchain
-        run: sed -i 's/^rust-version = "1.98"$/rust-version = "1.93"/' Cargo.toml
+        run: |
+          sed -i 's/^rust-version = .*/rust-version = "1.93"/' Cargo.toml
+          grep -q '^rust-version = "1.93"$' Cargo.toml
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
+      # `cargo kani setup` unpacks CBMC and Kani's toolchain into ~/.kani,
+      # which rust-cache does not cover on its own.
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-directories: ~/.kani
       - name: install kani
         run: |
           cargo install --locked kani-verifier --version "$KANI_VERSION"
