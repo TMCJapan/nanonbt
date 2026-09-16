@@ -117,9 +117,9 @@ jobs:
         with:
           key: ${{ matrix.target }}
       - name: clippy
-        run: cargo clippy -p rt-core -p rt-proto --target ${{ matrix.target }} --locked -- -D warnings
+        run: cargo clippy -p rt-core -p rt-proto -p nanonbt --target ${{ matrix.target }} --locked -- -D warnings
       - name: build
-        run: cargo build -p rt-core -p rt-proto --target ${{ matrix.target }} --locked --release
+        run: cargo build -p rt-core -p rt-proto -p nanonbt --target ${{ matrix.target }} --locked --release
 
   # The client side, for browsers.
   wasm:
@@ -137,10 +137,35 @@ jobs:
       - name: build
         run: cargo build -p rt-client --target wasm32-unknown-unknown --locked --release
 
+  # Model-checked agreement between nanonbt and fastnbt (crates/nanonbt-kani).
+  kani:
+    runs-on: ubuntu-24.04
+    env:
+      KANI_VERSION: 0.67.0
+    steps:
+      - uses: actions/checkout@v7
+      # Kani builds with its own pinned toolchain, which predates the
+      # workspace's rust-version; the proofs use nothing newer than it has.
+      - name: match rust-version to Kani's toolchain
+        run: sed -i 's/^rust-version = "1.98"$/rust-version = "1.93"/' Cargo.toml
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - uses: Swatinem/rust-cache@v2
+      - name: install kani
+        run: |
+          cargo install --locked kani-verifier --version "$KANI_VERSION"
+          cargo kani setup
+      # `cargo kani` takes no `--locked`, so this is the one job that may
+      # resolve dependencies the others do not. About 1.5 GB per harness, so
+      # four of them fit the runner's 16 GB.
+      - name: prove
+        run: cargo kani -p nanonbt-kani -Z stubbing -Z unstable-options --harness-timeout 300 --output-format terse -j 4
+
   # One required check for branch protection.
   ci:
     if: always()
-    needs: [typos, taplo, fmt, machete, test, no-std, wasm]
+    needs: [typos, taplo, fmt, machete, test, no-std, wasm, kani]
     runs-on: ubuntu-24.04
     steps:
       - if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
