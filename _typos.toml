@@ -1,0 +1,9 @@
+[default.extend-words]
+# ACI: associative, commutative and idempotent.
+aci = "aci"
+# A PN-counter (positive-negative counter).
+pn = "pn"
+
+[default.extend-identifiers]
+# fastnbt's own spelling, called from the differential tests.
+expect_coumpound_names = "expect_coumpound_names"

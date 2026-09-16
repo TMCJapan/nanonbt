@@ -1,0 +1,147 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: 1
+  # Pinned, so that lints added by a new release cannot fail an unchanged
+  # tree. Keep in step with `rust-version` in Cargo.toml.
+  RUST_TOOLCHAIN: 1.98.1
+
+jobs:
+  typos:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: typos
+      - run: typos
+
+  taplo:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: taplo
+      - run: taplo fmt --check --diff
+
+  fmt:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: rustfmt
+      - run: cargo fmt --all --check
+
+  machete:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-machete
+      - run: cargo machete
+
+  # Clippy, tests and release-mode tests on every host platform.
+  test:
+    name: test (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x64
+            os: ubuntu-24.04
+          - name: linux-arm64
+            os: ubuntu-24.04-arm
+          - name: macos-x64
+            os: macos-15-intel
+          - name: macos-arm64
+            os: macos-15
+          - name: windows-x64
+            os: windows-2025
+          - name: windows-arm64
+            os: windows-11-arm
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+      - name: clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: nextest
+        run: cargo nextest run --workspace --locked --profile ci
+      - name: doctests
+        run: cargo test --doc --workspace --locked
+      - name: nextest --release
+        run: cargo nextest run --workspace --locked --profile ci --release
+
+  # The crates that must build without std.
+  no-std:
+    name: no-std (${{ matrix.target }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [thumbv7em-none-eabi, x86_64-unknown-none]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          targets: ${{ matrix.target }}
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: clippy
+        run: cargo clippy -p rt-core -p rt-proto --target ${{ matrix.target }} --locked -- -D warnings
+      - name: build
+        run: cargo build -p rt-core -p rt-proto --target ${{ matrix.target }} --locked --release
+
+  # The client side, for browsers.
+  wasm:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          targets: wasm32-unknown-unknown
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: clippy
+        run: cargo clippy -p rt-client --target wasm32-unknown-unknown --locked -- -D warnings
+      - name: build
+        run: cargo build -p rt-client --target wasm32-unknown-unknown --locked --release
+
+  # One required check for branch protection.
+  ci:
+    if: always()
+    needs: [typos, taplo, fmt, machete, test, no-std, wasm]
+    runs-on: ubuntu-24.04
+    steps:
+      - if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1
