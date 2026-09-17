@@ -1,0 +1,384 @@
+#![allow(clippy::items_after_statements)]
+//! The derive macros and the trait implementations behind them.
+
+use std::{borrow::Cow, collections::BTreeMap, vec, vec::Vec};
+
+use nanonbt::{
+    ByteArray, FromNBT, IntArray, LongArray, ToNBT, Value, from_bytes, from_value, to_bytes,
+    to_value,
+};
+
+#[derive(FromNBT, ToNBT, PartialEq, Debug)]
+struct Basic {
+    byte: i8,
+    short: i16,
+    int: i32,
+    long: i64,
+    float: f32,
+    double: f64,
+    flag: bool,
+    letter: char,
+    text: String,
+}
+
+fn basic() -> Basic {
+    Basic {
+        byte: -2,
+        short: -3,
+        int: -4,
+        long: -5,
+        float: 1.5,
+        double: -2.5,
+        flag: true,
+        letter: 'é',
+        text: "héllo".into(),
+    }
+}
+
+#[test]
+fn structs_round_trip() {
+    let bytes = to_bytes(&basic()).unwrap();
+    assert_eq!(from_bytes::<Basic>(&bytes).unwrap(), basic());
+}
+
+#[test]
+fn unsigned_and_wide_round_trip() {
+    #[derive(FromNBT, ToNBT, PartialEq, Debug)]
+    struct Wide {
+        a: u8,
+        b: u16,
+        c: u32,
+        d: u64,
+        e: i128,
+        f: u128,
+    }
+
+    let wide = Wide {
+        a: u8::MAX,
+        b: u16::MAX,
+        c: u32::MAX,
+        d: u64::MAX,
+        e: i128::MIN,
+        f: u128::MAX,
+    };
+    let bytes = to_bytes(&wide).unwrap();
+    assert_eq!(from_bytes::<Wide>(&bytes).unwrap(), wide);
+}
+
+#[test]
+fn collections_round_trip() {
+    #[derive(FromNBT, ToNBT, PartialEq, Debug)]
+    struct Collections {
+        list: Vec<i32>,
+        empty: Vec<i64>,
+        nested: Vec<Vec<i8>>,
+        array: [u16; 3],
+        map: BTreeMap<String, i16>,
+        empty_map: BTreeMap<String, i16>,
+        bytes: ByteArray,
+        ints: IntArray,
+        longs: LongArray,
+    }
+
+    let value = Collections {
+        list: vec![1, -2, 3],
+        empty: Vec::new(),
+        nested: vec![vec![1], vec![]],
+        array: [1, 2, 3],
+        map: BTreeMap::from([("a".into(), 1), ("b".into(), -2)]),
+        empty_map: BTreeMap::new(),
+        bytes: ByteArray::new(vec![-1, 0, 1]),
+        ints: IntArray::new(vec![i32::MIN, 0, i32::MAX]),
+        longs: LongArray::new(vec![i64::MIN, i64::MAX]),
+    };
+    let bytes = to_bytes(&value).unwrap();
+    assert_eq!(from_bytes::<Collections>(&bytes).unwrap(), value);
+}
+
+#[test]
+fn options_are_skipped_and_default_to_none() {
+    #[derive(FromNBT, ToNBT, PartialEq, Debug)]
+    struct Options {
+        absent: Option<i32>,
+        present: Option<String>,
+    }
+
+    let value = Options {
+        absent: None,
+        present: Some("x".into()),
+    };
+    let bytes = to_bytes(&value).unwrap();
+    assert_eq!(from_bytes::<Options>(&bytes).unwrap(), value);
+
+    let with_present = Options {
+        absent: Some(7),
+        present: None,
+    };
+    let bytes = to_bytes(&with_present).unwrap();
+    assert_eq!(from_bytes::<Options>(&bytes).unwrap(), with_present);
+}
+
+#[test]
+fn ignored_fields_are_not_written_and_read_as_default() {
+    #[derive(FromNBT, ToNBT, PartialEq, Debug)]
+    struct Ignored {
+        kept: i32,
+        #[nbt(ignore)]
+        cached: u64,
+    }
+
+    #[derive(FromNBT, ToNBT, PartialEq, Debug)]
+    struct Both {
+        kept: i32,
+        cached: u64,
+    }
+
+    let value = Ignored {
+        kept: 1,
+        cached: 99,
+    };
+    let bytes = to_bytes(&value).unwrap();
+    assert_eq!(
+        from_bytes::<Ignored>(&bytes).unwrap(),
+        Ignored { kept: 1, cached: 0 }
+    );
+
+    // A cached entry present in the document is skipped.
+    let bytes = to_bytes(&Both { kept: 1, cached: 7 }).unwrap();
+    assert_eq!(
+        from_bytes::<Ignored>(&bytes).unwrap(),
+        Ignored { kept: 1, cached: 0 }
+    );
+}
+
+#[test]
+fn renames_are_used_for_fields_and_variants() {
+    #[derive(FromNBT, ToNBT, PartialEq, Debug)]
+    struct Renamed {
+        #[nbt(rename = "Name")]
+        name: String,
+    }
+
+    #[derive(FromNBT, ToNBT, PartialEq, Debug)]
+    enum Kind {
+        Unit,
+        #[nbt(rename = "other")]
+        Renamed,
+    }
+
+    #[derive(FromNBT, ToNBT, PartialEq, Debug)]
+    struct Holder {
+        kind: Kind,
+    }
+
+    let bytes = to_bytes(&Renamed { name: "x".into() }).unwrap();
+    assert!(bytes.windows(4).any(|w| w == b"Name"));
+    assert_eq!(
+        from_bytes::<Renamed>(&bytes).unwrap(),
+        Renamed { name: "x".into() }
+    );
+
+    let bytes = to_bytes(&Holder {
+        kind: Kind::Renamed,
+    })
+    .unwrap();
+    assert!(bytes.windows(5).any(|w| w == b"other"));
+    assert_eq!(
+        from_bytes::<Holder>(&bytes).unwrap(),
+        Holder {
+            kind: Kind::Renamed
+        }
+    );
+}
+
+#[test]
+fn newtypes_are_transparent() {
+    #[derive(FromNBT, ToNBT, PartialEq, Debug)]
+    struct Meters(i32);
+
+    #[derive(FromNBT, ToNBT, PartialEq, Debug)]
+    struct Holder {
+        distance: Meters,
+    }
+
+    let bytes = to_bytes(&Holder {
+        distance: Meters(3),
+    })
+    .unwrap();
+    assert_eq!(
+        from_bytes::<Holder>(&bytes).unwrap(),
+        Holder {
+            distance: Meters(3)
+        }
+    );
+}
+
+#[test]
+fn generic_structs_round_trip() {
+    #[derive(FromNBT, ToNBT, PartialEq, Debug)]
+    struct Holder<T> {
+        value: T,
+    }
+
+    let value = Holder {
+        value: vec![1i32, 2],
+    };
+    let bytes = to_bytes(&value).unwrap();
+    assert_eq!(from_bytes::<Holder<Vec<i32>>>(&bytes).unwrap(), value);
+}
+
+#[test]
+fn strings_borrow_when_they_can() {
+    #[derive(FromNBT, ToNBT, PartialEq, Debug)]
+    struct Borrowed<'a> {
+        plain: &'a str,
+        cow: Cow<'a, str>,
+        owned: String,
+    }
+
+    let bytes = to_bytes(&Borrowed {
+        plain: "plain",
+        cow: Cow::Borrowed("cow"),
+        owned: "owned".into(),
+    })
+    .unwrap();
+    let back = from_bytes::<Borrowed<'_>>(&bytes).unwrap();
+    assert_eq!(back.plain, "plain");
+    assert!(matches!(back.cow, Cow::Borrowed("cow")));
+    assert_eq!(back.owned, "owned");
+}
+
+#[test]
+fn modified_utf8_owns_and_cannot_borrow() {
+    #[derive(FromNBT, ToNBT, PartialEq, Debug)]
+    struct CowOnly<'a> {
+        text: Cow<'a, str>,
+    }
+
+    let bytes = to_bytes(&CowOnly {
+        text: "nul\0and 🦀".into(),
+    })
+    .unwrap();
+    let back = from_bytes::<CowOnly<'_>>(&bytes).unwrap();
+    assert!(matches!(back.text, Cow::Owned(_)));
+    assert_eq!(back.text, "nul\0and 🦀");
+
+    #[derive(FromNBT, ToNBT, PartialEq, Debug)]
+    struct Plain<'a> {
+        text: &'a str,
+    }
+    assert!(from_bytes::<Plain<'_>>(&bytes).is_err());
+}
+
+#[test]
+fn missing_fields_error_and_unknown_fields_skip() {
+    #[derive(FromNBT, ToNBT, PartialEq, Debug)]
+    struct Sparse {
+        keep: i8,
+        last: i8,
+    }
+
+    let mut bytes = to_bytes(&Sparse { keep: 1, last: 2 }).unwrap();
+    // Drop the End tag and append an unknown entry, then close again.
+    bytes.pop();
+    bytes.extend_from_slice(&[nanonbt::TAG_STRING, 0, 5, b'o', b't', b'h', b'e', b'r']);
+    bytes.extend_from_slice(&3u16.to_be_bytes());
+    bytes.extend_from_slice(b"abc");
+    bytes.push(nanonbt::TAG_END);
+    assert_eq!(
+        from_bytes::<Sparse>(&bytes).unwrap(),
+        Sparse { keep: 1, last: 2 }
+    );
+
+    #[allow(dead_code)] // compared through the parse outcome
+    #[derive(FromNBT, Debug)]
+    struct Needs {
+        missing: i8,
+    }
+    let bytes = to_bytes(&Sparse { keep: 1, last: 2 }).unwrap();
+    let error = from_bytes::<Needs>(&bytes).unwrap_err();
+    assert_eq!(error.to_string(), "missing field `missing`");
+}
+
+#[test]
+fn tags_are_strict() {
+    // An Int where a Long is expected.
+    #[allow(dead_code)] // compared through the parse outcome
+    #[derive(FromNBT, Debug)]
+    struct Longs {
+        value: i64,
+    }
+
+    let mut bytes = vec![nanonbt::TAG_COMPOUND, 0, 0];
+    bytes.extend_from_slice(&[nanonbt::TAG_INT, 0, 5, b'v', b'a', b'l', b'u', b'e']);
+    bytes.extend_from_slice(&1i32.to_be_bytes());
+    bytes.push(nanonbt::TAG_END);
+    let error = from_bytes::<Longs>(&bytes).unwrap_err();
+    assert_eq!(error.to_string(), "invalid nbt tag value: 3");
+
+    // An Int where a bool is expected.
+    #[allow(dead_code)] // compared through the parse outcome
+    #[derive(FromNBT, Debug)]
+    struct Flags {
+        value: bool,
+    }
+    assert!(from_bytes::<Flags>(&bytes).is_err());
+}
+
+#[test]
+fn fixed_arrays_require_their_length() {
+    #[derive(FromNBT, Debug)]
+    struct Three {
+        #[allow(dead_code)]
+        values: [i8; 3],
+    }
+
+    #[derive(FromNBT, ToNBT)]
+    struct Two {
+        values: [i8; 2],
+    }
+
+    let bytes = to_bytes(&Two { values: [1, 2] }).unwrap();
+    assert!(from_bytes::<Three>(&bytes).is_err());
+    assert_eq!(from_bytes::<Two>(&bytes).unwrap().values, [1, 2]);
+}
+
+#[test]
+fn values_convert_both_ways() {
+    let value = to_value(&basic()).unwrap();
+    let back: Basic = from_value(&value).unwrap();
+    assert_eq!(back, basic());
+
+    let tree = Value::Compound(BTreeMap::from([
+        ("a".into(), Value::Int(1)),
+        ("b".into(), Value::List(vec![Value::String("x".into())])),
+    ]));
+    let bytes = to_bytes(&tree).unwrap();
+    assert_eq!(from_bytes::<Value>(&bytes).unwrap(), tree);
+}
+
+#[test]
+fn unit_enums_round_trip_as_strings() {
+    #[derive(FromNBT, ToNBT, PartialEq, Debug)]
+    enum Status {
+        Empty,
+        Full,
+    }
+
+    #[derive(FromNBT, ToNBT, PartialEq, Debug)]
+    struct Holder {
+        status: Status,
+    }
+
+    let bytes = to_bytes(&Holder {
+        status: Status::Full,
+    })
+    .unwrap();
+    assert_eq!(
+        from_bytes::<Holder>(&bytes).unwrap(),
+        Holder {
+            status: Status::Full
+        }
+    );
+    assert!(bytes.windows(4).any(|w| w == b"Full"));
+}

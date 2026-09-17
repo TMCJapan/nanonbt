@@ -1,3 +1,4 @@
+#![allow(clippy::items_after_statements)]
 //! `nanonbt::cesu8` agrees with the `cesu8` crate fastnbt is built on.
 
 const SAMPLES: &[&str] = &[

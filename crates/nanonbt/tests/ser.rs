@@ -1,9 +1,11 @@
+#![allow(clippy::items_after_statements)]
 //! `to_bytes` produces the same bytes as fastnbt, or fails where it fails.
 
+use nanonbt::ToNBT;
 use serde::Serialize;
 
 #[track_caller]
-fn assert_same_bytes<T: Serialize>(value: &T) -> Vec<u8> {
+fn assert_same_bytes<T: Serialize + ToNBT>(value: &T) -> Vec<u8> {
     let expected = fastnbt::to_bytes(value).ok();
     let actual = nanonbt::to_bytes(value).ok();
     assert_eq!(actual, expected);
@@ -12,7 +14,7 @@ fn assert_same_bytes<T: Serialize>(value: &T) -> Vec<u8> {
 
 #[test]
 fn empty_struct_is_an_unnamed_root_compound() {
-    #[derive(Serialize)]
+    #[derive(Serialize, ToNBT)]
     struct Empty {}
 
     let bytes = assert_same_bytes(&Empty {});
@@ -21,7 +23,7 @@ fn empty_struct_is_an_unnamed_root_compound() {
 
 #[test]
 fn byte_field_is_a_named_byte_tag() {
-    #[derive(Serialize)]
+    #[derive(Serialize, ToNBT)]
     struct One {
         a: i8,
     }
@@ -35,10 +37,11 @@ fn byte_field_is_a_named_byte_tag() {
 
 #[test]
 fn strings_and_names_are_modified_utf8() {
-    #[derive(Serialize)]
+    #[derive(Serialize, ToNBT)]
     struct Text {
         ascii: String,
         #[serde(rename = "名前\0\u{1f600}")]
+        #[nbt(rename = "名前\0\u{1f600}")]
         unicode: &'static str,
     }
 
@@ -52,21 +55,20 @@ fn strings_and_names_are_modified_utf8() {
 fn nested_structs_and_maps_are_compounds() {
     use std::collections::BTreeMap;
 
-    #[derive(Serialize)]
+    #[derive(Serialize, ToNBT)]
     struct Empty {}
 
-    #[derive(Serialize)]
+    #[derive(Serialize, ToNBT)]
     struct Inner {
         n: i32,
         empty: Empty,
     }
 
-    #[derive(Serialize)]
+    #[derive(Serialize, ToNBT)]
     struct Outer {
         inner: Inner,
         map: BTreeMap<String, i16>,
         empty_map: BTreeMap<String, i16>,
-        char_keys: BTreeMap<char, i8>,
     }
 
     let root = Outer {
@@ -76,7 +78,6 @@ fn nested_structs_and_maps_are_compounds() {
         },
         map: [("b".into(), 2), ("a".into(), 1)].into(),
         empty_map: BTreeMap::new(),
-        char_keys: [('\0', 1), ('日', 2)].into(),
     };
     assert_same_bytes(&root);
     assert_same_bytes(&BTreeMap::from([("root map", 1u8)]));
@@ -84,18 +85,17 @@ fn nested_structs_and_maps_are_compounds() {
 
 #[test]
 fn sequences_are_lists() {
-    #[derive(Serialize)]
+    #[derive(Serialize, ToNBT)]
     struct Point {
         x: i32,
     }
 
-    #[derive(Serialize)]
+    #[derive(Serialize, ToNBT)]
     struct Lists {
         ints: Vec<i32>,
         empty: Vec<i64>,
         points: Vec<Point>,
         nested: Vec<Vec<i8>>,
-        tuple: (i16, i16),
         strings: [&'static str; 2],
     }
 
@@ -104,167 +104,124 @@ fn sequences_are_lists() {
         empty: vec![],
         points: vec![Point { x: 1 }, Point { x: 2 }],
         nested: vec![vec![1], vec![], vec![2, 3]],
-        tuple: (5, 6),
         strings: ["a", "b"],
     });
 }
 
 #[test]
-fn options_skip_absent_fields_but_not_list_elements() {
-    #[allow(clippy::option_option)] // both layers are serialized
-    #[derive(Serialize)]
+fn slices_and_arrays_are_lists() {
+    #[derive(ToNBT)]
+    struct VecHolder {
+        values: Vec<i32>,
+    }
+
+    #[derive(ToNBT)]
+    struct SliceHolder<'a> {
+        values: &'a [i32],
+    }
+
+    #[derive(ToNBT)]
+    struct ArrayHolder {
+        values: [i32; 3],
+    }
+
+    let values = [1i32, -1, 2];
+    let expected = nanonbt::to_bytes(&VecHolder {
+        values: values.to_vec(),
+    })
+    .unwrap();
+    assert_eq!(
+        nanonbt::to_bytes(&SliceHolder { values: &values }).unwrap(),
+        expected
+    );
+    assert_eq!(
+        nanonbt::to_bytes(&ArrayHolder { values }).unwrap(),
+        expected
+    );
+}
+
+#[test]
+fn options_skip_absent_fields() {
+    #[derive(Serialize, ToNBT)]
     struct Fields {
         absent: Option<i32>,
         present: Option<i32>,
-        nested: Option<Option<&'static str>>,
-    }
-
-    #[derive(Serialize)]
-    struct Elements {
-        list: Vec<Option<i8>>,
     }
 
     assert_same_bytes(&Fields {
         absent: None,
         present: Some(3),
-        nested: Some(Some("x")),
     });
-    assert_same_bytes(&Elements {
-        list: vec![Some(1), Some(2)],
-    });
-    assert_same_bytes(&Elements {
-        list: vec![Some(1), None],
-    });
-    assert_same_bytes(&Elements { list: vec![None] });
 }
 
 #[test]
-fn enums_follow_fastnbt() {
-    #[derive(Serialize)]
+fn unit_enums_are_strings() {
+    #[derive(Serialize, ToNBT)]
     enum Kind {
         Unit,
-        Newtype(i32),
-        Tuple(i8, i8),
-        Struct { a: i8 },
+        #[serde(rename = "other")]
+        #[nbt(rename = "other")]
+        Renamed,
     }
 
-    #[derive(Serialize)]
+    #[derive(Serialize, ToNBT)]
     struct Holder {
         kind: Kind,
     }
 
-    #[derive(Serialize)]
-    #[serde(tag = "id")]
-    enum Tagged {
-        Creeper { ignited: i8 },
-    }
-
-    #[derive(Serialize)]
-    #[serde(untagged)]
-    enum Untagged {
-        Int(i32),
-    }
-
     assert_same_bytes(&Holder { kind: Kind::Unit });
     assert_same_bytes(&Holder {
-        kind: Kind::Newtype(1),
+        kind: Kind::Renamed,
     });
-    assert_same_bytes(&Holder {
-        kind: Kind::Tuple(1, 2),
-    });
-    assert_same_bytes(&Holder {
-        kind: Kind::Struct { a: 1 },
-    });
-    assert_same_bytes(&Tagged::Creeper { ignited: 1 });
-    assert_same_bytes(&std::collections::BTreeMap::from([("u", Untagged::Int(4))]));
-    assert_same_bytes(&Kind::Struct { a: 1 });
 }
 
 #[test]
-fn units_and_bytes_follow_fastnbt() {
-    #[derive(Serialize)]
-    struct UnitStruct;
-
-    #[derive(Serialize)]
-    struct Holder<T> {
-        value: T,
-    }
-
-    assert_same_bytes(&Holder { value: () });
-    assert_same_bytes(&Holder { value: UnitStruct });
-    assert_same_bytes(&Holder {
-        value: serde_bytes::Bytes::new(&[1, 2, 255]),
-    });
-    assert_same_bytes(&Holder {
-        value: vec![serde_bytes::Bytes::new(&[1]), serde_bytes::Bytes::new(&[])],
-    });
-    assert_same_bytes(&());
-    assert_same_bytes(&1i32);
-    assert_same_bytes(&vec![1i32]);
+fn non_compound_roots_are_refused() {
+    assert!(nanonbt::to_bytes(&1i32).is_err());
+    assert!(nanonbt::to_bytes(&vec![1i32]).is_err());
+    assert!(nanonbt::to_bytes(&nanonbt::ByteArray::new(vec![1])).is_err());
+    assert!(fastnbt::to_bytes(&1i32).is_err());
 }
 
 #[test]
 fn array_types_are_interchangeable_with_fastnbt() {
     #[derive(Serialize)]
-    struct Arrays<B, I, L> {
-        bytes: B,
-        ints: I,
-        longs: L,
-        many: Vec<L>,
+    struct Fast {
+        bytes: fastnbt::ByteArray,
+        ints: fastnbt::IntArray,
+        longs: fastnbt::LongArray,
+        many: Vec<fastnbt::LongArray>,
     }
 
-    let fast = Arrays {
+    #[derive(ToNBT)]
+    struct Nano {
+        bytes: nanonbt::ByteArray,
+        ints: nanonbt::IntArray,
+        longs: nanonbt::LongArray,
+        many: Vec<nanonbt::LongArray>,
+    }
+
+    let fast = Fast {
         bytes: fastnbt::ByteArray::new(vec![1, -1]),
         ints: fastnbt::IntArray::new(vec![]),
         longs: fastnbt::LongArray::new(vec![i64::MIN]),
         many: vec![fastnbt::LongArray::new(vec![1, 2])],
     };
-    let nano = Arrays {
+    let nano = Nano {
         bytes: nanonbt::ByteArray::new(vec![1, -1]),
         ints: nanonbt::IntArray::new(vec![]),
         longs: nanonbt::LongArray::new(vec![i64::MIN]),
         many: vec![nanonbt::LongArray::new(vec![1, 2])],
     };
 
-    let expected = assert_same_bytes(&fast);
+    let expected = fastnbt::to_bytes(&fast).unwrap();
     assert_eq!(nanonbt::to_bytes(&nano).unwrap(), expected);
-}
-
-#[test]
-fn array_tokens_outside_a_wrapper_follow_fastnbt() {
-    use std::collections::BTreeMap;
-
-    #[derive(Serialize)]
-    struct Late<'a> {
-        a: i8,
-        __fastnbt_byte_array: &'a serde_bytes::Bytes,
-    }
-
-    #[derive(Serialize)]
-    struct Holder<T> {
-        value: T,
-    }
-
-    let bytes = serde_bytes::Bytes::new(&[1, 2, 3, 4]);
-    // At the root, an array cannot stand in for the compound.
-    assert_same_bytes(&BTreeMap::from([("__fastnbt_int_array", bytes)]));
-    // After another entry, the array has no header of its own.
-    assert_same_bytes(&Holder {
-        value: Late {
-            a: 1,
-            __fastnbt_byte_array: bytes,
-        },
-    });
-    // Anything but bytes under a token is refused.
-    assert_same_bytes(&Holder {
-        value: BTreeMap::from([("__fastnbt_long_array", 1i64)]),
-    });
 }
 
 /// fastnbt truncates the `u16` length and writes corrupt NBT instead.
 #[test]
 fn strings_longer_than_a_u16_length_are_refused() {
-    #[derive(Serialize)]
+    #[derive(Serialize, ToNBT)]
     struct Text {
         long: String,
     }
@@ -290,7 +247,7 @@ fn strings_longer_than_a_u16_length_are_refused() {
 
 #[test]
 fn primitive_fields_map_to_fastnbt_tags() {
-    #[derive(Serialize)]
+    #[derive(Serialize, ToNBT)]
     struct Primitives {
         short: i16,
         int: i32,
@@ -322,4 +279,36 @@ fn primitive_fields_map_to_fastnbt_tags() {
         uuid: 0x0123_4567_89ab_cdef_fedc_ba98_7654_3210,
         signed_uuid: -2,
     });
+}
+
+/// The new derives write the same document the old serde path did, which
+/// `serde_compat` still offers.
+#[cfg(feature = "serde")]
+#[test]
+fn serde_compat_writes_the_same_document() {
+    use nanonbt::serde_compat;
+
+    #[derive(Serialize, serde::Deserialize, nanonbt::ToNBT, nanonbt::FromNBT)]
+    struct Fields {
+        byte: i8,
+        text: String,
+        list: Vec<i32>,
+        absent: Option<i32>,
+    }
+
+    let value = Fields {
+        byte: -1,
+        text: "hi".into(),
+        list: vec![1, 2],
+        absent: None,
+    };
+    assert_eq!(
+        nanonbt::to_bytes(&value).unwrap(),
+        serde_compat::to_bytes(&value).unwrap()
+    );
+    let bytes = nanonbt::to_bytes(&value).unwrap();
+    let through_serde: Fields = serde_compat::from_bytes(&bytes).unwrap();
+    assert_eq!(through_serde.byte, value.byte);
+    assert_eq!(through_serde.text, value.text);
+    assert_eq!(through_serde.list, value.list);
 }

@@ -3,7 +3,12 @@
 //! Each harness writes a document by hand, with fixed tags, names and
 //! lengths and symbolic payloads, then asserts that both crates read it
 //! into the same value or both refuse it, and which of the two it is.
+//!
+//! Tags are matched strictly here and converted in fastnbt, so a harness
+//! that reads a value under a tag of another width pins nanonbt's refusal
+//! on its own, without fastnbt beside it.
 
+use nanonbt::FromNBT;
 use serde::{Deserialize, de::DeserializeOwned};
 
 use crate::same::Same;
@@ -80,14 +85,23 @@ impl Nbt {
 
 /// Asserts both crates read `bytes` as the same `T`, or both refuse them,
 /// and that they succeed exactly when `expect_ok`.
-fn check<T: DeserializeOwned + Same>(bytes: &[u8], expect_ok: bool) {
+fn check<T: DeserializeOwned + for<'de> FromNBT<'de> + Same>(bytes: &[u8], expect_ok: bool) {
     let nano = nanonbt::from_bytes::<T>(bytes).ok();
     let fast = fastnbt::from_bytes::<T>(bytes).ok();
     assert!(nano.same(&fast), "nanonbt and fastnbt disagree");
     assert!(nano.is_some() == expect_ok, "unexpected outcome");
 }
 
-#[derive(Deserialize)]
+/// Asserts nanonbt refuses `bytes`; fastnbt accepts some of these, since its
+/// visitors convert between tags.
+fn refuse<T: for<'de> FromNBT<'de>>(bytes: &[u8]) {
+    assert!(
+        nanonbt::from_bytes::<T>(bytes).is_err(),
+        "unexpectedly accepted"
+    );
+}
+
+#[derive(Deserialize, FromNBT)]
 struct One<T> {
     v: T,
 }
@@ -98,12 +112,25 @@ impl<T: Same> Same for One<T> {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, FromNBT)]
 struct Inner {
     x: i16,
 }
 
-#[derive(Deserialize)]
+/// A lone optional entry. `Option` is only special on a struct's own field,
+/// so a generic `One<Option<i32>>` cannot express this.
+#[derive(Deserialize, FromNBT)]
+struct Maybe {
+    v: Option<i32>,
+}
+
+impl Same for Maybe {
+    fn same(&self, other: &Self) -> bool {
+        self.v.same(&other.v)
+    }
+}
+
+#[derive(Deserialize, FromNBT)]
 struct Nested {
     a: i8,
     n: Inner,
@@ -122,14 +149,14 @@ fn scalar(tag: u8, payload: &[u8]) -> Nbt {
 }
 
 /// Harnesses reading a symbolic scalar of type `$from` under `$tag` as a
-/// `$to`, which should succeed exactly when `$ok` holds of the value `v`.
+/// `$to` of the same width, which is accepted.
 macro_rules! scalars {
-    ($($name:ident: $tag:ident $from:ty => $to:ty, unwind $unwind:tt, ok if |$v:ident| $ok:expr;)*) => {
+    ($($name:ident: $tag:ident $from:ty => $to:ty, unwind $unwind:tt;)*) => {
         proofs! {
             $(
                 fn $name() unwind $unwind {
-                    let $v: $from = kani::any();
-                    check::<One<$to>>(scalar($tag, &$v.to_be_bytes()).bytes(), $ok);
+                    let v: $from = kani::any();
+                    check::<One<$to>>(scalar($tag, &v.to_be_bytes()).bytes(), true);
                 }
             )*
         }
@@ -137,23 +164,43 @@ macro_rules! scalars {
 }
 
 scalars! {
-    byte: BYTE i8 => i8, unwind 4, ok if |_v| true;
-    short: SHORT i16 => i16, unwind 4, ok if |_v| true;
-    int: INT i32 => i32, unwind 4, ok if |_v| true;
-    long: LONG i64 => i64, unwind 4, ok if |_v| true;
-    float: FLOAT f32 => f32, unwind 4, ok if |_v| true;
-    double: DOUBLE f64 => f64, unwind 4, ok if |_v| true;
+    byte: BYTE i8 => i8, unwind 4;
+    short: SHORT i16 => i16, unwind 4;
+    int: INT i32 => i32, unwind 4;
+    long: LONG i64 => i64, unwind 4;
+    float: FLOAT f32 => f32, unwind 4;
+    double: DOUBLE f64 => f64, unwind 4;
+    bool_from_byte: BYTE i8 => bool, unwind 4;
+    u8_from_byte: BYTE i8 => u8, unwind 4;
+    u16_from_short: SHORT i16 => u16, unwind 4;
+    u32_from_int: INT i32 => u32, unwind 4;
+    u64_from_long: LONG i64 => u64, unwind 4;
+}
 
-    bool_from_byte: BYTE i8 => bool, unwind 4, ok if |_v| true;
-    bool_from_short: SHORT i16 => bool, unwind 4, ok if |_v| true;
-    bool_from_int: INT i32 => bool, unwind 6, ok if |_v| true;
-    bool_from_long: LONG i64 => bool, unwind 10, ok if |_v| true;
-    i64_from_int: INT i32 => i64, unwind 4, ok if |_v| true;
-    u8_from_byte: BYTE i8 => u8, unwind 4, ok if |v| v >= 0;
-    u16_from_short: SHORT i16 => u16, unwind 4, ok if |v| v >= 0;
-    u32_from_int: INT i32 => u32, unwind 4, ok if |v| v >= 0;
-    i8_from_int: INT i32 => i8, unwind 4, ok if |v| i8::try_from(v).is_ok();
-    i32_from_float: FLOAT f32 => i32, unwind 4, ok if |_v| false;
+/// The same tags read as a type of another width or kind, which nanonbt
+/// refuses: fastnbt's visitors would convert them.
+macro_rules! strict {
+    ($($name:ident: $tag:ident $from:ty => $to:ty, unwind $unwind:tt;)*) => {
+        proofs! {
+            $(
+                fn $name() unwind $unwind {
+                    let v: $from = kani::any();
+                    refuse::<One<$to>>(scalar($tag, &v.to_be_bytes()).bytes());
+                }
+            )*
+        }
+    };
+}
+
+strict! {
+    bool_from_short: SHORT i16 => bool, unwind 4;
+    bool_from_int: INT i32 => bool, unwind 6;
+    bool_from_long: LONG i64 => bool, unwind 10;
+    i64_from_int: INT i32 => i64, unwind 4;
+    i8_from_int: INT i32 => i8, unwind 4;
+    i32_from_float: FLOAT f32 => i32, unwind 4;
+    f64_from_float: FLOAT f32 => f64, unwind 4;
+    f32_from_double: DOUBLE f64 => f32, unwind 8;
 }
 
 proofs! {
@@ -194,6 +241,10 @@ proofs! {
     /// How old chunks store an empty list.
     fn list_end_0() unwind 4 {
         check::<One<Vec<i32>>>(Nbt::root().entry(LIST, b'v').header(Some(END), 0).end().bytes(), true);
+    }
+    /// A list of End with elements is refused.
+    fn list_end_1() unwind 4 {
+        refuse::<One<Vec<i32>>>(Nbt::root().entry(LIST, b'v').header(Some(END), 1).end().bytes());
     }
 
     fn i128_from_int_array() unwind 4 {
@@ -248,15 +299,20 @@ proofs! {
 
     fn option_present() unwind 4 {
         let v: i32 = kani::any();
-        check::<One<Option<i32>>>(scalar(INT, &v.to_be_bytes()).bytes(), true);
+        check::<Maybe>(scalar(INT, &v.to_be_bytes()).bytes(), true);
     }
     fn option_absent() unwind 4 {
-        check::<One<Option<i32>>>(Nbt::root().end().bytes(), true);
+        check::<Maybe>(Nbt::root().end().bytes(), true);
+    }
+    /// A tag of another width is not an `Option`'s payload.
+    fn option_wrong_tag() unwind 4 {
+        let v: i16 = kani::any();
+        refuse::<Maybe>(scalar(SHORT, &v.to_be_bytes()).bytes());
     }
 }
 
-/// Harnesses reading an array of `$len` symbolic elements into both crates'
-/// array types, through both crates, and into a `Vec`, which both refuse.
+/// Harnesses reading an array of `$len` symbolic elements into nanonbt's and
+/// fastnbt's own array types, and into a `Vec`, which both refuse.
 macro_rules! arrays {
     ($($name:ident: $tag:ident $array:ident<$element:ty>[$len:literal];)*) => {
         proofs! {
@@ -272,12 +328,8 @@ macro_rules! arrays {
                     let expected = Some(&elements[..]);
                     let read = nanonbt::from_bytes::<One<nanonbt::$array>>(bytes).ok();
                     assert!(read.as_ref().map(|a| &a.v[..]).same(&expected), "nanonbt into its type");
-                    let read = nanonbt::from_bytes::<One<fastnbt::$array>>(bytes).ok();
-                    assert!(read.as_ref().map(|a| &a.v[..]).same(&expected), "nanonbt into fastnbt's type");
                     let read = fastnbt::from_bytes::<One<fastnbt::$array>>(bytes).ok();
                     assert!(read.as_ref().map(|a| &a.v[..]).same(&expected), "fastnbt into its type");
-                    let read = fastnbt::from_bytes::<One<nanonbt::$array>>(bytes).ok();
-                    assert!(read.as_ref().map(|a| &a.v[..]).same(&expected), "fastnbt into nanonbt's type");
                     assert!(nanonbt::from_bytes::<One<Vec<$element>>>(bytes).is_err(), "nanonbt into a Vec");
                     assert!(fastnbt::from_bytes::<One<Vec<$element>>>(bytes).is_err(), "fastnbt into a Vec");
                 }

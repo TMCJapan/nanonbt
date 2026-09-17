@@ -1,5 +1,6 @@
 //! The error type shared by serialization and deserialization.
 
+#[cfg(feature = "serde")]
 use alloc::{boxed::Box, string::ToString};
 use core::fmt;
 
@@ -12,6 +13,8 @@ pub struct Error(Kind);
 enum Kind {
     Static(&'static str),
     InvalidTag(u8),
+    MissingField(&'static str),
+    #[cfg(feature = "serde")]
     Custom(Box<str>),
 }
 
@@ -26,14 +29,42 @@ impl Error {
         Self(Kind::Static("eof: unexpectedly ran out of input"))
     }
 
-    pub(crate) const fn invalid_tag(tag: u8) -> Self {
+    /// A tag byte that names no NBT type, or one a value cannot have.
+    pub const fn invalid_tag(tag: u8) -> Self {
         Self(Kind::InvalidTag(tag))
+    }
+
+    /// A struct field the document has no entry for.
+    pub const fn missing_field(name: &'static str) -> Self {
+        Self(Kind::MissingField(name))
+    }
+
+    /// An enum variant name that matches no variant.
+    pub const fn unknown_variant() -> Self {
+        Self(Kind::Static("unknown enum variant"))
+    }
+
+    pub(crate) const fn borrowed_string() -> Self {
+        Self(Kind::Static(
+            "string is not plain UTF-8 and cannot be borrowed; use Cow<str> or String",
+        ))
+    }
+
+    pub(crate) const fn invalid_char() -> Self {
+        Self(Kind::Static("integer is not a unicode scalar value"))
+    }
+
+    pub(crate) const fn wrong_len() -> Self {
+        Self(Kind::Static(
+            "list has a different length than the target array",
+        ))
     }
 
     pub(crate) const fn nonunicode_string() -> Self {
         Self(Kind::Static("invalid nbt string: nonunicode"))
     }
 
+    #[cfg(feature = "serde")]
     pub(crate) const fn array_token_as_key() -> Self {
         Self(Kind::Static("compound using special fastnbt array tokens"))
     }
@@ -52,6 +83,7 @@ impl Error {
         Self(Kind::Static("nesting deeper than max depth"))
     }
 
+    #[cfg(feature = "serde")]
     pub(crate) const fn expected_value() -> Self {
         Self(Kind::Static("expected value, found end tag"))
     }
@@ -64,12 +96,14 @@ impl Error {
         Self(Kind::Static("nbt array too large"))
     }
 
+    #[cfg(feature = "serde")]
     pub(crate) const fn array_as_seq() -> Self {
         Self(Kind::Static(
             "expected NBT Array, found seq: use ByteArray, IntArray or LongArray types",
         ))
     }
 
+    #[cfg(feature = "serde")]
     pub(crate) const fn not_bytes() -> Self {
         Self(Kind::Static("cannot convert to bytes"))
     }
@@ -80,14 +114,17 @@ impl Error {
         ))
     }
 
+    #[cfg(feature = "serde")]
     pub(crate) const fn key_not_string() -> Self {
         Self(Kind::Static("field must be string-like"))
     }
 
+    #[cfg(feature = "serde")]
     pub(crate) const fn value_before_key() -> Self {
         Self(Kind::Static("serialize_value called before serialize_key"))
     }
 
+    #[cfg(feature = "serde")]
     pub(crate) const fn unknown_len() -> Self {
         Self(Kind::Static("sequences must have a known length"))
     }
@@ -96,18 +133,22 @@ impl Error {
         Self(Kind::Static("len too large"))
     }
 
+    #[cfg(feature = "serde")]
     pub(crate) const fn none_in_list() -> Self {
         Self(Kind::Static("cannot serialize None in list"))
     }
 
+    #[cfg(feature = "serde")]
     pub(crate) const fn unit() -> Self {
         Self(Kind::Static("cannot serialize unit"))
     }
 
+    #[cfg(feature = "serde")]
     pub(crate) const fn variant() -> Self {
         Self(Kind::Static("cannot serialize newtype or struct variant"))
     }
 
+    #[cfg(feature = "serde")]
     pub(crate) const fn array_not_bytes() -> Self {
         Self(Kind::Static(
             "expected NBT Array: use ByteArray, IntArray or LongArray types",
@@ -124,6 +165,8 @@ impl fmt::Display for Error {
         match &self.0 {
             Kind::Static(message) => f.write_str(message),
             Kind::InvalidTag(tag) => write!(f, "invalid nbt tag value: {tag}"),
+            Kind::MissingField(name) => write!(f, "missing field `{name}`"),
+            #[cfg(feature = "serde")]
             Kind::Custom(message) => f.write_str(message),
         }
     }
@@ -131,12 +174,14 @@ impl fmt::Display for Error {
 
 impl core::error::Error for Error {}
 
+#[cfg(feature = "serde")]
 impl serde::de::Error for Error {
     fn custom<T: fmt::Display>(msg: T) -> Self {
         Self(Kind::Custom(msg.to_string().into_boxed_str()))
     }
 }
 
+#[cfg(feature = "serde")]
 impl serde::ser::Error for Error {
     fn custom<T: fmt::Display>(msg: T) -> Self {
         Self(Kind::Custom(msg.to_string().into_boxed_str()))

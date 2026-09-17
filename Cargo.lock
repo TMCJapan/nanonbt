@@ -102,9 +102,19 @@ version = "0.1.0"
 dependencies = [
  "cesu8",
  "fastnbt",
+ "nanonbt-derive",
  "rt-testkit",
  "serde",
  "serde_bytes",
+]
+
+[[package]]
+name = "nanonbt-derive"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]

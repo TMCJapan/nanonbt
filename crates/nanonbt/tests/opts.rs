@@ -1,9 +1,10 @@
+#![allow(clippy::items_after_statements)]
 //! Serialization and deserialization options behave like fastnbt's.
 
-use nanonbt::Value;
+use nanonbt::{DeOpts, Error, FromNBT, Read, Reader, ToNBT, Value};
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, PartialEq, Debug)]
+#[derive(Serialize, Deserialize, ToNBT, FromNBT, PartialEq, Debug)]
 struct Schematic {
     width: i16,
     blocks: Vec<i8>,
@@ -118,7 +119,7 @@ fn nested_lists(depth: usize) -> Vec<u8> {
 /// it aborts the process rather than returning an error.
 #[test]
 fn nesting_deeper_than_max_depth_is_refused() {
-    #[derive(Deserialize, Debug)]
+    #[derive(FromNBT, Debug)]
     struct Empty {}
 
     for document in [nested_compounds, nested_lists] {
@@ -147,32 +148,32 @@ fn nesting_deeper_than_max_depth_is_refused() {
 }
 
 /// A failed read gives its levels back, so the next one has the full bound.
-///
-/// `Deserializer` is public, so a caller can drive one by hand; a level left
-/// counted after an error would refuse a later, shallower read as too deep.
 #[test]
 fn a_failed_read_does_not_spend_depth() {
-    use serde::Deserialize;
-
-    #[derive(Deserialize, Debug)]
-    struct WantsShort {
-        #[allow(dead_code)] // only its type matters
-        a: i16,
-    }
-
-    #[derive(Deserialize, Debug)]
-    struct Empty {}
-
-    // `{ "a": "x" }`, which fails on the type one level in, leaving the
-    // cursor on the root compound's End tag.
-    let bytes = [
-        0x0a, 0x00, 0x00, 0x08, 0x00, 0x01, b'a', 0x00, 0x01, b'x', 0x00,
-    ];
-    let opts = nanonbt::DeOpts::new().max_depth(1);
-    let mut de = nanonbt::de::Deserializer::from_bytes(&bytes, opts);
-    assert!(WantsShort::deserialize(&mut de).is_err());
+    let mut reader = Reader::new(&[], DeOpts::new().max_depth(1));
+    let failed = reader.nest(|reader| {
+        let inner: nanonbt::Result<()> = reader.nest(|_| Err(Error::invalid_tag(0)));
+        inner
+    });
+    assert!(failed.is_err());
     assert!(
-        Empty::deserialize(&mut de).is_ok(),
+        reader.nest(|_| Ok(())).is_ok(),
         "the failed read kept a level"
     );
+}
+
+/// A name that is not valid modified UTF-8 is skipped, not decoded.
+#[test]
+fn root_names_are_skipped_without_decoding() {
+    #[derive(FromNBT, PartialEq, Debug)]
+    struct Empty {}
+
+    // `C0 81` is neither UTF-8 nor valid modified UTF-8.
+    let bytes = [0x0a, 0x00, 0x02, 0xc0, 0x81, 0x00];
+    assert_eq!(
+        nanonbt::from_bytes::<Empty>(&bytes),
+        Ok(Empty {}),
+        "the root name is skipped"
+    );
+    assert!(fastnbt::from_bytes::<fastnbt::Value>(&bytes).is_ok());
 }

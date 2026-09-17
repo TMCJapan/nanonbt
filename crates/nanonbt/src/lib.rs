@@ -1,59 +1,65 @@
-//! `nanonbt`: serde support for Minecraft's NBT format, without `std`.
+//! `nanonbt`: Minecraft's NBT format, without `std` and without serde.
+//!
+//! Values implement [`ToNBT`] and [`FromNBT`], and the derive macros write
+//! those implementations for structs, newtypes and unit enums:
+//!
+//! ```
+//! use nanonbt::{FromNBT, ToNBT};
+//!
+//! #[derive(FromNBT, ToNBT, PartialEq, Debug)]
+//! struct Player {
+//!     health: i32,
+//!     #[nbt(rename = "Name")]
+//!     name: String,
+//!     #[nbt(ignore)]
+//!     cached: u64,
+//! }
+//!
+//! let player = Player { health: 20, name: "topi".into(), cached: 0 };
+//! let bytes = nanonbt::to_bytes(&player).unwrap();
+//! let back: Player = nanonbt::from_bytes(&bytes).unwrap();
+//! assert_eq!(back, player);
+//! ```
 //!
 //! The encoding is byte-for-byte the one [fastnbt](https://docs.rs/fastnbt)
-//! 2.6 produces and accepts, so that the two crates can be used
-//! interchangeably: [`to_bytes`], [`from_bytes`], [`to_value`] and
-//! [`from_value`] succeed exactly where fastnbt's do, with the same bytes or
-//! values, and the array types use fastnbt's serde tokens, so either crate's
-//! [`ByteArray`], [`IntArray`] and [`LongArray`] work with the other.
-//! Error messages are not part of that promise.
+//! 2.6 produces for the same values, and the array types are fastnbt's. With
+//! the `serde` feature, the old `Serialize`/`Deserialize` implementations are
+//! kept as well, and `serde_compat` holds their entry points.
 //!
-//! Agreement is checked two ways. `crates/nanonbt-kani` proves it with a
-//! model checker, for fixed shapes with arbitrary values. This crate's
-//! `differential` test suite checks it on seeded random documents, trees and
-//! mutations, which is what covers malformed input, string contents,
-//! compounds of several entries and lists inside a [`Value`] — the shapes
-//! the proofs cannot reach. Of the `cesu8` module only the decoder is
-//! proven, and only one byte at a time, which reaches no multi-byte form;
-//! the encoder is not proven at all, so there the random tests carry the
-//! whole weight.
+//! # The data model
+//!
+//! Tags are matched strictly: a value reads its own tag only, so a `TAG_Int`
+//! does not become an `i64`, and a float tag does not become an integer. An
+//! unsigned integer shares its tag with the signed integer of the same width
+//! and reinterprets the bits. A [`char`] is a `TAG_Int`, an `i128` or `u128`
+//! a `TAG_Int_Array` of four ints, and a string a length-prefixed modified
+//! UTF-8 (Java CESU-8) `TAG_String`.
+//!
+//! [`Option`] has no tag of its own: in a derived struct a `None` field is
+//! left out of the compound and an absent entry reads back as `None`. It
+//! cannot appear in a list. [`Vec`], arrays and slices are lists; the empty
+//! list is written as a list of End, the way fastnbt writes one.
+//!
+//! Strings borrow: [`FromNBT`] is implemented for `&'de str` and
+//! `Cow<'de, str>`. A string that needs no decoding borrows from the input;
+//! one written in modified UTF-8 (a NUL or a non-BMP character) decodes into
+//! an owned `Cow`, and reading it into a `&'de str` is an error.
 //!
 //! # Where fastnbt is not followed
 //!
 //! - Where fastnbt panics, this returns an error: skipping a list of End
-//!   tags that has elements, and [`to_value`] of `None`, units, newtype
-//!   variants or a malformed array wrapper.
+//!   tags that has elements.
 //! - Documents nested deeper than [`DeOpts::max_depth`], 512 by default, are
 //!   refused. Reading is recursive, so fastnbt instead overflows the stack
 //!   and aborts, which no error can report and no `catch_unwind` can catch.
 //! - Strings longer than 65535 bytes are refused; fastnbt truncates their
 //!   length and writes corrupt NBT.
+//! - Values convert between tags only where fastnbt's serde visitors happen
+//!   to; this crate's rule is simpler and stricter, and `char` round trips
+//!   through bytes, which fastnbt's does not.
 //! - [`Value::Compound`] is ordered by key, fastnbt's by hash, so compounds
-//!   of several entries serialize in a different order. For the same reason
-//!   [`from_value`] visits entries in key order, which matters only when one
-//!   of several keys is an array token.
-//! - [`from_value`] presents an array as a map of one entry; fastnbt's never
-//!   runs out of entries.
+//!   of several entries serialize in a different order.
 //! - There is no `from_reader` or `to_writer`, as there is no `std::io`.
-//!
-//! # Where the two readers disagree
-//!
-//! [`from_bytes`] and [`from_value`] follow fastnbt separately, and fastnbt's
-//! own two paths do not always agree, so neither does this:
-//!
-//! - A fixed-size target shorter than the list it reads — a tuple or an
-//!   array — leaves the elements it did not take unread, and the next field
-//!   is then read out of the list's payload rather than the compound. A
-//!   document that claims a list of 11 and is deserialized into a 2-tuple
-//!   therefore yields a following field built from bytes inside that list.
-//!   [`from_value`] refuses the same tree as too long. Do not read untrusted
-//!   documents into fixed-size targets; use [`alloc::vec::Vec`] or
-//!   [`Value`], both of which consume the list.
-//! - A `char` round trips through [`to_value`] and [`from_value`] but not
-//!   through [`to_bytes`] and [`from_bytes`]: it is written as `TAG_Int` and
-//!   read back as an integer, which serde's `char` visitor refuses. Bytes
-//!   are the mirror image — a `serde_bytes` field reads from a byte array
-//!   through [`from_bytes`] but not through [`from_value`].
 
 #![no_std]
 
@@ -61,30 +67,52 @@ extern crate alloc;
 
 mod arrays;
 pub mod cesu8;
+#[cfg(feature = "serde")]
 pub mod de;
 pub mod error;
+mod impls;
+pub mod read;
+#[cfg(feature = "serde")]
 pub mod ser;
 mod tag;
 pub mod value;
+pub mod write;
 
 use alloc::{string::String, vec::Vec};
 
-use serde::{Deserialize, Serialize};
-
 pub use arrays::{ByteArray, IntArray, LongArray};
 pub use error::{Error, Result};
+#[cfg(feature = "derive")]
+pub use nanonbt_derive::{FromNBT, ToNBT};
+pub use read::{FromNBT, Read, Reader};
+pub use tag::{
+    TAG_BYTE, TAG_BYTE_ARRAY, TAG_COMPOUND, TAG_DOUBLE, TAG_END, TAG_FLOAT, TAG_INT, TAG_INT_ARRAY,
+    TAG_LIST, TAG_LONG, TAG_LONG_ARRAY, TAG_SHORT, TAG_STRING,
+};
 pub use value::{Value, from_value, to_value};
+pub use write::{ToNBT, Write, Writer};
 
 /// Serializes `value` as the root compound, with an empty name.
-pub fn to_bytes<T: Serialize + ?Sized>(value: &T) -> Result<Vec<u8>> {
+pub fn to_bytes<T: ToNBT + ?Sized>(value: &T) -> Result<Vec<u8>> {
     to_bytes_with_opts(value, SerOpts::default())
 }
 
 /// Serializes `value` as the root compound, named as `opts` says.
-pub fn to_bytes_with_opts<T: Serialize + ?Sized>(value: &T, opts: SerOpts) -> Result<Vec<u8>> {
+pub fn to_bytes_with_opts<T: ToNBT + ?Sized>(value: &T, opts: SerOpts) -> Result<Vec<u8>> {
+    if value.tag() != TAG_COMPOUND {
+        return Err(Error::no_root_compound());
+    }
+    let SerOpts {
+        root_name,
+        serialize_root_name,
+    } = opts;
     let mut out = Vec::new();
-    let root_name = opts.serialize_root_name.then_some(opts.root_name);
-    value.serialize(&mut ser::Serializer::new(&mut out, root_name))?;
+    let mut writer = Writer::new(&mut out);
+    writer.write_tag(TAG_COMPOUND)?;
+    if serialize_root_name {
+        writer.write_name(&root_name)?;
+    }
+    value.write(&mut writer)?;
     Ok(out)
 }
 
@@ -195,11 +223,69 @@ impl DeOpts {
 }
 
 /// Deserializes a `T` from a document whose root is a compound.
-pub fn from_bytes<'de, T: Deserialize<'de>>(input: &'de [u8]) -> Result<T> {
+pub fn from_bytes<'de, T: FromNBT<'de>>(input: &'de [u8]) -> Result<T> {
     from_bytes_with_opts(input, DeOpts::default())
 }
 
 /// Deserializes a `T` from a document whose root is a compound.
-pub fn from_bytes_with_opts<'de, T: Deserialize<'de>>(input: &'de [u8], opts: DeOpts) -> Result<T> {
-    T::deserialize(&mut de::Deserializer::from_bytes(input, opts))
+pub fn from_bytes_with_opts<'de, T: FromNBT<'de>>(input: &'de [u8], opts: DeOpts) -> Result<T> {
+    let expect_names = opts.expect_compound_names;
+    let mut reader = Reader::new(input, opts);
+    let tag = reader.read_tag()?;
+    if tag != TAG_COMPOUND {
+        return Err(Error::no_root_compound());
+    }
+    if expect_names {
+        reader.skip_name()?;
+    }
+    T::read(tag, &mut reader)
+}
+
+/// The serde entry points, for callers that use `Serialize`/`Deserialize`.
+///
+/// Available only with the `serde` feature, alongside the trait
+/// implementations the old versions of this crate provided.
+#[cfg(feature = "serde")]
+pub mod serde_compat {
+    use alloc::vec::Vec;
+
+    use serde::{Deserialize, Serialize};
+
+    use crate::{DeOpts, Result, SerOpts, Value, de, ser};
+
+    /// Serializes `value` as the root compound, with an empty name.
+    pub fn to_bytes<T: Serialize + ?Sized>(value: &T) -> Result<Vec<u8>> {
+        to_bytes_with_opts(value, SerOpts::default())
+    }
+
+    /// Serializes `value` as the root compound, named as `opts` says.
+    pub fn to_bytes_with_opts<T: Serialize + ?Sized>(value: &T, opts: SerOpts) -> Result<Vec<u8>> {
+        let mut out = Vec::new();
+        let root_name = opts.serialize_root_name.then_some(opts.root_name);
+        value.serialize(&mut ser::Serializer::new(&mut out, root_name))?;
+        Ok(out)
+    }
+
+    /// Deserializes a `T` from a document whose root is a compound.
+    pub fn from_bytes<'de, T: Deserialize<'de>>(input: &'de [u8]) -> Result<T> {
+        from_bytes_with_opts(input, DeOpts::default())
+    }
+
+    /// Deserializes a `T` from a document whose root is a compound.
+    pub fn from_bytes_with_opts<'de, T: Deserialize<'de>>(
+        input: &'de [u8],
+        opts: DeOpts,
+    ) -> Result<T> {
+        T::deserialize(&mut de::Deserializer::from_bytes(input, opts))
+    }
+
+    /// Interprets a [`Value`] as a `T`.
+    pub fn from_value<'de, T: Deserialize<'de>>(value: &'de Value) -> Result<T> {
+        crate::value::from_value_serde(value)
+    }
+
+    /// Converts any serializable `value` into a [`Value`].
+    pub fn to_value<T: Serialize + ?Sized>(value: &T) -> Result<Value> {
+        crate::value::to_value_serde(value)
+    }
 }

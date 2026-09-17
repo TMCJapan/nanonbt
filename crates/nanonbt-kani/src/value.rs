@@ -4,7 +4,12 @@
 //! variants against each other. Compounds are left out: fastnbt's are
 //! `HashMap`s, which Kani does not finish on; so are lists, whose `Vec` of
 //! either `Value` does not finish in 3 minutes either.
+//!
+//! Tags are matched strictly here and converted in fastnbt's value reader,
+//! so the conversion harnesses pin nanonbt's refusals on their own where the
+//! two differ.
 
+use nanonbt::{FromNBT, ToNBT};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 use crate::same::Same;
@@ -33,7 +38,7 @@ fn same_value(nano: &nanonbt::Value, fast: &fastnbt::Value) -> bool {
 
 /// Asserts both crates make the same `Value` of `value`, and that they
 /// succeed exactly when `expect_ok` says.
-fn check_to<T: Serialize>(value: &T, expect_ok: bool) {
+fn check_to<T: Serialize + ToNBT>(value: &T, expect_ok: bool) {
     let nano = nanonbt::to_value(value).ok();
     let fast = fastnbt::to_value(value).ok();
     let same = match (&nano, &fast) {
@@ -47,7 +52,7 @@ fn check_to<T: Serialize>(value: &T, expect_ok: bool) {
 
 /// Asserts both crates read their own `Value` as the same `T`, and that
 /// they succeed exactly when `expect_ok` says.
-fn check_from<T: DeserializeOwned + Same>(
+fn check_from<T: DeserializeOwned + for<'de> FromNBT<'de> + Same>(
     nano: &nanonbt::Value,
     fast: &fastnbt::Value,
     expect_ok: bool,
@@ -58,20 +63,21 @@ fn check_from<T: DeserializeOwned + Same>(
     assert!(nano.is_some() == expect_ok, "unexpected outcome");
 }
 
-#[derive(Serialize)]
+/// Asserts nanonbt refuses its own `Value` as a `T`, where fastnbt's value
+/// reader converts.
+fn refuse_from<T: for<'de> FromNBT<'de>>(nano: &nanonbt::Value) {
+    assert!(
+        nanonbt::from_value::<T>(nano).is_err(),
+        "unexpectedly accepted"
+    );
+}
+
+#[derive(Serialize, ToNBT)]
 enum Unit {
     Bb,
 }
 
-#[derive(Serialize)]
-struct UnitStruct;
-
-#[derive(Serialize)]
-enum Newtype {
-    V(i32),
-}
-
-#[derive(Deserialize)]
+#[derive(Deserialize, FromNBT)]
 #[serde(transparent)]
 struct F32(f32);
 
@@ -81,7 +87,7 @@ impl Same for F32 {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, FromNBT)]
 #[serde(transparent)]
 struct F64(f64);
 
@@ -124,14 +130,6 @@ proofs! {
     fn to_i128() unwind 22 { check_to(&kani::any::<i128>(), true) }
     fn to_u128() unwind 22 { check_to(&kani::any::<u128>(), true) }
     fn to_unit_variant() unwind 4 { check_to(&Unit::Bb, true) }
-
-    /// fastnbt panics on these, so only nanonbt is checked: it refuses them.
-    fn to_value_refused() unwind 4 {
-        assert!(nanonbt::to_value(&None::<i32>).is_err(), "None");
-        assert!(nanonbt::to_value(&()).is_err(), "unit");
-        assert!(nanonbt::to_value(&UnitStruct).is_err(), "unit struct");
-        assert!(nanonbt::to_value(&Newtype::V(kani::any())).is_err(), "newtype variant");
-    }
 }
 
 /// Harnesses reading a symbolic `$variant` payload as a `$to`, which should
@@ -157,16 +155,34 @@ from_values! {
     from_byte_i8: Byte(i8) => i8, ok if |_v| true;
     from_byte_u8: Byte(i8) => u8, ok if |_v| true;
     from_byte_bool: Byte(i8) => bool, ok if |_v| true;
-    from_byte_i32: Byte(i8) => i32, ok if |_v| false;
     from_short_i16: Short(i16) => i16, ok if |_v| true;
     from_int_i32: Int(i32) => i32, ok if |_v| true;
-    from_int_bool: Int(i32) => bool, ok if |_v| true;
-    from_int_i64: Int(i32) => i64, ok if |_v| false;
     from_long_i64: Long(i64) => i64, ok if |_v| true;
     from_float_f32: Float(f32) => F32, ok if |_v| true;
     from_double_f64: Double(f64) => F64, ok if |_v| true;
-    from_float_f64: Float(f32) => F64, ok if |_v| false;
     from_int_char: Int(i32) => char, ok if |v| char::from_u32(v as u32).is_some();
+}
+
+/// The same variants read as another type, which nanonbt refuses.
+macro_rules! strict_from {
+    ($($name:ident: $variant:ident($from:ty) => $to:ty, unwind $unwind:tt;)*) => {
+        proofs! {
+            $(
+                fn $name() unwind $unwind {
+                    let v: $from = kani::any();
+                    refuse_from::<$to>(&nanonbt::Value::$variant(v));
+                }
+            )*
+        }
+    };
+}
+
+strict_from! {
+    from_byte_i32: Byte(i8) => i32, unwind 4;
+    from_int_bool: Int(i32) => bool, unwind 4;
+    from_int_i64: Int(i32) => i64, unwind 4;
+    from_float_f64: Float(f32) => F64, unwind 4;
+    from_short_i8: Short(i16) => i8, unwind 4;
 }
 
 proofs! {
@@ -186,5 +202,13 @@ proofs! {
             &fastnbt::Value::IntArray(fastnbt::IntArray::new(Vec::from(ints))),
             true,
         );
+    }
+
+    /// An int array of the wrong length is not a 128-bit integer.
+    fn from_int_array_128_short() unwind 4 {
+        let ints: [i32; 3] = kani::any();
+        refuse_from::<i128>(&nanonbt::Value::IntArray(nanonbt::IntArray::new(Vec::from(
+            ints,
+        ))));
     }
 }

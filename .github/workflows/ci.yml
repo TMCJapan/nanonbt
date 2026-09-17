@@ -90,13 +90,13 @@ jobs:
         with:
           tool: cargo-nextest
       - name: clippy
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
       - name: nextest
-        run: cargo nextest run --workspace --locked --profile ci
+        run: cargo nextest run --workspace --all-features --locked --profile ci
       - name: doctests
-        run: cargo test --doc --workspace --locked
+        run: cargo test --doc --workspace --all-features --locked
       - name: nextest --release
-        run: cargo nextest run --workspace --locked --profile ci --release
+        run: cargo nextest run --workspace --all-features --locked --profile ci --release
 
   # The crates that must build without std.
   no-std:
@@ -118,8 +118,14 @@ jobs:
           key: ${{ matrix.target }}
       - name: clippy
         run: cargo clippy -p rt-core -p rt-proto -p nanonbt --target ${{ matrix.target }} --locked -- -D warnings
+      # The derive macro is a host build dependency; without it nanonbt is
+      # the bare traits, which must still cross-compile.
+      - name: clippy (no default features)
+        run: cargo clippy -p nanonbt --target ${{ matrix.target }} --no-default-features --locked -- -D warnings
       - name: build
         run: cargo build -p rt-core -p rt-proto -p nanonbt --target ${{ matrix.target }} --locked --release
+      - name: build (no default features)
+        run: cargo build -p nanonbt --target ${{ matrix.target }} --no-default-features --locked --release
 
   # The client side, for browsers.
   wasm:

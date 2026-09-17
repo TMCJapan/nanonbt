@@ -11,6 +11,9 @@ rust-version = "1.98"
 
 [workspace.dependencies]
 nanonbt = { path = "crates/nanonbt" }
+nanonbt-derive = { path = "crates/nanonbt-derive" }
+proc-macro2 = "1"
+quote = "1"
 rt-client = { path = "crates/rt-client" }
 rt-core = { path = "crates/rt-core" }
 rt-derive = { path = "crates/rt-derive" }
@@ -20,6 +23,7 @@ rt-object = { path = "crates/rt-object" }
 rt-proto = { path = "crates/rt-proto" }
 rt-sim = { path = "crates/rt-sim" }
 rt-testkit = { path = "crates/rt-testkit" }
+syn = { version = "3", features = ["full"] }
 
 [profile.release]
 lto = true

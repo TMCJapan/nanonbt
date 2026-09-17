@@ -1,27 +1,35 @@
 //! The NBT array types, which serde's data model has no place for.
 //!
-//! Each array passes through serde as a single-entry map whose key is a
-//! reserved token and whose value is the big-endian payload as bytes. The
-//! tokens are fastnbt's, so its array types and these are interchangeable.
+//! With the `serde` feature, each array passes through serde as a
+//! single-entry map whose key is a reserved token and whose value is the
+//! big-endian payload as bytes. The tokens are fastnbt's, so its array types
+//! and these are interchangeable.
 
-use alloc::{string::String, vec::Vec};
-use core::{
-    fmt,
-    ops::{Deref, DerefMut},
-};
+use alloc::vec::Vec;
+use core::ops::{Deref, DerefMut};
 
+#[cfg(feature = "serde")]
+use alloc::string::String;
+#[cfg(feature = "serde")]
+use core::fmt;
+#[cfg(feature = "serde")]
 use serde::{
     de::{self, Deserialize, Deserializer, MapAccess, SeqAccess, Visitor},
     ser::{Serialize, SerializeStruct, Serializer},
 };
 
+#[cfg(feature = "serde")]
 pub(crate) const BYTE_ARRAY_TOKEN: &str = "__fastnbt_byte_array";
+#[cfg(feature = "serde")]
 pub(crate) const INT_ARRAY_TOKEN: &str = "__fastnbt_int_array";
+#[cfg(feature = "serde")]
 pub(crate) const LONG_ARRAY_TOKEN: &str = "__fastnbt_long_array";
 
 /// Serializes a byte slice with `serialize_bytes`.
+#[cfg(feature = "serde")]
 struct Bytes<'a>(&'a [u8]);
 
+#[cfg(feature = "serde")]
 impl Serialize for Bytes<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         serializer.serialize_bytes(self.0)
@@ -29,16 +37,20 @@ impl Serialize for Bytes<'_> {
 }
 
 /// An owned byte buffer, accepted from the same inputs as `serde_bytes::ByteBuf`.
+#[cfg(feature = "serde")]
 pub(crate) struct ByteBuf(pub(crate) Vec<u8>);
 
+#[cfg(feature = "serde")]
 impl<'de> Deserialize<'de> for ByteBuf {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         deserializer.deserialize_byte_buf(ByteBufVisitor)
     }
 }
 
+#[cfg(feature = "serde")]
 struct ByteBufVisitor;
 
+#[cfg(feature = "serde")]
 impl<'de> Visitor<'de> for ByteBufVisitor {
     type Value = ByteBuf;
 
@@ -72,6 +84,7 @@ impl<'de> Visitor<'de> for ByteBufVisitor {
 }
 
 /// Reads the wrapper map fastnbt's array types expect.
+#[cfg(feature = "serde")]
 fn deserialize_array<'de, M: MapAccess<'de>>(
     mut map: M,
     token: &'static str,
@@ -87,6 +100,7 @@ fn deserialize_array<'de, M: MapAccess<'de>>(
     }
 }
 
+#[cfg(feature = "serde")]
 fn serialize_array<S: Serializer>(
     serializer: S,
     token: &'static str,
@@ -98,7 +112,7 @@ fn serialize_array<S: Serializer>(
 }
 
 macro_rules! array {
-    ($(#[$doc:meta])* $name:ident($element:ty, $token:ident, $expecting:literal)) => {
+    ($(#[$doc:meta])* $name:ident($element:ty, $tag:ident $(, $token:ident, $expecting:literal)?)) => {
         $(#[$doc])*
         #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
         pub struct $name {
@@ -151,46 +165,77 @@ macro_rules! array {
             }
         }
 
-        impl Serialize for $name {
-            fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-                serialize_array(serializer, $token, &self.to_be_bytes())
+        impl crate::ToNBT for $name {
+            fn tag(&self) -> u8 {
+                crate::tag::$tag
+            }
+
+            fn write<W: crate::Write>(&self, writer: &mut W) -> crate::Result<()> {
+                writer.write_len(self.data.len())?;
+                writer.write_bytes(&self.to_be_bytes())
             }
         }
 
-        impl<'de> Deserialize<'de> for $name {
-            fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-                struct ArrayVisitor;
-
-                impl<'de> Visitor<'de> for ArrayVisitor {
-                    type Value = $name;
-
-                    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                        f.write_str($expecting)
-                    }
-
-                    fn visit_map<M: MapAccess<'de>>(self, map: M) -> Result<$name, M::Error> {
-                        let bytes = deserialize_array(map, $token)?;
-                        Ok($name::from_be_bytes(&bytes))
-                    }
+        impl<'de> crate::FromNBT<'de> for $name {
+            fn read<R: crate::Read<'de>>(
+                tag: u8,
+                reader: &mut R,
+            ) -> crate::Result<Self> {
+                if tag != crate::tag::$tag {
+                    return Err(crate::Error::invalid_tag(tag));
                 }
-
-                deserializer.deserialize_map(ArrayVisitor)
+                let len = reader.read_len()?;
+                let n = len
+                    .checked_mul(size_of::<$element>())
+                    .ok_or_else(crate::Error::array_too_large)?;
+                Ok(Self::from_be_bytes(&reader.read_bytes(n)?))
             }
         }
+
+        $(
+            #[cfg(feature = "serde")]
+            impl Serialize for $name {
+                fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                    serialize_array(serializer, $token, &self.to_be_bytes())
+                }
+            }
+
+            #[cfg(feature = "serde")]
+            impl<'de> Deserialize<'de> for $name {
+                fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+                    struct ArrayVisitor;
+
+                    impl<'de> Visitor<'de> for ArrayVisitor {
+                        type Value = $name;
+
+                        fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                            f.write_str($expecting)
+                        }
+
+                        fn visit_map<M: MapAccess<'de>>(self, map: M) -> Result<$name, M::Error> {
+                            let bytes = deserialize_array(map, $token)?;
+                            Ok($name::from_be_bytes(&bytes))
+                        }
+                    }
+
+                    deserializer.deserialize_map(ArrayVisitor)
+                }
+            }
+        )?
     };
 }
 
 array! {
     /// An NBT byte array.
-    ByteArray(i8, BYTE_ARRAY_TOKEN, "byte array")
+    ByteArray(i8, TAG_BYTE_ARRAY, BYTE_ARRAY_TOKEN, "byte array")
 }
 
 array! {
     /// An NBT int array.
-    IntArray(i32, INT_ARRAY_TOKEN, "int array")
+    IntArray(i32, TAG_INT_ARRAY, INT_ARRAY_TOKEN, "int array")
 }
 
 array! {
     /// An NBT long array.
-    LongArray(i64, LONG_ARRAY_TOKEN, "long array")
+    LongArray(i64, TAG_LONG_ARRAY, LONG_ARRAY_TOKEN, "long array")
 }

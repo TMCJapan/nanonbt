@@ -7,38 +7,34 @@
 //!
 //! - `ser`: for each of 48 shapes, `nanonbt::to_bytes` and
 //!   `fastnbt::to_bytes` both succeed with the same bytes, or both fail, for
-//!   every value. A shape is a serde type whose structure (fields, lengths,
-//!   names) is fixed and whose values (numbers, bools, chars, the choice of
-//!   `Some` or `None`, of a unit or tuple variant) are symbolic. Each
-//!   harness also asserts which outcome it is, so that no shape passes by
-//!   both crates refusing it. The shapes cover every primitive, `Option` in
-//!   and between entries, `Vec`s of 0 to 2 scalars, arrays, lists of lists,
-//!   a struct in a struct, unit and tuple variants, `serialize_bytes`, an
-//!   array token after an entry, and the refusals: roots that are not
-//!   compounds, units, newtype and struct variants, a non-string key,
-//!   `None` in a list. Separately, for `ByteArray`, `IntArray` and
-//!   `LongArray` of 0 to 2 symbolic elements, in an entry and at the root,
-//!   nanonbt's type and fastnbt's type through nanonbt give what fastnbt's
-//!   type through fastnbt gives.
-//! - `de`: for each of 37 documents, written by hand with fixed tags,
+//!   every value. A shape is a type deriving both `ToNBT` and `Serialize`
+//!   whose structure (fields, lengths, names) is fixed and whose values
+//!   (numbers, bools, chars, the choice of `Some` or `None`, of a variant)
+//!   are symbolic. Each harness also asserts which outcome it is, so that no
+//!   shape passes by both crates refusing it. The shapes cover every
+//!   primitive, `Option` in and between entries, `Vec`s of 0 to 2 scalars,
+//!   fixed arrays, lists of lists, a struct in a struct, unit variants, and
+//!   the refusals: roots that are not compounds. Separately, for
+//!   `ByteArray`, `IntArray` and `LongArray` of 0 to 2 symbolic elements, in
+//!   an entry and at the root, nanonbt's type through nanonbt gives what
+//!   fastnbt's type through fastnbt gives.
+//! - `de`: for each of 42 documents, written by hand with fixed tags,
 //!   names and lengths and symbolic payloads, `nanonbt::from_bytes` and
 //!   `fastnbt::from_bytes` read the same value or both refuse it, and which
-//!   of the two it is. The documents cover every scalar tag into its own
-//!   Rust type and into converting ones (`bool` from each integer tag,
-//!   `i64` from Int, `u8`, `u16`, `u32` and `i8` from signed tags, where
-//!   the outcome depends on the symbolic value), lists of 0 to 2 Ints and
-//!   the list of End that old chunks use for an empty one, both crates'
-//!   array types from arrays of 0 to 2 elements, read through both crates,
-//!   and the same arrays into a `Vec`, which both refuse, an int array of 4
-//!   as `i128` and `u128`, a compound in a compound, network NBT, entries
-//!   the struct has no field for, and `Option` present and absent.
+//!   of the two it is. The documents cover every scalar tag into the type of
+//!   its own width, readings fastnbt's visitors would convert but this crate
+//!   refuses (a `Short` as a `bool`, an `Int` as an `i64`), lists of 0 to 2
+//!   Ints and the list of End that old chunks use for an empty one, both
+//!   crates' array types from arrays of 0 to 2 elements, read through both
+//!   crates, and the same arrays into a `Vec`, which both refuse, an int
+//!   array of 4 as `i128` and `u128`, a compound in a compound, network NBT,
+//!   entries the struct has no field for, and `Option` present and absent.
 //! - `value`: for scalars, `nanonbt::to_value` and `fastnbt::to_value` make
 //!   the same value, and `from_value` reads their own `Value` into the same
-//!   `T`: every scalar variant into its own type and into converting ones,
-//!   including `char` from Int and the `as`-cast `u8` from a negative Byte,
-//!   and an int array of 4 as `i128` and `u128` both ways. Where fastnbt
-//!   panics instead (`to_value` of `None`, of a unit, a unit struct or a
-//!   newtype variant) only nanonbt is checked: it returns an error.
+//!   `T`: every scalar variant into the type of its own width, including
+//!   `char` from Int, readings fastnbt converts but this crate refuses (a
+//!   Byte as an i32, an Int as a bool or an i64, a Float as an f64), and an
+//!   int array of 4 as `i128` and `u128` both ways.
 //! - `cesu8`: nanonbt's decoder agrees with the `cesu8` crate's on every
 //!   single byte.
 //! - `stubs`: the stand-ins that all other harnesses run with agree with
@@ -48,6 +44,11 @@
 //!
 //! Error messages are never compared, which is what makes stubbing out
 //! `core::fmt` sound.
+//!
+//! Shapes that nanonbt's data model cannot express — units, tuple and
+//! struct variants, `serialize_bytes`, `Option` in a list, non-string map
+//! keys, the fastnbt array tokens — have no harness: the derive refuses
+//! them at compile time, so no runtime test can reach them.
 //!
 //! # What is not, and why
 //!
@@ -80,7 +81,7 @@
 //!
 //! Kani 0.67.0 builds with rustc 1.93 and refuses the workspace's
 //! `rust-version`, so lower it first, in a scratch copy or a CI checkout.
-//! All 141 harnesses take about 19 minutes with four jobs:
+//! All 135 harnesses take about 19 minutes with four jobs:
 //!
 //! ```sh
 //! sed -i 's/^rust-version = .*/rust-version = "1.93"/' Cargo.toml

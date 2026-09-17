@@ -1,13 +1,23 @@
 [package]
 name = "nanonbt"
-description = "no_std serde support for Minecraft's NBT format, byte-compatible with fastnbt"
+description = "no_std support for Minecraft's NBT format, byte-compatible with fastnbt"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[features]
+default = ["derive"]
+# Re-exports `#[derive(FromNBT, ToNBT)]` as `nanonbt::{FromNBT, ToNBT}`.
+derive = ["dep:nanonbt-derive"]
+# Keeps the `Serialize`/`Deserialize` implementations and `serde_compat`.
+serde = ["dep:serde"]
+
 [dependencies]
-serde = { version = "1", default-features = false, features = ["alloc"] }
+nanonbt-derive = { workspace = true, optional = true }
+serde = { version = "1", default-features = false, features = [
+  "alloc",
+], optional = true }
 
 [dev-dependencies]
 cesu8 = "1.1"

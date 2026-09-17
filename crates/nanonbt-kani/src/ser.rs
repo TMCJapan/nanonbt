@@ -7,15 +7,19 @@
 //!
 //! Field and variant names are one to three bytes long: every name goes
 //! through a few loops, which must unwind as far as the longest name. Only
-//! the array harnesses, with their 20-byte tokens, unwind further.
+//! the array harnesses unwind further.
+//!
+//! The shapes derive both `Serialize` (for fastnbt) and `ToNBT` (for
+//! nanonbt). Shapes with no `ToNBT` implementation at all — units, tuple
+//! and struct variants, `serialize_bytes` — are not here: the derive refuses
+//! them at compile time, so no runtime harness can.
 
-use std::collections::BTreeMap;
-
-use serde::{Serialize, Serializer};
+use nanonbt::ToNBT;
+use serde::Serialize;
 
 /// Asserts the two serializers agree on `value`, and that they succeed
 /// exactly when `expect_ok` says they should.
-fn check<T: Serialize>(value: &T, expect_ok: impl FnOnce(&T) -> bool) {
+fn check<T: Serialize + ToNBT>(value: &T, expect_ok: impl FnOnce(&T) -> bool) {
     let nano = nanonbt::to_bytes(value).ok();
     let fast = fastnbt::to_bytes(value).ok();
     assert!(
@@ -33,21 +37,15 @@ const fn err<T>(_: &T) -> bool {
     false
 }
 
-/// Asserts what [`check`] does for an array type of each crate holding the
-/// same data: nanonbt's type through nanonbt, and fastnbt's type through
-/// nanonbt, both give what fastnbt's type through fastnbt gives.
-fn check_arrays<N: Serialize, F: Serialize>(nano: &N, fast: &F, expect_ok: bool) {
-    let reference = fastnbt::to_bytes(fast).ok();
-    assert!(reference.is_some() == expect_ok, "unexpected outcome");
+/// Asserts both crates write the same bytes for their own array type holding
+/// the same data.
+fn check_arrays<N: ToNBT, F: Serialize>(nano: &N, fast: &F, expect_ok: bool) {
     let nano = nanonbt::to_bytes(nano).ok();
+    let fast = fastnbt::to_bytes(fast).ok();
+    assert!(fast.is_some() == expect_ok, "unexpected outcome");
     assert!(
-        same(nano.as_deref(), reference.as_deref()),
+        same(nano.as_deref(), fast.as_deref()),
         "nanonbt's array type disagrees"
-    );
-    let fast = nanonbt::to_bytes(fast).ok();
-    assert!(
-        same(fast.as_deref(), reference.as_deref()),
-        "fastnbt's array type disagrees"
     );
 }
 
@@ -92,82 +90,51 @@ fn any_option<T: kani::Arbitrary>() -> Option<T> {
     if kani::any() { Some(kani::any()) } else { None }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToNBT)]
 struct One<T> {
     v: T,
 }
 
-/// A value between two others, to catch a left out entry disturbing its
-/// neighbours.
-#[derive(Serialize)]
-struct Around<T> {
+/// An optional value between two others, to catch a left out entry
+/// disturbing its neighbours.
+#[derive(Serialize, ToNBT)]
+struct Around {
     a: i8,
-    v: T,
+    v: Option<i32>,
     z: i8,
 }
 
-#[derive(Serialize, kani::Arbitrary)]
+/// A lone optional entry. `Option` is only special on a struct's own field,
+/// so a generic `One<Option<i32>>` cannot express this.
+#[derive(Serialize, ToNBT)]
+struct Maybe {
+    v: Option<i32>,
+}
+
+#[derive(Serialize, ToNBT, kani::Arbitrary)]
 struct Inner {
     x: i16,
     y: f32,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToNBT)]
 struct Nested {
     a: i8,
     n: Inner,
     b: i64,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToNBT)]
 struct Wrap(Inner);
 
-#[derive(Serialize)]
+#[derive(Serialize, ToNBT)]
 struct Empty {}
 
-#[derive(Serialize)]
-struct UnitStruct;
-
-#[derive(Serialize, kani::Arbitrary)]
+#[derive(Serialize, ToNBT, kani::Arbitrary)]
 enum Unit {
     A,
     Bb,
     Ccc,
-}
-
-#[derive(Serialize, kani::Arbitrary)]
-enum Tuple {
-    Pair(i32, i32),
-    Mixed(i8, i64),
-    Nothing(),
-}
-
-#[derive(Serialize)]
-enum Newtype {
-    V(i32),
-}
-
-#[derive(Serialize)]
-enum StructVariant {
-    V { a: i32 },
-}
-
-/// Goes through `serialize_bytes`, which no std type does.
-struct Bytes<const N: usize>([u8; N]);
-
-impl<const N: usize> Serialize for Bytes<N> {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_bytes(&self.0)
-    }
-}
-
-/// An array token after an ordinary entry: the compound turns into an array
-/// and loses its End tag, malformed as that is.
-#[derive(Serialize)]
-struct LateToken {
-    a: i8,
-    #[serde(rename = "__fastnbt_int_array")]
-    late: Bytes<4>,
 }
 
 proofs! {
@@ -187,7 +154,7 @@ proofs! {
     fn prim_char() unwind 4 { check(&One { v: kani::any::<char>() }, ok) }
 
     /// `None` leaves the entry out.
-    fn option_i32() unwind 4 { check(&One { v: any_option::<i32>() }, ok) }
+    fn option_i32() unwind 4 { check(&Maybe { v: any_option::<i32>() }, ok) }
     fn option_some_between() unwind 4 {
         check(&Around { a: kani::any(), v: Some(kani::any::<i32>()), z: kani::any() }, ok);
     }
@@ -219,41 +186,12 @@ proofs! {
 
     /// The variant's name, as a string.
     fn unit_variant() unwind 4 { check(&One { v: kani::any::<Unit>() }, ok) }
-    /// The fields as a list, even of different types, without the name.
-    fn tuple_variant() unwind 4 { check(&One { v: kani::any::<Tuple>() }, ok) }
-    fn bytes_0() unwind 4 { check(&One { v: Bytes::<0>(kani::any()) }, ok) }
-    fn bytes_2() unwind 4 { check(&One { v: Bytes::<2>(kani::any()) }, ok) }
     fn root_newtype_struct() unwind 4 { check(&Wrap(kani::any()), ok) }
     fn root_empty_struct() unwind 4 { check(&Empty {}, ok) }
 
     fn root_i32() unwind 4 { check(&kani::any::<i32>(), err) }
     fn root_vec() unwind 4 { check(&any_vec::<i32, 1>(), err) }
-    fn root_option_struct() unwind 4 { check(&any_option::<Inner>(), err) }
     fn root_unit_variant() unwind 4 { check(&kani::any::<Unit>(), err) }
-
-    fn unit_field() unwind 4 { check(&One { v: () }, err) }
-    fn unit_struct_field() unwind 4 { check(&One { v: UnitStruct }, err) }
-    fn newtype_variant_field() unwind 4 { check(&One { v: Newtype::V(kani::any()) }, err) }
-    fn struct_variant_field() unwind 4 {
-        check(&One { v: StructVariant::V { a: kani::any() } }, err);
-    }
-    fn non_string_key() unwind 4 {
-        let mut map = BTreeMap::new();
-        map.insert(kani::any::<i8>(), kani::any::<i32>());
-        check(&One { v: map }, err);
-    }
-    /// Fails exactly when the element is `None`.
-    fn option_in_list() unwind 4 {
-        check(&One { v: vec![any_option::<i32>()] }, |one| one.v[0].is_some());
-    }
-    /// Fails after the list header and first element are written.
-    fn none_second_in_list() unwind 4 {
-        check(&One { v: vec![Some(kani::any::<i32>()), None] }, err);
-    }
-
-    fn late_array_token() unwind 22 {
-        check(&LateToken { a: kani::any(), late: Bytes(kani::any()) }, ok);
-    }
 }
 
 /// Array harnesses: `[len]` elements in a compound entry, or `root` for the
