@@ -118,12 +118,10 @@ macro_rules! array {
             pub(crate) fn from_be_bytes(bytes: &[u8]) -> Self {
                 const SIZE: usize = size_of::<$element>();
                 let data = bytes
-                    .chunks_exact(SIZE)
-                    .map(|chunk| {
-                        let mut array = [0; SIZE];
-                        array.copy_from_slice(chunk);
-                        <$element>::from_be_bytes(array)
-                    })
+                    .as_chunks::<SIZE>()
+                    .0
+                    .iter()
+                    .map(|chunk| <$element>::from_be_bytes(*chunk))
                     .collect();
                 Self { data }
             }

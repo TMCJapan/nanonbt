@@ -95,6 +95,7 @@ impl<'w> Serializer<'w> {
     }
 }
 
+/// Implements the listed `Serializer` methods as one refusal.
 macro_rules! refuse {
     ($error:ident: $($method:ident($($arg:ty),*) -> $ret:ty;)*) => {
         $(fn $method(self, $(_: $arg),*) -> Result<$ret> {
@@ -102,6 +103,8 @@ macro_rules! refuse {
         })*
     };
 }
+
+pub(crate) use refuse;
 
 impl<'a> ser::Serializer for &'a mut Serializer<'_> {
     type Ok = ();

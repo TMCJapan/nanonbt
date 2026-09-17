@@ -20,15 +20,8 @@ use crate::{
         LongArray,
     },
     error::{Error, Result},
+    ser::refuse,
 };
-
-macro_rules! array_refuse {
-    ($($method:ident($($arg:ty),*) -> $ret:ty;)*) => {
-        $(fn $method(self, $(_: $arg),*) -> Result<$ret> {
-            Err(Error::array_not_bytes())
-        })*
-    };
-}
 
 /// Any NBT value, owning its data.
 ///
@@ -617,14 +610,6 @@ impl ser::SerializeStructVariant for SerializeStructVariant {
 /// Turns a map key into a compound name.
 struct KeySerializer;
 
-macro_rules! key_refuse {
-    ($($method:ident($($arg:ty),*) -> $ret:ty;)*) => {
-        $(fn $method(self, $(_: $arg),*) -> Result<$ret> {
-            Err(Error::key_not_string())
-        })*
-    };
-}
-
 impl ser::Serializer for KeySerializer {
     type Ok = String;
     type Error = Error;
@@ -693,7 +678,7 @@ impl ser::Serializer for KeySerializer {
         value.serialize(self)
     }
 
-    key_refuse! {
+    refuse! { key_not_string:
         serialize_bool(bool) -> String;
         serialize_i128(i128) -> String;
         serialize_u128(u128) -> String;
@@ -771,7 +756,9 @@ impl ser::Serializer for NativeArraySerializer {
         })
     }
 
-    array_refuse! {
+    // No `serialize_i128`/`serialize_u128`: fastnbt leaves those to serde's
+    // default too, so both refuse them with the same message.
+    refuse! { array_not_bytes:
         serialize_bool(bool) -> Value;
         serialize_i8(i8) -> Value;
         serialize_i16(i16) -> Value;

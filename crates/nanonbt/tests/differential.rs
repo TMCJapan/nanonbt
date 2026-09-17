@@ -10,7 +10,7 @@ use std::{
     panic::{AssertUnwindSafe, catch_unwind},
 };
 
-use common::{from_fast, to_fast};
+use common::{from_fast, show, to_fast};
 use nanonbt::Value;
 use rt_testkit::{Pcg32, check_n, ensure, ensure_eq, generate};
 use serde::{Deserialize, Serialize};
@@ -75,7 +75,14 @@ fn list(rng: &mut Pcg32, depth: u32) -> Value {
 
 fn key(rng: &mut Pcg32) -> String {
     match rng.below(20) {
-        0 => "__fastnbt_byte_array".to_owned(),
+        // All three tokens: `array_tag` treats them alike, but only one of
+        // them was ever drawn, so the int and long paths went untested.
+        0 => [
+            "__fastnbt_byte_array",
+            "__fastnbt_int_array",
+            "__fastnbt_long_array",
+        ][rng.index(3)]
+        .to_owned(),
         1 => ["", "a", "Level", "\0", "🦀"][rng.index(5)].to_owned(),
         _ => generate::string(rng, 6),
     }
@@ -113,29 +120,6 @@ fn document(rng: &mut Pcg32) -> Vec<u8> {
 
 fn debug<T: std::fmt::Debug>(value: &T) -> String {
     format!("{value:?}")
-}
-
-/// [`debug`] of a tree, but floats by their bits.
-///
-/// `Debug` prints every NaN as `NaN`, and the generator makes NaNs of
-/// arbitrary payload on purpose, so `Debug` alone cannot tell them apart.
-fn show(value: &Value) -> String {
-    match value {
-        Value::Float(v) => format!("Float({:#010x})", v.to_bits()),
-        Value::Double(v) => format!("Double({:#018x})", v.to_bits()),
-        Value::List(list) => {
-            let shown: Vec<String> = list.iter().map(show).collect();
-            format!("List([{}])", shown.join(", "))
-        }
-        Value::Compound(map) => {
-            let shown: Vec<String> = map
-                .iter()
-                .map(|(key, value)| format!("{key:?}: {}", show(value)))
-                .collect();
-            format!("Compound({{{}}})", shown.join(", "))
-        }
-        other => debug(other),
-    }
 }
 
 /// [`show`] of a tree that may be missing.
@@ -216,24 +200,33 @@ fn typed_documents_deserialize_like_fastnbt() {
     }
 
     check_n("typed_documents_deserialize_like_fastnbt", 2048, |rng| {
-        let ignored = to_fast(compound(rng, 2, 3));
-        let source = Source {
-            a: 1,
-            level: BTreeMap::from([(generate::string(rng, 3), rng.next_u32().cast_signed())]),
-            list: (0..generate::len(rng, 3))
-                .map(|_| rng.next_u32().cast_signed())
-                .collect(),
-            flag: generate::i64_edgy(rng),
-            text: generate::string(rng, 5),
-            bytes: fastnbt::ByteArray::new(
-                generate::bytes(rng, 4)
-                    .into_iter()
-                    .map(u8::cast_signed)
+        // An `ignored` compound whose keys include an array token beside
+        // others is one fastnbt refuses, which used to leave `valid` empty
+        // for one case in twelve, and mutating nothing is no test at all.
+        let mut valid = Vec::new();
+        for _ in 0..8 {
+            let source = Source {
+                a: 1,
+                level: BTreeMap::from([(generate::string(rng, 3), rng.next_u32().cast_signed())]),
+                list: (0..generate::len(rng, 3))
+                    .map(|_| rng.next_u32().cast_signed())
                     .collect(),
-            ),
-            ignored,
-        };
-        let valid = fastnbt::to_bytes(&source).unwrap_or_default();
+                flag: generate::i64_edgy(rng),
+                text: generate::string(rng, 5),
+                bytes: fastnbt::ByteArray::new(
+                    generate::bytes(rng, 4)
+                        .into_iter()
+                        .map(u8::cast_signed)
+                        .collect(),
+                ),
+                ignored: to_fast(compound(rng, 2, 3)),
+            };
+            if let Ok(bytes) = fastnbt::to_bytes(&source) {
+                valid = bytes;
+                break;
+            }
+        }
+        ensure!(!valid.is_empty(), "no document to test");
         let bytes = if rng.bool() {
             valid
         } else {

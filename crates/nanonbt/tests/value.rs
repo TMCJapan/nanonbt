@@ -4,7 +4,7 @@ mod common;
 
 use std::collections::BTreeMap;
 
-use common::{from_fast, to_fast};
+use common::{from_fast, show, to_fast};
 use nanonbt::Value;
 use serde::Serialize;
 
@@ -46,13 +46,14 @@ fn document() -> Vec<u8> {
     .unwrap()
 }
 
-/// Compares by `Debug`, so that NaN equals itself.
+/// Compares floats by their bits, so that a NaN equals only the same NaN.
+///
+/// `document()` carries a NaN on purpose, and plain `Debug` prints every NaN
+/// the same way, so it cannot see a payload or sign changing.
 #[track_caller]
 fn assert_same_tree(actual: Option<&Value>, expected: Option<fastnbt::Value>) {
-    assert_eq!(
-        format!("{actual:?}"),
-        format!("{:?}", expected.map(from_fast))
-    );
+    let expected = expected.map(from_fast);
+    assert_eq!(actual.map(show), expected.as_ref().map(show));
 }
 
 /// A map in any key order, duplicates included.
@@ -76,6 +77,24 @@ fn assert_same_to_value<T: Serialize>(value: &T) -> Option<Value> {
         ),
     }
     actual.ok()
+}
+
+/// fastnbt panics on `value`, and nanonbt refuses it instead.
+///
+/// [`assert_same_to_value`] alone cannot pin this: if fastnbt ever stopped
+/// panicking, the case would slide into the comparing branch and the
+/// refusal this crate documents would stop being tested at all.
+#[track_caller]
+fn assert_refused_where_fastnbt_panics<T: Serialize>(value: &T) {
+    assert!(
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| fastnbt::to_value(value)))
+            .is_err(),
+        "fastnbt no longer panics"
+    );
+    assert!(
+        nanonbt::to_value(value).is_err(),
+        "nanonbt no longer refuses"
+    );
 }
 
 #[test]
@@ -103,10 +122,19 @@ fn trees_write_the_same_document() {
     let tree = nanonbt::from_bytes::<Value>(&bytes).unwrap();
     let written = nanonbt::to_bytes(&tree).unwrap();
     let reread = fastnbt::from_bytes::<fastnbt::Value>(&written).unwrap();
+    // Comparing lengths alone would pass for any corruption that keeps the
+    // total size, so compare the documents entry by entry as well; the two
+    // crates order compounds differently, so that is done on the trees.
     assert_eq!(
         fastnbt::to_bytes(&reread).unwrap().len(),
         bytes.len(),
         "same document, up to compound order"
+    );
+    let original = fastnbt::from_bytes::<fastnbt::Value>(&bytes).unwrap();
+    assert_eq!(
+        show(&from_fast(reread.clone())),
+        show(&from_fast(original)),
+        "same document, entry by entry"
     );
     assert_same_tree(Some(&tree), Some(reread));
 
@@ -189,23 +217,36 @@ fn serializable_values_convert_to_the_same_tree() {
     };
     assert!(assert_same_to_value(&everything).is_some());
 
-    // fastnbt panics on each of these.
-    assert_same_to_value(&None::<i8>);
-    assert_same_to_value(&());
-    assert_same_to_value(&UnitStruct);
-    assert_same_to_value(&Kind::Newtype(1));
-    assert_same_to_value(&Pairs(vec![(1.5f32, 1)]));
-    assert_same_to_value(&Pairs(vec![("k", 1), ("k", 2)]));
-    assert_same_to_value(&Pairs(vec![('c', 1), ('d', 2)]));
-    assert_same_to_value(&Pairs(vec![(true, 1)]));
-    assert_same_to_value(&BTreeMap::from([("__fastnbt_byte_array", 5)]));
-    assert_same_to_value(&BTreeMap::from([("__fastnbt_int_array", vec!["x"])]));
-    assert_same_to_value(&BTreeMap::from([("__fastnbt_long_array", vec![1.9f32; 8])]));
-    assert_same_to_value(&BTreeMap::from([(
-        "__fastnbt_int_array",
-        serde_bytes::Bytes::new(&[1, 2, 3, 4, 5]),
-    )]));
-    assert_same_to_value(&BTreeMap::from([("__fastnbt_byte_array", vec![300])]));
+    // fastnbt panics on these; nanonbt refuses them instead.
+    assert_refused_where_fastnbt_panics(&None::<i8>);
+    assert_refused_where_fastnbt_panics(&());
+    assert_refused_where_fastnbt_panics(&UnitStruct);
+    assert_refused_where_fastnbt_panics(&Kind::Newtype(1));
+    assert_refused_where_fastnbt_panics(&BTreeMap::from([("__fastnbt_byte_array", 5)]));
+    assert_refused_where_fastnbt_panics(&BTreeMap::from([("__fastnbt_int_array", vec!["x"])]));
+
+    // A non-string key: both refuse it, rather than either one panicking.
+    assert!(assert_same_to_value(&Pairs(vec![(1.5f32, 1)])).is_none());
+    assert!(assert_same_to_value(&Pairs(vec![(true, 1)])).is_none());
+
+    // And these both accept, so the trees themselves are what is compared:
+    // a duplicate key, a `char` key, an array token whose payload is a list
+    // of the wrong element type, one whose payload is a partial element, and
+    // one whose elements need the `as` truncation fastnbt does.
+    assert!(assert_same_to_value(&Pairs(vec![("k", 1), ("k", 2)])).is_some());
+    assert!(assert_same_to_value(&Pairs(vec![('c', 1), ('d', 2)])).is_some());
+    assert!(
+        assert_same_to_value(&BTreeMap::from([("__fastnbt_long_array", vec![1.9f32; 8])]))
+            .is_some()
+    );
+    assert!(
+        assert_same_to_value(&BTreeMap::from([(
+            "__fastnbt_int_array",
+            serde_bytes::Bytes::new(&[1, 2, 3, 4, 5]),
+        )]))
+        .is_some()
+    );
+    assert!(assert_same_to_value(&BTreeMap::from([("__fastnbt_byte_array", vec![300])])).is_some());
 }
 
 /// fastnbt panics on some input; nanonbt must refuse exactly those.

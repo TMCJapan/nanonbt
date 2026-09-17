@@ -37,21 +37,21 @@ impl<'de> Deserializer<'de> {
         }
     }
 
-    /// Opens a list or compound, refusing input that nests too deeply.
+    /// Reads a list or compound one level deeper, refusing input that nests
+    /// too deeply.
     ///
     /// Reading recurses once per level, and a stack overflow is an abort no
-    /// `Result` can carry, so the depth is bounded like the length is.
-    const fn enter(&mut self) -> Result<()> {
-        self.depth += 1;
-        if self.depth > self.opts.max_depth {
+    /// `Result` can carry, so the depth is bounded like the length is. Every
+    /// descent goes through here, so the level is given back however `f`
+    /// ends, and opening one without counting it is not expressible.
+    fn nested<R>(&mut self, f: impl FnOnce(&mut Self) -> Result<R>) -> Result<R> {
+        if self.depth >= self.opts.max_depth {
             return Err(Error::too_deep());
         }
-        Ok(())
-    }
-
-    /// Closes the list or compound [`Self::enter`] opened.
-    const fn leave(&mut self) {
+        self.depth += 1;
+        let result = f(self);
         self.depth -= 1;
+        result
     }
 
     const fn take(&mut self, n: usize) -> Result<&'de [u8]> {
@@ -114,28 +114,25 @@ impl<'de> Deserializer<'de> {
             TAG_BYTE_ARRAY => self.skip_array(1),
             TAG_INT_ARRAY => self.skip_array(4),
             TAG_LONG_ARRAY => self.skip_array(8),
-            TAG_COMPOUND => {
-                self.enter()?;
+            TAG_COMPOUND => self.nested(|de| {
                 loop {
-                    let tag = self.tag()?;
+                    let tag = de.tag()?;
                     if tag == TAG_END {
-                        break;
+                        return Ok(());
                     }
-                    self.skip_str()?;
-                    self.skip_value(tag)?;
+                    de.skip_str()?;
+                    de.skip_value(tag)?;
                 }
-                self.leave();
-                Ok(())
-            }
+            }),
             TAG_LIST => {
                 let element = self.tag()?;
                 let len = i32::from_be_bytes(self.take_array()?);
-                self.enter()?;
-                for _ in 0..len {
-                    self.skip_value(element)?;
-                }
-                self.leave();
-                Ok(())
+                self.nested(|de| {
+                    for _ in 0..len {
+                        de.skip_value(element)?;
+                    }
+                    Ok(())
+                })
             }
             // fastnbt panics here, skipping a list of End with elements.
             _ => Err(Error::list_of_end()),
@@ -173,13 +170,7 @@ impl<'de> de::Deserializer<'de> for &mut Deserializer<'de> {
             }
             self.seen_root = true;
         }
-        self.enter()?;
-        let map = visitor.visit_map(Compound {
-            de: &mut *self,
-            tag: TAG_END,
-        })?;
-        self.leave();
-        Ok(map)
+        self.nested(|de| visitor.visit_map(Compound { de, tag: TAG_END }))
     }
 
     serde::forward_to_deserialize_any! {
@@ -307,24 +298,9 @@ impl<'de> de::Deserializer<'de> for Payload<'_, 'de> {
                 if remaining > de.opts.max_seq_len {
                     return Err(Error::seq_too_long());
                 }
-                de.enter()?;
-                let seq = visitor.visit_seq(List {
-                    de: &mut *de,
-                    tag,
-                    remaining,
-                })?;
-                de.leave();
-                Ok(seq)
+                de.nested(|de| visitor.visit_seq(List { de, tag, remaining }))
             }
-            TAG_COMPOUND => {
-                de.enter()?;
-                let map = visitor.visit_map(Compound {
-                    de: &mut *de,
-                    tag: TAG_END,
-                })?;
-                de.leave();
-                Ok(map)
-            }
+            TAG_COMPOUND => de.nested(|de| visitor.visit_map(Compound { de, tag: TAG_END })),
             TAG_BYTE_ARRAY => Payload { de, ..self }.array(visitor, BYTE_ARRAY_TOKEN, 1),
             TAG_INT_ARRAY => Payload { de, ..self }.array(visitor, INT_ARRAY_TOKEN, 4),
             TAG_LONG_ARRAY => Payload { de, ..self }.array(visitor, LONG_ARRAY_TOKEN, 8),
@@ -560,5 +536,9 @@ impl<'de> de::SeqAccess<'de> for List<'_, 'de> {
         }
         self.remaining -= 1;
         seed.deserialize(Payload::new(self.de, self.tag)).map(Some)
+    }
+
+    fn size_hint(&self) -> Option<usize> {
+        Some(self.remaining)
     }
 }

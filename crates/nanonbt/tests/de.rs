@@ -342,7 +342,14 @@ fn skipping_a_list_of_end_with_elements_is_refused() {
         bytes.push(0x00);
         bytes
     };
-    assert!(nanonbt::from_bytes::<Empty>(&skipped(1)).is_err());
+    // Pinned, not just `is_err`: a miscounted skip, a changed depth count or
+    // a rejected tag would satisfy `is_err` without this being what refused.
+    assert_eq!(
+        nanonbt::from_bytes::<Empty>(&skipped(1))
+            .unwrap_err()
+            .to_string(),
+        "unexpected list of type 'end', which is not supported"
+    );
     // The divergence only exists while fastnbt still panics.
     let fast = std::panic::catch_unwind(|| fastnbt::from_bytes::<Empty>(&skipped(1)));
     assert!(fast.is_err(), "fastnbt no longer panics: {:?}", fast.ok());

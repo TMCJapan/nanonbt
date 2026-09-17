@@ -2,6 +2,29 @@
 
 use nanonbt::Value;
 
+/// [`Debug`] of a tree, but floats by their bits.
+///
+/// `Debug` prints every NaN as `NaN`, and the suites make NaNs of arbitrary
+/// payload on purpose, so `Debug` alone cannot tell them apart.
+pub fn show(value: &Value) -> String {
+    match value {
+        Value::Float(v) => format!("Float({:#010x})", v.to_bits()),
+        Value::Double(v) => format!("Double({:#018x})", v.to_bits()),
+        Value::List(list) => {
+            let shown: Vec<String> = list.iter().map(show).collect();
+            format!("List([{}])", shown.join(", "))
+        }
+        Value::Compound(map) => {
+            let shown: Vec<String> = map
+                .iter()
+                .map(|(key, value)| format!("{key:?}: {}", show(value)))
+                .collect();
+            format!("Compound({{{}}})", shown.join(", "))
+        }
+        other => format!("{other:?}"),
+    }
+}
+
 /// The same tree, with the compound maps swapped.
 pub fn from_fast(value: fastnbt::Value) -> Value {
     match value {

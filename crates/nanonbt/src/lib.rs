@@ -35,6 +35,25 @@
 //! - [`from_value`] presents an array as a map of one entry; fastnbt's never
 //!   runs out of entries.
 //! - There is no `from_reader` or `to_writer`, as there is no `std::io`.
+//!
+//! # Where the two readers disagree
+//!
+//! [`from_bytes`] and [`from_value`] follow fastnbt separately, and fastnbt's
+//! own two paths do not always agree, so neither does this:
+//!
+//! - A fixed-size target shorter than the list it reads — a tuple or an
+//!   array — leaves the elements it did not take unread, and the next field
+//!   is then read out of the list's payload rather than the compound. A
+//!   document that claims a list of 11 and is deserialized into a 2-tuple
+//!   therefore yields a following field built from bytes inside that list.
+//!   [`from_value`] refuses the same tree as too long. Do not read untrusted
+//!   documents into fixed-size targets; use [`alloc::vec::Vec`] or
+//!   [`Value`], both of which consume the list.
+//! - A `char` round trips through [`to_value`] and [`from_value`] but not
+//!   through [`to_bytes`] and [`from_bytes`]: it is written as `TAG_Int` and
+//!   read back as an integer, which serde's `char` visitor refuses. Bytes
+//!   are the mirror image — a `serde_bytes` field reads from a byte array
+//!   through [`from_bytes`] but not through [`from_value`].
 
 #![no_std]
 
@@ -154,6 +173,13 @@ impl DeOpts {
     /// depth Minecraft itself accepts, and fits a stack of about half a
     /// megabyte. A smaller stack needs a smaller bound: measured here, a
     /// level costs a few hundred bytes, so 64 KiB holds about 70 of them.
+    ///
+    /// This bounds reading only. [`to_bytes`], [`to_value`], [`from_value`]
+    /// and dropping a [`Value`] all recurse once per level as well, with no
+    /// bound of their own, so a tree deeper than this that was *not* built by
+    /// [`from_bytes`] still overflows the stack and aborts. Reading costs the
+    /// most stack per level, so a [`from_bytes`] then [`to_bytes`] round trip
+    /// within this bound is safe.
     #[must_use]
     pub const fn max_depth(mut self, max_depth: usize) -> Self {
         self.max_depth = max_depth;
