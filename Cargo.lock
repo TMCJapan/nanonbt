@@ -108,8 +108,8 @@ dependencies = [
 name = "nanonbt"
 version = "0.1.0"
 dependencies = [
- "cesu8",
  "fastnbt",
+ "nanocesu8",
  "nanonbt-derive",
  "rt-testkit",
  "serde",

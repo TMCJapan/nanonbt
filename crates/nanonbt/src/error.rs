@@ -50,6 +50,12 @@ impl Error {
         ))
     }
 
+    pub(crate) const fn borrowed_cesu8() -> Self {
+        Self(Kind::Static(
+            "CESU-8 string is owned and cannot be borrowed; use Cow<Cesu8> or Cesu8Buf",
+        ))
+    }
+
     pub(crate) const fn invalid_char() -> Self {
         Self(Kind::Static("integer is not a unicode scalar value"))
     }

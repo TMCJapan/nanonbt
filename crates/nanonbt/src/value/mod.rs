@@ -15,6 +15,8 @@ use alloc::{
     vec::Vec,
 };
 
+use nanocesu8::Cesu8;
+
 use crate::{
     DeOpts,
     arrays::{ByteArray, IntArray, LongArray},
@@ -175,8 +177,8 @@ impl Value {
 
 /// Interprets a [`Value`] as a `T`.
 ///
-/// Strings and compound names borrow from the tree, so a `&'de str` field
-/// stays zero-copy.
+/// Strings and compound names borrow from the tree, so a `&'de str` or
+/// `&'de Cesu8` field stays zero-copy.
 pub fn from_value<'de, T: FromNBT<'de>>(value: &'de Value) -> Result<T> {
     let mut reader = ValueReader::new(value);
     T::read(value.tag(), &mut reader)
@@ -326,6 +328,13 @@ impl<'de> Read<'de> for ValueReader<'de> {
     fn read_str(&mut self) -> Result<Cow<'de, str>> {
         match self.take_value()? {
             Value::String(text) => Ok(Cow::Borrowed(text)),
+            other => Err(Error::invalid_tag(other.tag())),
+        }
+    }
+
+    fn read_cesu8(&mut self) -> Result<Cow<'de, Cesu8>> {
+        match self.take_value()? {
+            Value::String(text) => Ok(Cow::Borrowed(Cesu8::from_str(text))),
             other => Err(Error::invalid_tag(other.tag())),
         }
     }

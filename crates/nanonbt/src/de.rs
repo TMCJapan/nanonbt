@@ -7,10 +7,11 @@ use serde::de::{
     value::{BorrowedBytesDeserializer, BorrowedStrDeserializer},
 };
 
+use nanocesu8::from_java_cesu8;
+
 use crate::{
     DeOpts,
     arrays::{BYTE_ARRAY_TOKEN, INT_ARRAY_TOKEN, LONG_ARRAY_TOKEN},
-    cesu8,
     error::{Error, Result},
     tag::{
         TAG_BYTE, TAG_BYTE_ARRAY, TAG_COMPOUND, TAG_DOUBLE, TAG_END, TAG_FLOAT, TAG_INT,
@@ -148,7 +149,7 @@ impl<'de> Deserializer<'de> {
     fn str(&mut self) -> Result<Cow<'de, str>> {
         let len = u16::from_be_bytes(self.take_array()?);
         let bytes = self.take(usize::from(len))?;
-        cesu8::from_java_cesu8(bytes).map_err(|_| Error::nonunicode_string())
+        from_java_cesu8(bytes).map_err(|_| Error::nonunicode_string())
     }
 }
 

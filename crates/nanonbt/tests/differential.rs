@@ -380,22 +380,3 @@ fn trees_convert_like_fastnbt() {
         Ok(())
     });
 }
-
-#[test]
-fn modified_utf8_matches_the_cesu8_crate() {
-    // 4096, not the default: the encoder has no proof at all, and the
-    // decoder's covers one byte, so this suite carries the module.
-    check_n("modified_utf8_matches_the_cesu8_crate", 4096, |rng| {
-        let text = generate::string(rng, 12);
-        let encoded = nanonbt::cesu8::to_java_cesu8(&text);
-        ensure_eq!(&*encoded, &*cesu8::to_java_cesu8(&text), "encode {text:?}");
-
-        let bytes = generate::mutate(rng, &encoded);
-        ensure_eq!(
-            nanonbt::cesu8::from_java_cesu8(&bytes).ok(),
-            cesu8::from_java_cesu8(&bytes).ok(),
-            "decode {bytes:02x?}"
-        );
-        Ok(())
-    });
-}

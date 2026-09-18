@@ -3,12 +3,16 @@
 //! [`FromNBT`] implementations read a value's payload only;
 //! the tag has already been consumed by whoever owns the entry and is passed
 //! along as an argument, so that a type can dispatch on it. Strings decode
-//! from modified UTF-8, borrowing from the input when they are plain UTF-8.
+//! from modified UTF-8, borrowing from the input when they are plain UTF-8;
+//! [`Read::read_cesu8`] borrows the raw bytes instead, so a string that is
+//! not UTF-8 borrows too.
 
 use alloc::borrow::Cow;
 
+use nanocesu8::{Cesu8, from_java_cesu8};
+
 use crate::{
-    DeOpts, cesu8,
+    DeOpts,
     error::{Error, Result},
     tag::{
         TAG_BYTE, TAG_BYTE_ARRAY, TAG_COMPOUND, TAG_DOUBLE, TAG_END, TAG_FLOAT, TAG_INT,
@@ -36,6 +40,13 @@ pub trait Read<'de> {
 
     /// Reads a length-prefixed modified UTF-8 string.
     fn read_str(&mut self) -> Result<Cow<'de, str>>;
+
+    /// Reads a length-prefixed modified UTF-8 string without decoding it.
+    ///
+    /// The bytes borrow from the input whenever the reader can, so a string
+    /// that is not UTF-8 — a NUL as `C0 80`, a non-BMP character as a
+    /// surrogate pair — can be kept as it was written.
+    fn read_cesu8(&mut self) -> Result<Cow<'de, Cesu8>>;
 
     fn read_i8(&mut self) -> Result<i8>;
 
@@ -127,8 +138,7 @@ impl<'de> Reader<'de> {
 
     /// Skips a string without decoding it.
     fn skip_str(&mut self) -> Result<()> {
-        let len = u16::from_be_bytes(self.take_array()?);
-        self.take(usize::from(len)).map(drop)
+        self.take_str_bytes().map(drop)
     }
 
     /// Skips a value by its structure alone, decoding nothing.
@@ -182,10 +192,18 @@ impl<'de> Reader<'de> {
         self.take(n)
     }
 
-    fn str(&mut self) -> Result<Cow<'de, str>> {
+    /// The bytes of a length-prefixed string, decoded by the caller.
+    fn take_str_bytes(&mut self) -> Result<&'de [u8]> {
         let len = u16::from_be_bytes(self.take_array()?);
-        let bytes = self.take(usize::from(len))?;
-        cesu8::from_java_cesu8(bytes).map_err(|_| Error::nonunicode_string())
+        self.take(usize::from(len))
+    }
+
+    fn str(&mut self) -> Result<Cow<'de, str>> {
+        from_java_cesu8(self.take_str_bytes()?).map_err(|_| Error::nonunicode_string())
+    }
+
+    fn cesu8(&mut self) -> Result<&'de Cesu8> {
+        Cesu8::new(self.take_str_bytes()?).map_err(|_| Error::nonunicode_string())
     }
 }
 
@@ -200,6 +218,10 @@ impl<'de> Read<'de> for Reader<'de> {
 
     fn read_str(&mut self) -> Result<Cow<'de, str>> {
         self.str()
+    }
+
+    fn read_cesu8(&mut self) -> Result<Cow<'de, Cesu8>> {
+        self.cesu8().map(Cow::Borrowed)
     }
 
     fn skip_name(&mut self) -> Result<()> {

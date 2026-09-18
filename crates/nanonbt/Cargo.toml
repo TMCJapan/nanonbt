@@ -14,13 +14,13 @@ derive = ["dep:nanonbt-derive"]
 serde = ["dep:serde"]
 
 [dependencies]
+nanocesu8.workspace = true
 nanonbt-derive = { workspace = true, optional = true }
 serde = { version = "1", default-features = false, features = [
   "alloc",
 ], optional = true }
 
 [dev-dependencies]
-cesu8 = "1.1"
 fastnbt = "2.6.3"
 rt-testkit.workspace = true
 serde = { version = "1", features = ["derive"] }

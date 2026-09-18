@@ -7,8 +7,9 @@
 
 use alloc::vec::Vec;
 
+use nanocesu8::{Cesu8, to_java_cesu8};
+
 use crate::{
-    cesu8,
     error::{Error, Result},
     tag::TAG_END,
 };
@@ -36,6 +37,12 @@ pub trait Write {
 
     /// Writes a length-prefixed modified UTF-8 string.
     fn write_str(&mut self, v: &str) -> Result<()>;
+
+    /// Writes a length-prefixed string as its exact modified UTF-8 bytes.
+    ///
+    /// Unlike [`write_str`](Write::write_str), nothing is re-encoded: a raw
+    /// NUL or four-byte sequence is written as it is.
+    fn write_cesu8(&mut self, v: &Cesu8) -> Result<()>;
 
     fn write_i8(&mut self, v: i8) -> Result<()>;
 
@@ -69,6 +76,14 @@ impl<'w> Writer<'w> {
     pub const fn into_inner(self) -> &'w mut Vec<u8> {
         self.out
     }
+
+    /// Writes bytes after their `u16` length.
+    fn write_prefixed(&mut self, bytes: &[u8]) -> Result<()> {
+        let len = u16::try_from(bytes.len()).map_err(|_| Error::string_too_long())?;
+        self.out.extend_from_slice(&len.to_be_bytes());
+        self.out.extend_from_slice(bytes);
+        Ok(())
+    }
 }
 
 impl Write for Writer<'_> {
@@ -78,11 +93,11 @@ impl Write for Writer<'_> {
     }
 
     fn write_str(&mut self, v: &str) -> Result<()> {
-        let bytes = cesu8::to_java_cesu8(v);
-        let len = u16::try_from(bytes.len()).map_err(|_| Error::string_too_long())?;
-        self.out.extend_from_slice(&len.to_be_bytes());
-        self.out.extend_from_slice(&bytes);
-        Ok(())
+        self.write_prefixed(&to_java_cesu8(v))
+    }
+
+    fn write_cesu8(&mut self, v: &Cesu8) -> Result<()> {
+        self.write_prefixed(v.as_bytes())
     }
 
     fn write_i8(&mut self, v: i8) -> Result<()> {

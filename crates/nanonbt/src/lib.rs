@@ -40,10 +40,13 @@
 //! cannot appear in a list. [`Vec`], arrays and slices are lists; the empty
 //! list is written as a list of End, the way fastnbt writes one.
 //!
-//! Strings borrow: [`FromNBT`] is implemented for `&'de str` and
-//! `Cow<'de, str>`. A string that needs no decoding borrows from the input;
-//! one written in modified UTF-8 (a NUL or a non-BMP character) decodes into
-//! an owned `Cow`, and reading it into a `&'de str` is an error.
+//! Strings borrow: [`FromNBT`] is implemented for `&'de str`,
+//! `Cow<'de, str>`, `&'de Cesu8`, [`Cesu8Buf`] and `Cow<'de, Cesu8>`. A
+//! string that needs no decoding borrows from the input; one written in
+//! modified UTF-8 (a NUL or a non-BMP character) decodes into an owned
+//! `Cow<str>`, and reading it into a `&'de str` is an error. A [`Cesu8`]
+//! keeps the bytes as they were written instead, so even that string
+//! borrows; [`Cesu8::decode`] yields the text on demand.
 //!
 //! # Where fastnbt is not followed
 //!
@@ -66,7 +69,6 @@
 extern crate alloc;
 
 mod arrays;
-pub mod cesu8;
 #[cfg(feature = "serde")]
 pub mod de;
 pub mod error;
@@ -82,6 +84,7 @@ use alloc::{string::String, vec::Vec};
 
 pub use arrays::{ByteArray, IntArray, LongArray};
 pub use error::{Error, Result};
+pub use nanocesu8::{Cesu8, Cesu8Buf};
 #[cfg(feature = "derive")]
 pub use nanonbt_derive::{FromNBT, ToNBT};
 pub use read::{FromNBT, Read, Reader};

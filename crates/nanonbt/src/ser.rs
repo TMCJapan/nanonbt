@@ -8,9 +8,10 @@ use alloc::{string::String, vec::Vec};
 
 use serde::ser::{self, Impossible, Serialize};
 
+use nanocesu8::to_java_cesu8;
+
 use crate::{
     arrays::{BYTE_ARRAY_TOKEN, INT_ARRAY_TOKEN, LONG_ARRAY_TOKEN},
-    cesu8,
     error::{Error, Result},
     tag::{
         TAG_BYTE, TAG_BYTE_ARRAY, TAG_COMPOUND, TAG_DOUBLE, TAG_END, TAG_FLOAT, TAG_INT,
@@ -69,7 +70,7 @@ fn write_len(out: &mut Vec<u8>, len: usize) -> Result<()> {
 
 /// Writes a length-prefixed modified UTF-8 string.
 fn write_str(out: &mut Vec<u8>, text: &str) -> Result<()> {
-    write_prefixed(out, &cesu8::to_java_cesu8(text))
+    write_prefixed(out, &to_java_cesu8(text))
 }
 
 /// Writes bytes after their `u16` length.
@@ -636,7 +637,7 @@ impl ser::Serializer for NameSerializer<'_> {
     type SerializeStructVariant = Impossible<(), Error>;
 
     fn serialize_str(self, v: &str) -> Result<()> {
-        self.name.extend_from_slice(&cesu8::to_java_cesu8(v));
+        self.name.extend_from_slice(&to_java_cesu8(v));
         Ok(())
     }
 

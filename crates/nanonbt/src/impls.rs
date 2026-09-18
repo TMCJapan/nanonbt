@@ -6,6 +6,8 @@
 
 use alloc::{borrow::Cow, collections::BTreeMap, string::String, vec::Vec};
 
+use nanocesu8::{Cesu8, Cesu8Buf};
+
 use crate::{
     error::{Error, Result},
     read::{FromNBT, Read},
@@ -193,6 +195,36 @@ impl ToNBT for Cow<'_, str> {
     }
 }
 
+impl ToNBT for Cesu8 {
+    fn tag(&self) -> u8 {
+        TAG_STRING
+    }
+
+    fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
+        writer.write_cesu8(self)
+    }
+}
+
+impl ToNBT for Cesu8Buf {
+    fn tag(&self) -> u8 {
+        TAG_STRING
+    }
+
+    fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
+        writer.write_cesu8(self)
+    }
+}
+
+impl ToNBT for Cow<'_, Cesu8> {
+    fn tag(&self) -> u8 {
+        TAG_STRING
+    }
+
+    fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
+        writer.write_cesu8(self)
+    }
+}
+
 /// Only a string the input already spells as UTF-8 can be borrowed.
 impl<'de> FromNBT<'de> for &'de str {
     fn read<R: Read<'de>>(tag: u8, reader: &mut R) -> Result<Self> {
@@ -215,6 +247,31 @@ impl<'de> FromNBT<'de> for Cow<'de, str> {
     fn read<R: Read<'de>>(tag: u8, reader: &mut R) -> Result<Self> {
         expect(tag, TAG_STRING)?;
         reader.read_str()
+    }
+}
+
+/// A `Cesu8` borrows whenever the reader can lend its bytes.
+impl<'de> FromNBT<'de> for &'de Cesu8 {
+    fn read<R: Read<'de>>(tag: u8, reader: &mut R) -> Result<Self> {
+        expect(tag, TAG_STRING)?;
+        match reader.read_cesu8()? {
+            Cow::Borrowed(text) => Ok(text),
+            Cow::Owned(_) => Err(Error::borrowed_cesu8()),
+        }
+    }
+}
+
+impl<'de> FromNBT<'de> for Cesu8Buf {
+    fn read<R: Read<'de>>(tag: u8, reader: &mut R) -> Result<Self> {
+        expect(tag, TAG_STRING)?;
+        Ok(reader.read_cesu8()?.into_owned())
+    }
+}
+
+impl<'de> FromNBT<'de> for Cow<'de, Cesu8> {
+    fn read<R: Read<'de>>(tag: u8, reader: &mut R) -> Result<Self> {
+        expect(tag, TAG_STRING)?;
+        reader.read_cesu8()
     }
 }
 
