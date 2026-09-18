@@ -1,0 +1,14 @@
+[package]
+name = "nanocesu8"
+description = "no_std Java modified UTF-8 (CESU-8): zero-copy validation, iteration, decoding and encoding"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dev-dependencies]
+cesu8 = "1.1"
+rt-testkit.workspace = true
+
+[lints]
+workspace = true

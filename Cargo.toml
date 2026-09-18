@@ -10,6 +10,7 @@ license = "MIT OR Apache-2.0"
 rust-version = "1.98"
 
 [workspace.dependencies]
+nanocesu8 = { path = "crates/nanocesu8" }
 nanonbt = { path = "crates/nanonbt" }
 nanonbt-derive = { path = "crates/nanonbt-derive" }
 proc-macro2 = "1"
