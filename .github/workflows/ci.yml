@@ -117,13 +117,13 @@ jobs:
         with:
           key: ${{ matrix.target }}
       - name: clippy
-        run: cargo clippy -p rt-core -p rt-proto -p nanonbt --target ${{ matrix.target }} --locked -- -D warnings
+        run: cargo clippy -p rt-core -p rt-proto -p nanonbt -p nanocesu8 --target ${{ matrix.target }} --locked -- -D warnings
       # The derive macro is a host build dependency; without it nanonbt is
       # the bare traits, which must still cross-compile.
       - name: clippy (no default features)
         run: cargo clippy -p nanonbt --target ${{ matrix.target }} --no-default-features --locked -- -D warnings
       - name: build
-        run: cargo build -p rt-core -p rt-proto -p nanonbt --target ${{ matrix.target }} --locked --release
+        run: cargo build -p rt-core -p rt-proto -p nanonbt -p nanocesu8 --target ${{ matrix.target }} --locked --release
       - name: build (no default features)
         run: cargo build -p nanonbt --target ${{ matrix.target }} --no-default-features --locked --release
 
