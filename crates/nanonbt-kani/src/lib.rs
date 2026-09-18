@@ -19,16 +19,19 @@
 //!   an entry and at the root, nanonbt's type through nanonbt gives what
 //!   fastnbt's type through fastnbt gives.
 //! - `de`: for each of 42 documents, written by hand with fixed tags,
-//!   names and lengths and symbolic payloads, `nanonbt::from_bytes` and
-//!   `fastnbt::from_bytes` read the same value or both refuse it, and which
-//!   of the two it is. The documents cover every scalar tag into the type of
-//!   its own width, readings fastnbt's visitors would convert but this crate
-//!   refuses (a `Short` as a `bool`, an `Int` as an `i64`), lists of 0 to 2
-//!   Ints and the list of End that old chunks use for an empty one, both
-//!   crates' array types from arrays of 0 to 2 elements, read through both
-//!   crates, and the same arrays into a `Vec`, which both refuse, an int
-//!   array of 4 as `i128` and `u128`, a compound in a compound, network NBT,
-//!   entries the struct has no field for, and `Option` present and absent.
+//!   names and lengths, and a payload symbolic only where the document is
+//!   read, `nanonbt::from_bytes` and `fastnbt::from_bytes` read the same
+//!   value or both refuse it, and which of the two it is. The documents
+//!   cover every scalar tag into the type of its own width, a signed scalar
+//!   into the unsigned type of the same width, which nanonbt reads by bits
+//!   and fastnbt refuses when negative, readings fastnbt's visitors would
+//!   convert but this crate refuses (a `Short` as a `bool`, an `Int` as an
+//!   `i64`), lists of 0 to 2 Ints and the list of End that old chunks use
+//!   for an empty one, both crates' array types from arrays of 0 to 2
+//!   elements, read through both crates, and the same arrays into a `Vec`,
+//!   which both refuse, an int array of 4 as `i128` and `u128`, a compound
+//!   in a compound, network NBT, entries the struct has no field for, and
+//!   `Option` present and absent.
 //! - `value`: for scalars, `nanonbt::to_value` and `fastnbt::to_value` make
 //!   the same value, and `from_value` reads their own `Value` into the same
 //!   `T`: every scalar variant into the type of its own width, including

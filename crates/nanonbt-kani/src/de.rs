@@ -1,8 +1,9 @@
 //! `nanonbt::from_bytes` against `fastnbt::from_bytes`.
 //!
 //! Each harness writes a document by hand, with fixed tags, names and
-//! lengths and symbolic payloads, then asserts that both crates read it
-//! into the same value or both refuse it, and which of the two it is.
+//! lengths, and a payload symbolic only where it is read, then asserts that
+//! both crates read it into the same value or both refuse it, and which of
+//! the two it is.
 //!
 //! Tags are matched strictly here and converted in fastnbt, so a harness
 //! that reads a value under a tag of another width pins nanonbt's refusal
@@ -171,6 +172,35 @@ scalars! {
     float: FLOAT f32 => f32, unwind 4;
     double: DOUBLE f64 => f64, unwind 4;
     bool_from_byte: BYTE i8 => bool, unwind 4;
+}
+
+/// Harnesses reading a symbolic signed scalar under its own tag as the
+/// unsigned type of the same width. nanonbt reinterprets the bits; fastnbt
+/// range-checks, so it refuses negatives; where it accepts, they agree.
+macro_rules! unsigned {
+    ($($name:ident: $tag:ident $from:ty => $to:ty, unwind $unwind:tt;)*) => {
+        proofs! {
+            $(
+                fn $name() unwind $unwind {
+                    let v: $from = kani::any();
+                    let bytes = scalar($tag, &v.to_be_bytes());
+                    let nano = nanonbt::from_bytes::<One<$to>>(bytes.bytes()).ok();
+                    assert!(
+                        nano.as_ref().map(|one| one.v) == Some(v as $to),
+                        "nanonbt reinterprets the bits",
+                    );
+                    let fast = fastnbt::from_bytes::<One<$to>>(bytes.bytes()).ok();
+                    assert!(
+                        fast.as_ref().map(|one| one.v) == <$to>::try_from(v).ok(),
+                        "fastnbt converts in range only",
+                    );
+                }
+            )*
+        }
+    };
+}
+
+unsigned! {
     u8_from_byte: BYTE i8 => u8, unwind 4;
     u16_from_short: SHORT i16 => u16, unwind 4;
     u32_from_int: INT i32 => u32, unwind 4;
@@ -178,14 +208,15 @@ scalars! {
 }
 
 /// The same tags read as a type of another width or kind, which nanonbt
-/// refuses: fastnbt's visitors would convert them.
+/// refuses: fastnbt's visitors would convert them. The payload is never
+/// read, so a fixed one is used; a symbolic one only makes CBMC prove the
+/// tag decides the outcome, which it does slowly.
 macro_rules! strict {
     ($($name:ident: $tag:ident $from:ty => $to:ty, unwind $unwind:tt;)*) => {
         proofs! {
             $(
                 fn $name() unwind $unwind {
-                    let v: $from = kani::any();
-                    refuse::<One<$to>>(scalar($tag, &v.to_be_bytes()).bytes());
+                    refuse::<One<$to>>(scalar($tag, &<$from>::default().to_be_bytes()).bytes());
                 }
             )*
         }
@@ -304,10 +335,10 @@ proofs! {
     fn option_absent() unwind 4 {
         check::<Maybe>(Nbt::root().end().bytes(), true);
     }
-    /// A tag of another width is not an `Option`'s payload.
+    /// A tag of another width is not an `Option`'s payload. The payload is
+    /// never read, so a fixed one is used, as in `strict!`.
     fn option_wrong_tag() unwind 4 {
-        let v: i16 = kani::any();
-        refuse::<Maybe>(scalar(SHORT, &v.to_be_bytes()).bytes());
+        refuse::<Maybe>(scalar(SHORT, &0i16.to_be_bytes()).bytes());
     }
 }
 
