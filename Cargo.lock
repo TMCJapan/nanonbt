@@ -105,6 +105,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "nanocesu8-kani"
+version = "0.1.0"
+dependencies = [
+ "cesu8",
+ "nanocesu8",
+]
+
+[[package]]
 name = "nanonbt"
 version = "0.1.0"
 dependencies = [
@@ -129,7 +137,6 @@ dependencies = [
 name = "nanonbt-kani"
 version = "0.1.0"
 dependencies = [
- "cesu8",
  "fastnbt",
  "nanonbt",
  "serde",

@@ -143,7 +143,8 @@ jobs:
       - name: build
         run: cargo build -p rt-client --target wasm32-unknown-unknown --locked --release
 
-  # Model-checked agreement between nanonbt and fastnbt (crates/nanonbt-kani).
+  # Model-checked agreement: nanonbt against fastnbt (crates/nanonbt-kani),
+  # nanocesu8 against the cesu8 crate (crates/nanocesu8-kani).
   kani:
     runs-on: ubuntu-24.04
     # The proofs take about 19 minutes; `--harness-timeout` alone would let a
@@ -178,6 +179,8 @@ jobs:
       # four of them fit the runner's 16 GB.
       - name: prove
         run: cargo kani -p nanonbt-kani -Z stubbing -Z unstable-options --harness-timeout 300 --output-format terse -j 4
+      - name: prove nanocesu8
+        run: cargo kani -p nanocesu8-kani -Z stubbing -Z unstable-options --harness-timeout 300 --output-format terse -j 4
 
   # One required check for branch protection.
   ci:

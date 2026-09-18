@@ -10,7 +10,6 @@ rust-version.workspace = true
 # Pinned exactly, because `cargo kani` takes no `--locked`: what these
 # proofs attest is agreement with the fastnbt the rest of CI tests against.
 [dependencies]
-cesu8 = "=1.1.0"
 fastnbt = "=2.6.3"
 nanonbt.workspace = true
 serde = { version = "1", features = ["derive"] }

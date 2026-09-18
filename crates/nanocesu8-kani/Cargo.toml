@@ -1,0 +1,17 @@
+[package]
+name = "nanocesu8-kani"
+description = "Kani model-checking proofs that nanocesu8 agrees with the cesu8 crate"
+publish = false
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+# Pinned exactly, because `cargo kani` takes no `--locked`: what these
+# proofs attest is agreement with the `cesu8` the rest of CI tests against.
+[dependencies]
+cesu8 = "=1.1.0"
+nanocesu8.workspace = true
+
+[lints]
+workspace = true

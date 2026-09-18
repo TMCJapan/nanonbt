@@ -38,8 +38,6 @@
 //!   `char` from Int, readings fastnbt converts but this crate refuses (a
 //!   Byte as an i32, an Int as a bool or an i64, a Float as an f64), and an
 //!   int array of 4 as `i128` and `u128` both ways.
-//! - `cesu8`: nanonbt's decoder agrees with the `cesu8` crate's on every
-//!   single byte.
 //! - `stubs`: the stand-ins that all other harnesses run with agree with
 //!   the real functions on every input: `core::slice::memchr::memchr` at
 //!   each length the harnesses give it, `core::str::from_utf8` up to 8
@@ -66,11 +64,8 @@
 //!   under 30 seconds, but comparing their outputs exhausts 5 to 8 GB.
 //!   `[Inner; 2]` times out instead.
 //! - A `BTreeMap`, even of two one-byte keys.
-//! - A symbolic `char` through CESU-8: the `cesu8` crate's encoder times
-//!   out on its own, and nanonbt's encoder and decoder together exhaust
-//!   5 GB.
-//! - Decoding two symbolic bytes or more: both decoders together, or
-//!   nanonbt's on three, exhaust 5 GB; nanonbt's alone on two times out.
+//! - CESU-8, which `crates/nanoncesu8-kani` proves on its own: a symbolic
+//!   `char` through the encoder, and decoding two symbolic bytes or more.
 //! - `Value::Compound`, whose fastnbt form is a `HashMap`, and
 //!   `Value::List`: a `Vec` of either crate's `Value` does not finish in
 //!   3 minutes, in `to_value` or in `from_value`.
@@ -84,7 +79,7 @@
 //!
 //! Kani 0.67.0 builds with rustc 1.93 and refuses the workspace's
 //! `rust-version`, so lower it first, in a scratch copy or a CI checkout.
-//! All 135 harnesses take about 19 minutes with four jobs:
+//! All 134 harnesses take about 19 minutes with four jobs:
 //!
 //! ```sh
 //! sed -i 's/^rust-version = .*/rust-version = "1.93"/' Cargo.toml
@@ -120,8 +115,6 @@ macro_rules! proofs {
     };
 }
 
-#[cfg(kani)]
-mod cesu8;
 #[cfg(kani)]
 mod de;
 #[cfg(kani)]
