@@ -6,7 +6,8 @@
 //!
 //! Run with `cargo bench -p nanocesu8 --bench compare`, or add `-- --quick`
 //! for a rough pass. A single group or input can be selected, as in
-//! `cargo bench -p nanocesu8 --bench compare -- decode/mutf8`.
+//! `cargo bench -p nanocesu8 --bench compare -- decode/mutf8`. Add
+//! `--features simd` to run the `nanocesu8` entries on the vectorized paths.
 
 use std::{hint::black_box, time::Duration};
 

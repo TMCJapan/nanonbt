@@ -16,6 +16,11 @@
 //! the canonical modified UTF-8 spelling, so bytes that mixed the two forms
 //! do not round trip byte for byte.
 //!
+//! The `simd` feature vectorizes the two hot scans: deciding whether bytes
+//! are UTF-8 runs through `simdutf8`, and deciding whether encoding can
+//! borrow runs 32 bytes at a time through the `wide` crate. What is
+//! accepted, borrowed and decoded does not change.
+//!
 //! ```
 //! use nanocesu8::Cesu8;
 //!
@@ -35,6 +40,9 @@ mod borrowed;
 mod error;
 mod modified;
 mod owned;
+#[cfg(feature = "simd")]
+mod simd;
+mod utf8;
 
 use alloc::borrow::Cow;
 
@@ -47,7 +55,7 @@ pub use owned::Cesu8Buf;
 /// Plain UTF-8 is accepted as is, raw NUL and four-byte sequences included.
 /// Anything else must be modified UTF-8 throughout.
 pub fn from_java_cesu8(bytes: &[u8]) -> Result<Cow<'_, str>, DecodeError> {
-    if let Ok(text) = core::str::from_utf8(bytes) {
+    if let Some(text) = utf8::to_str(bytes) {
         return Ok(Cow::Borrowed(text));
     }
     modified::validate(bytes)?;

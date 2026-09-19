@@ -6,6 +6,15 @@ version.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[features]
+# Vectorizes the encode fast-path scan with `wide` and UTF-8 validation with
+# `simdutf8`.
+simd = ["dep:simdutf8", "dep:wide"]
+
+[dependencies]
+simdutf8 = { version = "0.1.5", optional = true, default-features = false }
+wide = { version = "0.7.33", optional = true, default-features = false }
+
 [dev-dependencies]
 cesu8 = "1.1"
 criterion = "0.8"

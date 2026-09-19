@@ -1,9 +1,9 @@
 //! The owned, growable counterpart of [`Cesu8`].
 
 use alloc::{string::String, vec::Vec};
-use core::{borrow::Borrow, fmt, ops::Deref, str};
+use core::{borrow::Borrow, fmt, ops::Deref};
 
-use crate::{Cesu8, DecodeError, modified};
+use crate::{Cesu8, DecodeError, modified, utf8};
 
 /// Owned modified UTF-8 bytes, the [`String`] to [`Cesu8`]'s [`str`].
 ///
@@ -40,7 +40,7 @@ impl Cesu8Buf {
     /// concatenation is not — so `text` is encoded first. The check costs a
     /// scan of the buffer.
     pub fn push_str(&mut self, text: &str) {
-        if str::from_utf8(&self.0).is_ok() {
+        if utf8::to_str(&self.0).is_some() {
             self.0.extend_from_slice(text.as_bytes());
         } else {
             self.0.extend_from_slice(&modified::encode(text));

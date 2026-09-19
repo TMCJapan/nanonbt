@@ -126,6 +126,12 @@ jobs:
         run: cargo build -p rt-core -p rt-proto -p nanonbt -p nanocesu8 --target ${{ matrix.target }} --locked --release
       - name: build (no default features)
         run: cargo build -p nanonbt --target ${{ matrix.target }} --no-default-features --locked --release
+      # The `simd` feature must stay no_std as well; `wide` and `simdutf8`
+      # are no_std with their default features off.
+      - name: clippy (simd)
+        run: cargo clippy -p nanocesu8 -p nanonbt --features nanocesu8/simd,nanonbt/simd --target ${{ matrix.target }} --locked -- -D warnings
+      - name: build (simd)
+        run: cargo build -p nanocesu8 -p nanonbt --features nanocesu8/simd,nanonbt/simd --target ${{ matrix.target }} --locked --release
 
   # The client side, for browsers.
   wasm:

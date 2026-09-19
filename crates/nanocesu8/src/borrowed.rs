@@ -3,7 +3,7 @@
 use alloc::borrow::{Cow, ToOwned};
 use core::{fmt, hash::Hash, iter::FusedIterator, str};
 
-use crate::{DecodeError, modified, owned::Cesu8Buf};
+use crate::{DecodeError, modified, owned::Cesu8Buf, utf8};
 
 /// Modified UTF-8 bytes, validated once and borrowed from their owner.
 ///
@@ -29,10 +29,10 @@ impl Cesu8 {
     /// Plain UTF-8 is accepted as is, raw NUL and four-byte sequences
     /// included. Anything else must be modified UTF-8 throughout.
     pub fn new(bytes: &[u8]) -> Result<&Self, DecodeError> {
-        if str::from_utf8(bytes).is_err() {
+        if utf8::to_str(bytes).is_none() {
             modified::validate(bytes)?;
         }
-        // SAFETY: `str::from_utf8` or `modified::validate` just accepted the
+        // SAFETY: `utf8::to_str` or `modified::validate` just accepted the
         // bytes, and UTF-8 is a subset of modified UTF-8.
         Ok(unsafe { Self::from_bytes_unchecked(bytes) })
     }
@@ -78,16 +78,15 @@ impl Cesu8 {
     /// `C0 80` yields one NUL, and a surrogate pair yields one supplementary
     /// character.
     pub fn chars(&self) -> Chars<'_> {
-        str::from_utf8(&self.0).map_or_else(
-            |_| Chars(CharsInner::Modified(modified::Modified::new(&self.0))),
+        utf8::to_str(&self.0).map_or_else(
+            || Chars(CharsInner::Modified(modified::Modified::new(&self.0))),
             |text| Chars(CharsInner::Utf8(text.chars())),
         )
     }
 
     /// Decodes into UTF-8, borrowing when the bytes already are UTF-8.
     pub fn decode(&self) -> Cow<'_, str> {
-        str::from_utf8(&self.0)
-            .map_or_else(|_| Cow::Owned(modified::decode(&self.0)), Cow::Borrowed)
+        utf8::to_str(&self.0).map_or_else(|| Cow::Owned(modified::decode(&self.0)), Cow::Borrowed)
     }
 }
 

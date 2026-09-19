@@ -123,7 +123,7 @@ pub(crate) fn decode(bytes: &[u8]) -> String {
 
 /// Encodes `text`, borrowing it when it is already valid modified UTF-8.
 pub(crate) fn encode(text: &str) -> Cow<'_, [u8]> {
-    if text.bytes().all(|b| b != 0 && b < 0xf0) {
+    if !needs_encoding(text.as_bytes()) {
         return Cow::Borrowed(text.as_bytes());
     }
     // NUL doubles and a four-byte sequence grows by half, so twice the
@@ -143,6 +143,22 @@ pub(crate) fn encode(text: &str) -> Cow<'_, [u8]> {
         }
     }
     Cow::Owned(out)
+}
+
+/// Whether a `str`'s UTF-8 bytes are not already modified UTF-8: only a NUL,
+/// which must become `C0 80`, or a four-byte sequence, which must become a
+/// surrogate pair, force a copy.
+#[cfg(feature = "simd")]
+fn needs_encoding(bytes: &[u8]) -> bool {
+    crate::simd::contains_null_or_utf8_4_byte_char_header(bytes)
+}
+
+/// Whether a `str`'s UTF-8 bytes are not already modified UTF-8: only a NUL,
+/// which must become `C0 80`, or a four-byte sequence, which must become a
+/// surrogate pair, force a copy.
+#[cfg(not(feature = "simd"))]
+fn needs_encoding(bytes: &[u8]) -> bool {
+    bytes.iter().any(|&byte| byte == 0 || byte >= 0xf0)
 }
 
 /// The three-byte form of a lone surrogate code unit.
