@@ -405,7 +405,7 @@ impl<'de> Read<'de> for ValueReader<'de> {
     }
 
     fn read_bytes(&mut self, len: usize) -> Result<Cow<'de, [u8]>> {
-        let bytes = self.array_bytes.take().ok_or_else(Error::unexpected_eof)?;
+        let bytes = self.array_bytes.take().ok_or_else(Error::borrowed_bytes)?;
         if bytes.len() != len {
             return Err(Error::unexpected_eof());
         }

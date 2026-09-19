@@ -56,6 +56,12 @@ impl Error {
         ))
     }
 
+    pub(crate) const fn borrowed_bytes() -> Self {
+        Self(Kind::Static(
+            "value is owned and cannot be borrowed; use an owned type",
+        ))
+    }
+
     pub(crate) const fn invalid_char() -> Self {
         Self(Kind::Static("integer is not a unicode scalar value"))
     }
