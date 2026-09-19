@@ -1,6 +1,9 @@
 [workspace]
 resolver = "2"
 members = ["crates/*"]
+# `simdnbt`, and so the comparison bench, needs nightly. Keeping the bench in
+# its own workspace leaves the pinned stable toolchain of CI alone.
+exclude = ["crates/nanonbt-bench"]
 
 [workspace.package]
 edition = "2024"

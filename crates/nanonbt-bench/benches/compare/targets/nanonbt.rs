@@ -1,0 +1,558 @@
+//! The three `nanonbt` entries: `serde`, `derive` and borrowed `derive`.
+//!
+//! The owned model below doubles as the input source: `documents` serializes
+//! [`sample_small`], [`sample_player`] and [`sample_chunk`], and every target
+//! then parses those same bytes.
+//!
+//! Field names are the NBT keys, so neither `serde` nor the derive needs a
+//! rename attribute; the parser rejects unknown fields, not unknown attributes.
+
+use std::borrow::Cow;
+
+use criterion::{BenchmarkGroup, measurement::WallTime};
+use nanonbt::{
+    ByteArray, F32Be, F64Be, FromNBT, I32Be, IntArray, LongArray, ToNBT, U64Be, serde_compat,
+};
+use serde::{Deserialize, Serialize};
+
+use crate::documents::Doc;
+use crate::{bench_parse, bench_write};
+
+// ---------------------------------------------------------------------------
+// The owned model, which is also what generates the input documents.
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize, Deserialize, FromNBT, ToNBT)]
+pub struct Small {
+    pub dimension: String,
+    pub x: i32,
+    pub y: i32,
+    pub z: i32,
+    pub yaw: f32,
+    pub pitch: f32,
+    pub on_ground: i8,
+    pub health: i16,
+}
+
+#[allow(non_snake_case)]
+#[derive(Serialize, Deserialize, FromNBT, ToNBT)]
+pub struct Player {
+    pub DataVersion: i32,
+    pub Health: f32,
+    pub foodLevel: i32,
+    pub XpLevel: i32,
+    pub playerGameType: i32,
+    pub UUID: IntArray,
+    pub Pos: Vec<f64>,
+    pub Motion: Vec<f64>,
+    pub Rotation: Vec<f32>,
+    pub Inventory: Vec<InventoryItem>,
+    pub Attributes: Vec<Attribute>,
+    pub EnderItems: Vec<InventoryItem>,
+    pub abilities: Abilities,
+    pub recipeBook: RecipeBook,
+    pub Tags: Vec<String>,
+}
+
+#[allow(non_snake_case)]
+#[derive(Serialize, Deserialize, FromNBT, ToNBT)]
+pub struct InventoryItem {
+    pub Slot: i8,
+    pub id: String,
+    pub Count: i8,
+    pub tag: ItemTag,
+}
+
+#[allow(non_snake_case)]
+#[derive(Serialize, Deserialize, FromNBT, ToNBT)]
+pub struct ItemTag {
+    pub Damage: i32,
+    pub display: Display,
+}
+
+#[allow(non_snake_case)]
+#[derive(Serialize, Deserialize, FromNBT, ToNBT)]
+pub struct Display {
+    pub Name: String,
+}
+
+#[allow(non_snake_case)]
+#[derive(Serialize, Deserialize, FromNBT, ToNBT)]
+pub struct Attribute {
+    pub Name: String,
+    pub Base: f64,
+    pub Modifiers: Vec<Modifier>,
+}
+
+#[allow(non_snake_case)]
+#[derive(Serialize, Deserialize, FromNBT, ToNBT)]
+pub struct Modifier {
+    pub Amount: f64,
+}
+
+#[allow(non_snake_case)]
+#[derive(Serialize, Deserialize, FromNBT, ToNBT)]
+pub struct Abilities {
+    pub flying: i8,
+    pub mayfly: i8,
+    pub invulnerable: i8,
+    pub walkSpeed: f32,
+}
+
+#[allow(non_snake_case)]
+#[derive(Serialize, Deserialize, FromNBT, ToNBT)]
+pub struct RecipeBook {
+    pub isFilteringCraftable: i8,
+    pub recipes: Vec<String>,
+    pub toBeDisplayed: Vec<String>,
+}
+
+#[allow(non_snake_case)]
+#[derive(Serialize, Deserialize, FromNBT, ToNBT)]
+pub struct Chunk {
+    pub DataVersion: i32,
+    pub xPos: i32,
+    pub zPos: i32,
+    pub Status: String,
+    pub LastUpdate: i64,
+    pub InhabitedTime: i64,
+    pub sections: Vec<Section>,
+    pub block_entities: Vec<BlockEntity>,
+    pub Heightmaps: Heightmaps,
+    pub PostProcessing: Vec<Vec<i16>>,
+}
+
+#[allow(non_snake_case)]
+#[derive(Serialize, Deserialize, FromNBT, ToNBT)]
+pub struct Section {
+    pub Y: i8,
+    pub block_states: BlockStates,
+    pub biomes: Biomes,
+    pub BlockLight: ByteArray,
+    pub SkyLight: ByteArray,
+}
+
+#[allow(non_snake_case)]
+#[derive(Serialize, Deserialize, FromNBT, ToNBT)]
+pub struct BlockStates {
+    pub palette: Vec<PaletteEntry>,
+    pub data: LongArray,
+}
+
+#[allow(non_snake_case)]
+#[derive(Serialize, Deserialize, FromNBT, ToNBT)]
+pub struct PaletteEntry {
+    pub Name: String,
+}
+
+#[allow(non_snake_case)]
+#[derive(Serialize, Deserialize, FromNBT, ToNBT)]
+pub struct Biomes {
+    pub palette: Vec<String>,
+    pub data: LongArray,
+}
+
+#[allow(non_snake_case)]
+#[derive(Serialize, Deserialize, FromNBT, ToNBT)]
+pub struct Heightmaps {
+    pub MOTION_BLOCKING: LongArray,
+    pub WORLD_SURFACE: LongArray,
+}
+
+#[allow(non_snake_case)]
+#[derive(Serialize, Deserialize, FromNBT, ToNBT)]
+pub struct BlockEntity {
+    pub id: String,
+    pub x: i32,
+    pub y: i32,
+    pub z: i32,
+    pub KeepPacked: i8,
+}
+
+/// The attributes of [`sample_player`], as `(name, base value)`.
+const ATTRIBUTES: [(&str, f64); 5] = [
+    ("generic.max_health", 20.0),
+    ("generic.movement_speed", 0.1),
+    ("generic.attack_damage", 1.0),
+    ("generic.armor", 0.0),
+    ("generic.luck", 0.0),
+];
+
+pub fn sample_small() -> Small {
+    Small {
+        dimension: "minecraft:overworld".to_owned(),
+        x: 1234,
+        y: 64,
+        z: -5678,
+        yaw: 90.0,
+        pitch: -12.5,
+        on_ground: 1,
+        health: 20,
+    }
+}
+
+pub fn sample_player() -> Player {
+    Player {
+        DataVersion: 3953,
+        Health: 20.0,
+        foodLevel: 20,
+        XpLevel: 30,
+        playerGameType: 1,
+        UUID: IntArray::new(vec![1_234_567, -2_345_678, 345_678_901, -456_789_012]),
+        Pos: vec![12.5, 64.0, -8.25],
+        Motion: vec![0.0; 3],
+        Rotation: vec![90.0, 0.0],
+        Inventory: (0i8..36)
+            .map(|slot| InventoryItem {
+                Slot: slot,
+                id: "minecraft:diamond_sword".to_owned(),
+                Count: 1,
+                tag: ItemTag {
+                    Damage: i32::from(slot),
+                    display: Display {
+                        Name: "{\"text\":\"🦀 Rusty Blade\"}".to_owned(),
+                    },
+                },
+            })
+            .collect(),
+        Attributes: ATTRIBUTES
+            .iter()
+            .map(|(name, base)| Attribute {
+                Name: (*name).to_owned(),
+                Base: *base,
+                Modifiers: Vec::new(),
+            })
+            .collect(),
+        EnderItems: Vec::new(),
+        abilities: Abilities {
+            flying: 0,
+            mayfly: 1,
+            invulnerable: 0,
+            walkSpeed: 0.1,
+        },
+        recipeBook: RecipeBook {
+            isFilteringCraftable: 0,
+            recipes: vec![
+                "minecraft:diamond_sword".to_owned(),
+                "minecraft:diamond_pickaxe".to_owned(),
+            ],
+            toBeDisplayed: Vec::new(),
+        },
+        Tags: vec!["🦀".to_owned()],
+    }
+}
+
+pub fn sample_chunk(sections: usize) -> Chunk {
+    Chunk {
+        DataVersion: 3953,
+        xPos: 12,
+        zPos: -34,
+        Status: "minecraft:full".to_owned(),
+        LastUpdate: 1_234_567_890,
+        InhabitedTime: -9_876_543_210,
+        sections: (0i8..)
+            .take(sections)
+            .map(|section| Section {
+                Y: section,
+                block_states: BlockStates {
+                    palette: (0..16)
+                        .map(|block| PaletteEntry {
+                            Name: format!("minecraft:block_{block}"),
+                        })
+                        .collect(),
+                    data: LongArray::new(vec![i64::from(section); 256]),
+                },
+                biomes: Biomes {
+                    palette: vec!["minecraft:plains".to_owned()],
+                    data: LongArray::new(vec![0; 64]),
+                },
+                BlockLight: ByteArray::new(vec![0; 2048]),
+                SkyLight: ByteArray::new(vec![-1; 2048]),
+            })
+            .collect(),
+        block_entities: (0i8..4)
+            .map(|i| BlockEntity {
+                id: "minecraft:chest".to_owned(),
+                x: 12,
+                y: i32::from(i) * 16,
+                z: -34,
+                KeepPacked: 0,
+            })
+            .collect(),
+        Heightmaps: Heightmaps {
+            MOTION_BLOCKING: LongArray::new(vec![0; 37]),
+            WORLD_SURFACE: LongArray::new(vec![-1; 37]),
+        },
+        PostProcessing: (0..24).map(|_| vec![0; 16]).collect(),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The borrowed model, which lends strings and arrays from the input.
+// ---------------------------------------------------------------------------
+
+#[allow(non_snake_case)]
+#[derive(FromNBT, ToNBT)]
+pub struct SmallRef<'a> {
+    pub dimension: Cow<'a, str>,
+    pub x: i32,
+    pub y: i32,
+    pub z: i32,
+    pub yaw: f32,
+    pub pitch: f32,
+    pub on_ground: i8,
+    pub health: i16,
+}
+
+#[allow(non_snake_case)]
+#[derive(FromNBT, ToNBT)]
+pub struct PlayerRef<'a> {
+    pub DataVersion: i32,
+    pub Health: f32,
+    pub foodLevel: i32,
+    pub XpLevel: i32,
+    pub playerGameType: i32,
+    pub UUID: &'a [I32Be],
+    pub Pos: &'a [F64Be],
+    pub Motion: &'a [F64Be],
+    pub Rotation: &'a [F32Be],
+    pub Inventory: Vec<InventoryItemRef<'a>>,
+    pub Attributes: Vec<AttributeRef<'a>>,
+    pub EnderItems: Vec<InventoryItemRef<'a>>,
+    pub abilities: Abilities,
+    pub recipeBook: RecipeBookRef<'a>,
+    pub Tags: Vec<Cow<'a, str>>,
+}
+
+#[allow(non_snake_case)]
+#[derive(FromNBT, ToNBT)]
+pub struct InventoryItemRef<'a> {
+    pub Slot: i8,
+    pub id: Cow<'a, str>,
+    pub Count: i8,
+    pub tag: ItemTagRef<'a>,
+}
+
+#[allow(non_snake_case)]
+#[derive(FromNBT, ToNBT)]
+pub struct ItemTagRef<'a> {
+    pub Damage: i32,
+    pub display: DisplayRef<'a>,
+}
+
+#[allow(non_snake_case)]
+#[derive(FromNBT, ToNBT)]
+pub struct DisplayRef<'a> {
+    pub Name: Cow<'a, str>,
+}
+
+#[allow(non_snake_case)]
+#[derive(FromNBT, ToNBT)]
+pub struct AttributeRef<'a> {
+    pub Name: Cow<'a, str>,
+    pub Base: f64,
+    pub Modifiers: Vec<Modifier>,
+}
+
+#[allow(non_snake_case)]
+#[derive(FromNBT, ToNBT)]
+pub struct RecipeBookRef<'a> {
+    pub isFilteringCraftable: i8,
+    pub recipes: Vec<Cow<'a, str>>,
+    pub toBeDisplayed: Vec<Cow<'a, str>>,
+}
+
+#[allow(non_snake_case)]
+#[derive(FromNBT, ToNBT)]
+pub struct ChunkRef<'a> {
+    pub DataVersion: i32,
+    pub xPos: i32,
+    pub zPos: i32,
+    pub Status: Cow<'a, str>,
+    pub LastUpdate: i64,
+    pub InhabitedTime: i64,
+    pub sections: Vec<SectionRef<'a>>,
+    pub block_entities: Vec<BlockEntityRef<'a>>,
+    pub Heightmaps: HeightmapsRef<'a>,
+    pub PostProcessing: Vec<Vec<i16>>,
+}
+
+#[allow(non_snake_case)]
+#[derive(FromNBT, ToNBT)]
+pub struct SectionRef<'a> {
+    pub Y: i8,
+    pub block_states: BlockStatesRef<'a>,
+    pub biomes: BiomesRef<'a>,
+    pub BlockLight: &'a [i8],
+    pub SkyLight: &'a [i8],
+}
+
+#[allow(non_snake_case)]
+#[derive(FromNBT, ToNBT)]
+pub struct BlockStatesRef<'a> {
+    pub palette: Vec<PaletteEntryRef<'a>>,
+    pub data: &'a [U64Be],
+}
+
+#[allow(non_snake_case)]
+#[derive(FromNBT, ToNBT)]
+pub struct PaletteEntryRef<'a> {
+    pub Name: Cow<'a, str>,
+}
+
+#[allow(non_snake_case)]
+#[derive(FromNBT, ToNBT)]
+pub struct BiomesRef<'a> {
+    pub palette: Vec<Cow<'a, str>>,
+    pub data: &'a [U64Be],
+}
+
+#[allow(non_snake_case)]
+#[derive(FromNBT, ToNBT)]
+pub struct HeightmapsRef<'a> {
+    pub MOTION_BLOCKING: &'a [U64Be],
+    pub WORLD_SURFACE: &'a [U64Be],
+}
+
+#[allow(non_snake_case)]
+#[derive(FromNBT, ToNBT)]
+pub struct BlockEntityRef<'a> {
+    pub id: Cow<'a, str>,
+    pub x: i32,
+    pub y: i32,
+    pub z: i32,
+    pub KeepPacked: i8,
+}
+
+// ---------------------------------------------------------------------------
+// The entries.
+// ---------------------------------------------------------------------------
+
+pub fn parse_serde(group: &mut BenchmarkGroup<'_, WallTime>, doc: Doc, bytes: &[u8]) {
+    match doc {
+        Doc::Small => bench_parse(group, "nanonbt-serde", doc, bytes, |b: &[u8]| {
+            serde_compat::from_bytes::<Small>(b).expect("document parses")
+        }),
+        Doc::Player => bench_parse(group, "nanonbt-serde", doc, bytes, |b: &[u8]| {
+            serde_compat::from_bytes::<Player>(b).expect("document parses")
+        }),
+        Doc::Chunk => bench_parse(group, "nanonbt-serde", doc, bytes, |b: &[u8]| {
+            serde_compat::from_bytes::<Chunk>(b).expect("document parses")
+        }),
+    }
+}
+
+pub fn write_serde(group: &mut BenchmarkGroup<'_, WallTime>, doc: Doc, bytes: &[u8]) {
+    match doc {
+        Doc::Small => bench_write(
+            group,
+            "nanonbt-serde",
+            doc,
+            bytes,
+            |b: &[u8]| serde_compat::from_bytes::<Small>(b).expect("document parses"),
+            |v: &Small| serde_compat::to_bytes(v).expect("struct writes"),
+        ),
+        Doc::Player => bench_write(
+            group,
+            "nanonbt-serde",
+            doc,
+            bytes,
+            |b: &[u8]| serde_compat::from_bytes::<Player>(b).expect("document parses"),
+            |v: &Player| serde_compat::to_bytes(v).expect("struct writes"),
+        ),
+        Doc::Chunk => bench_write(
+            group,
+            "nanonbt-serde",
+            doc,
+            bytes,
+            |b: &[u8]| serde_compat::from_bytes::<Chunk>(b).expect("document parses"),
+            |v: &Chunk| serde_compat::to_bytes(v).expect("struct writes"),
+        ),
+    }
+}
+
+pub fn parse_derive(group: &mut BenchmarkGroup<'_, WallTime>, doc: Doc, bytes: &[u8]) {
+    match doc {
+        Doc::Small => bench_parse(group, "nanonbt-derive", doc, bytes, |b: &[u8]| {
+            nanonbt::from_bytes::<Small>(b).expect("document parses")
+        }),
+        Doc::Player => bench_parse(group, "nanonbt-derive", doc, bytes, |b: &[u8]| {
+            nanonbt::from_bytes::<Player>(b).expect("document parses")
+        }),
+        Doc::Chunk => bench_parse(group, "nanonbt-derive", doc, bytes, |b: &[u8]| {
+            nanonbt::from_bytes::<Chunk>(b).expect("document parses")
+        }),
+    }
+}
+
+pub fn write_derive(group: &mut BenchmarkGroup<'_, WallTime>, doc: Doc, bytes: &[u8]) {
+    match doc {
+        Doc::Small => bench_write(
+            group,
+            "nanonbt-derive",
+            doc,
+            bytes,
+            |b: &[u8]| nanonbt::from_bytes::<Small>(b).expect("document parses"),
+            |v: &Small| nanonbt::to_bytes(v).expect("struct writes"),
+        ),
+        Doc::Player => bench_write(
+            group,
+            "nanonbt-derive",
+            doc,
+            bytes,
+            |b: &[u8]| nanonbt::from_bytes::<Player>(b).expect("document parses"),
+            |v: &Player| nanonbt::to_bytes(v).expect("struct writes"),
+        ),
+        Doc::Chunk => bench_write(
+            group,
+            "nanonbt-derive",
+            doc,
+            bytes,
+            |b: &[u8]| nanonbt::from_bytes::<Chunk>(b).expect("document parses"),
+            |v: &Chunk| nanonbt::to_bytes(v).expect("struct writes"),
+        ),
+    }
+}
+
+pub fn parse_borrow(group: &mut BenchmarkGroup<'_, WallTime>, doc: Doc, bytes: &[u8]) {
+    match doc {
+        Doc::Small => bench_parse(group, "nanonbt-borrow", doc, bytes, |b: &[u8]| {
+            nanonbt::from_bytes::<SmallRef<'_>>(b).expect("document parses")
+        }),
+        Doc::Player => bench_parse(group, "nanonbt-borrow", doc, bytes, |b: &[u8]| {
+            nanonbt::from_bytes::<PlayerRef<'_>>(b).expect("document parses")
+        }),
+        Doc::Chunk => bench_parse(group, "nanonbt-borrow", doc, bytes, |b: &[u8]| {
+            nanonbt::from_bytes::<ChunkRef<'_>>(b).expect("document parses")
+        }),
+    }
+}
+
+pub fn write_borrow(group: &mut BenchmarkGroup<'_, WallTime>, doc: Doc, bytes: &[u8]) {
+    match doc {
+        Doc::Small => bench_write(
+            group,
+            "nanonbt-borrow",
+            doc,
+            bytes,
+            |b: &[u8]| nanonbt::from_bytes::<SmallRef<'_>>(b).expect("document parses"),
+            |v: &SmallRef<'_>| nanonbt::to_bytes(v).expect("struct writes"),
+        ),
+        Doc::Player => bench_write(
+            group,
+            "nanonbt-borrow",
+            doc,
+            bytes,
+            |b: &[u8]| nanonbt::from_bytes::<PlayerRef<'_>>(b).expect("document parses"),
+            |v: &PlayerRef<'_>| nanonbt::to_bytes(v).expect("struct writes"),
+        ),
+        Doc::Chunk => bench_write(
+            group,
+            "nanonbt-borrow",
+            doc,
+            bytes,
+            |b: &[u8]| nanonbt::from_bytes::<ChunkRef<'_>>(b).expect("document parses"),
+            |v: &ChunkRef<'_>| nanonbt::to_bytes(v).expect("struct writes"),
+        ),
+    }
+}
