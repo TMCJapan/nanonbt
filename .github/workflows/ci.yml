@@ -117,13 +117,13 @@ jobs:
         with:
           key: ${{ matrix.target }}
       - name: clippy
-        run: cargo clippy -p rt-core -p rt-proto -p nanonbt -p nanocesu8 --target ${{ matrix.target }} --locked -- -D warnings
+        run: cargo clippy -p nanonbt -p nanocesu8 --target ${{ matrix.target }} --locked -- -D warnings
       # The derive macro is a host build dependency; without it nanonbt is
       # the bare traits, which must still cross-compile.
       - name: clippy (no default features)
         run: cargo clippy -p nanonbt --target ${{ matrix.target }} --no-default-features --locked -- -D warnings
       - name: build
-        run: cargo build -p rt-core -p rt-proto -p nanonbt -p nanocesu8 --target ${{ matrix.target }} --locked --release
+        run: cargo build -p nanonbt -p nanocesu8 --target ${{ matrix.target }} --locked --release
       - name: build (no default features)
         run: cargo build -p nanonbt --target ${{ matrix.target }} --no-default-features --locked --release
       # The `simd` feature must stay no_std as well; `wide` and `simdutf8`
@@ -132,22 +132,6 @@ jobs:
         run: cargo clippy -p nanocesu8 -p nanonbt --features nanocesu8/simd,nanonbt/simd --target ${{ matrix.target }} --locked -- -D warnings
       - name: build (simd)
         run: cargo build -p nanocesu8 -p nanonbt --features nanocesu8/simd,nanonbt/simd --target ${{ matrix.target }} --locked --release
-
-  # The client side, for browsers.
-  wasm:
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ env.RUST_TOOLCHAIN }}
-          targets: wasm32-unknown-unknown
-          components: clippy
-      - uses: Swatinem/rust-cache@v2
-      - name: clippy
-        run: cargo clippy -p rt-client --target wasm32-unknown-unknown --locked -- -D warnings
-      - name: build
-        run: cargo build -p rt-client --target wasm32-unknown-unknown --locked --release
 
   # Model-checked agreement: nanonbt against fastnbt (crates/nanonbt-kani),
   # nanocesu8 against the cesu8 crate (crates/nanocesu8-kani).
@@ -191,7 +175,7 @@ jobs:
   # One required check for branch protection.
   ci:
     if: always()
-    needs: [typos, taplo, fmt, machete, test, no-std, wasm, kani]
+    needs: [typos, taplo, fmt, machete, test, no-std, kani]
     runs-on: ubuntu-24.04
     steps:
       - if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')

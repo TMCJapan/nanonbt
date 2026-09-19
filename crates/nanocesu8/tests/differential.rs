@@ -1,7 +1,7 @@
 //! Seeded random inputs, checked against the `cesu8` crate.
 
 use nanocesu8::{Cesu8, Cesu8Buf};
-use rt_testkit::{check_n, ensure, ensure_eq, generate};
+use testkit::{check_n, ensure, ensure_eq, generate};
 
 #[test]
 fn modified_utf8_matches_the_cesu8_crate() {

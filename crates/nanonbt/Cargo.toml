@@ -24,7 +24,7 @@ serde = { version = "1", default-features = false, features = [
 
 [dev-dependencies]
 fastnbt = "2.6.3"
-rt-testkit.workspace = true
+testkit.workspace = true
 serde = { version = "1", features = ["derive"] }
 serde_bytes = "0.11"
 

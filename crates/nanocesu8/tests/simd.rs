@@ -10,7 +10,7 @@
 use std::borrow::Cow;
 
 use nanocesu8::Cesu8;
-use rt_testkit::{check_n, ensure, ensure_eq, generate};
+use testkit::{check_n, ensure, ensure_eq, generate};
 
 /// Long enough for the head, one 32-byte block, and a tail.
 const BUF: usize = 100;

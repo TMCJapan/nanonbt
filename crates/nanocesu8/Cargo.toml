@@ -18,7 +18,7 @@ wide = { version = "0.7.33", optional = true, default-features = false }
 [dev-dependencies]
 cesu8 = "1.1"
 criterion = "0.8"
-rt-testkit.workspace = true
+testkit.workspace = true
 simd_cesu8 = "1.2"
 
 [[bench]]

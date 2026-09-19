@@ -13,8 +13,8 @@ use std::{
 
 use common::{from_fast, show, to_fast};
 use nanonbt::{FromNBT, Value};
-use rt_testkit::{Pcg32, check_n, ensure, ensure_eq, generate};
 use serde::{Deserialize, Serialize};
+use testkit::{Pcg32, check_n, ensure, ensure_eq, generate};
 
 /// fastnbt's result, or `None` where it panics.
 fn fastnbt_outcome<T>(f: impl FnOnce() -> T) -> Option<T> {
