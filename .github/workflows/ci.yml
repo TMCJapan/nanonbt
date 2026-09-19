@@ -20,6 +20,9 @@ env:
   # Pinned, so that lints added by a new release cannot fail an unchanged
   # tree. Keep in step with `rust-version` in Cargo.toml.
   RUST_TOOLCHAIN: 1.98.1
+  # The comparison bench needs `simdnbt`, which uses nightly features. Pinned
+  # for the same reason as the stable toolchain above.
+  RUST_NIGHTLY_TOOLCHAIN: nightly-2026-09-17
 
 jobs:
   typos:
@@ -172,10 +175,34 @@ jobs:
       - name: prove nanocesu8
         run: cargo kani -p nanocesu8-kani -Z stubbing -Z unstable-options --harness-timeout 300 --output-format terse -j 4
 
+  # The comparison bench lives in its own workspace, `crates/nanonbt-bench`,
+  # because `simdnbt` needs nightly. Compiling and linting it here keeps it
+  # from rotting without moving the jobs above off the pinned stable
+  # toolchain. The bench itself is not run: a shared runner times noise.
+  bench:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_NIGHTLY_TOOLCHAIN }}
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # The root lock file does not cover the excluded bench, so key the
+          # cache on the bench's own.
+          workspaces: crates/nanonbt-bench
+      - name: fmt
+        working-directory: crates/nanonbt-bench
+        run: cargo fmt --all --check
+      - name: clippy
+        working-directory: crates/nanonbt-bench
+        run: cargo clippy --benches --locked -- -D warnings
+
   # One required check for branch protection.
   ci:
     if: always()
-    needs: [typos, taplo, fmt, machete, test, no-std, kani]
+    needs: [typos, taplo, fmt, machete, test, no-std, kani, bench]
     runs-on: ubuntu-24.04
     steps:
       - if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
