@@ -449,10 +449,12 @@ pub struct BlockEntityRef<'a> {
     pub KeepPacked: i8,
 }
 
+#[allow(dead_code)]
 pub fn sample_long_names() -> LongNames {
     LongNames::sample()
 }
 
+#[allow(dead_code)]
 pub fn sample_short_names() -> ShortNames {
     ShortNames::sample()
 }
