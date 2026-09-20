@@ -11,10 +11,13 @@
 
 use std::{borrow::Cow, io::Cursor};
 
-use criterion::{BenchmarkGroup, BenchmarkId, Throughput, measurement::WallTime};
-use simdnbt::{Mutf8Str, Mutf8String, borrow, owned};
+use criterion::{measurement::WallTime, BenchmarkGroup, BenchmarkId, Throughput};
+use simdnbt::{borrow, owned, Mutf8Str, Mutf8String};
 
-use crate::documents::{Array, Doc};
+use crate::{
+    bench_parse, bench_write,
+    documents::{Array, BenchInput, Doc},
+};
 
 // ---------------------------------------------------------------------------
 // Conversion helpers.
@@ -829,10 +832,10 @@ impl<'a> BlockEntity<'a> {
 // ---------------------------------------------------------------------------
 
 /// Writes a struct that is already parsed, through a fresh tree per iteration.
-fn bench_write_value<T>(
+fn bench_write_value<T, S: std::fmt::Display>(
     group: &mut BenchmarkGroup<'_, WallTime>,
     name: &str,
-    label: impl crate::Label,
+    label: S,
     value: &T,
     to_compound: impl Fn(&T) -> owned::NbtCompound,
 ) {
@@ -840,7 +843,7 @@ fn bench_write_value<T>(
     owned::BaseNbt::new("", to_compound(value)).write(&mut measure);
     let len = measure.len();
     group.throughput(Throughput::Bytes(len as u64));
-    group.bench_function(BenchmarkId::new(name, label.label()), |b| {
+    group.bench_function(BenchmarkId::new(name, label), |b| {
         b.iter(|| {
             let mut out = Vec::with_capacity(len);
             owned::BaseNbt::new("", to_compound(std::hint::black_box(value))).write(&mut out);
@@ -849,134 +852,217 @@ fn bench_write_value<T>(
     });
 }
 
-pub fn parse_borrow(group: &mut BenchmarkGroup<'_, WallTime>, doc: Doc, bytes: &[u8]) {
-    // The struct borrows the tree, so both are dropped inside the timed
-    // closure: the read and filling the struct cannot be split.
-    match doc {
-        Doc::Small => group.bench_function(BenchmarkId::new("simdnbt-borrow", doc.name()), |b| {
-            b.iter(|| {
-                let base = borrow::read(&mut Cursor::new(std::hint::black_box(bytes)))
-                    .expect("document parses")
-                    .unwrap();
-                std::hint::black_box(&Small::from_borrow(&base));
-            });
-        }),
-        Doc::Player => group.bench_function(BenchmarkId::new("simdnbt-borrow", doc.name()), |b| {
-            b.iter(|| {
-                let base = borrow::read(&mut Cursor::new(std::hint::black_box(bytes)))
-                    .expect("document parses")
-                    .unwrap();
-                std::hint::black_box(&Player::from_borrow(&base));
-            });
-        }),
-        Doc::Chunk => group.bench_function(BenchmarkId::new("simdnbt-borrow", doc.name()), |b| {
-            b.iter(|| {
-                let base = borrow::read(&mut Cursor::new(std::hint::black_box(bytes)))
-                    .expect("document parses")
-                    .unwrap();
-                std::hint::black_box(&Chunk::from_borrow(&base));
-            });
-        }),
-    };
-}
-
-pub fn parse_owned(group: &mut BenchmarkGroup<'_, WallTime>, doc: Doc, bytes: &[u8]) {
-    match doc {
-        Doc::Small => group.bench_function(BenchmarkId::new("simdnbt-owned", doc.name()), |b| {
-            b.iter(|| {
-                let base = owned::read(&mut Cursor::new(std::hint::black_box(bytes)))
-                    .expect("document parses")
-                    .unwrap();
-                std::hint::black_box(&Small::from_owned(&base));
-            });
-        }),
-        Doc::Player => group.bench_function(BenchmarkId::new("simdnbt-owned", doc.name()), |b| {
-            b.iter(|| {
-                let base = owned::read(&mut Cursor::new(std::hint::black_box(bytes)))
-                    .expect("document parses")
-                    .unwrap();
-                std::hint::black_box(&Player::from_owned(&base));
-            });
-        }),
-        Doc::Chunk => group.bench_function(BenchmarkId::new("simdnbt-owned", doc.name()), |b| {
-            b.iter(|| {
-                let base = owned::read(&mut Cursor::new(std::hint::black_box(bytes)))
-                    .expect("document parses")
-                    .unwrap();
-                std::hint::black_box(&Chunk::from_owned(&base));
-            });
-        }),
-    };
-}
-
-pub fn write_borrow(group: &mut BenchmarkGroup<'_, WallTime>, doc: Doc, bytes: &[u8]) {
-    match doc {
-        Doc::Small => {
-            let base = borrow::read(&mut Cursor::new(bytes))
-                .expect("document parses")
-                .unwrap();
-            let value = Small::from_borrow(&base);
-            bench_write_value(group, "simdnbt-borrow", doc, &value, Small::to_compound);
-        }
-        Doc::Player => {
-            let base = borrow::read(&mut Cursor::new(bytes))
-                .expect("document parses")
-                .unwrap();
-            let value = Player::from_borrow(&base);
-            bench_write_value(group, "simdnbt-borrow", doc, &value, Player::to_compound);
-        }
-        Doc::Chunk => {
-            let base = borrow::read(&mut Cursor::new(bytes))
-                .expect("document parses")
-                .unwrap();
-            let value = Chunk::from_borrow(&base);
-            bench_write_value(group, "simdnbt-borrow", doc, &value, Chunk::to_compound);
-        }
+pub fn parse(group: &mut BenchmarkGroup<'_, WallTime>, input: BenchInput) {
+    match input {
+        BenchInput::Doc(doc, bytes) => match doc {
+            Doc::Small => {
+                bench_parse(
+                    group,
+                    "simdnbt-borrow",
+                    doc.name(),
+                    bytes,
+                    |b: &'_ [u8]| {
+                        let base = borrow::read(&mut Cursor::new(std::hint::black_box(b)))
+                            .expect("the document parses")
+                            .unwrap();
+                        let _ = std::hint::black_box(Small::from_borrow(&base));
+                    },
+                );
+                bench_parse(
+                    group,
+                    "simdnbt-owned",
+                    doc.name(),
+                    bytes,
+                    |b: &'_ [u8]| {
+                        let base = owned::read(&mut Cursor::new(std::hint::black_box(b)))
+                            .expect("the document parses")
+                            .unwrap();
+                        let _ = std::hint::black_box(Small::from_owned(&base));
+                    },
+                );
+            }
+            Doc::Player => {
+                bench_parse(
+                    group,
+                    "simdnbt-borrow",
+                    doc.name(),
+                    bytes,
+                    |b: &'_ [u8]| {
+                        let base = borrow::read(&mut Cursor::new(std::hint::black_box(b)))
+                            .expect("the document parses")
+                            .unwrap();
+                        let _ = std::hint::black_box(Player::from_borrow(&base));
+                    },
+                );
+                bench_parse(
+                    group,
+                    "simdnbt-owned",
+                    doc.name(),
+                    bytes,
+                    |b: &'_ [u8]| {
+                        let base = owned::read(&mut Cursor::new(std::hint::black_box(b)))
+                            .expect("the document parses")
+                            .unwrap();
+                        let _ = std::hint::black_box(Player::from_owned(&base));
+                    },
+                );
+            }
+            Doc::Chunk => {
+                bench_parse(
+                    group,
+                    "simdnbt-borrow",
+                    doc.name(),
+                    bytes,
+                    |b: &'_ [u8]| {
+                        let base = borrow::read(&mut Cursor::new(std::hint::black_box(b)))
+                            .expect("the document parses")
+                            .unwrap();
+                        let _ = std::hint::black_box(Chunk::from_borrow(&base));
+                    },
+                );
+                bench_parse(
+                    group,
+                    "simdnbt-owned",
+                    doc.name(),
+                    bytes,
+                    |b: &'_ [u8]| {
+                        let base = owned::read(&mut Cursor::new(std::hint::black_box(b)))
+                            .expect("the document parses")
+                            .unwrap();
+                        let _ = std::hint::black_box(Chunk::from_owned(&base));
+                    },
+                );
+            }
+        },
+        BenchInput::Array(kind, bytes) => match kind {
+            Array::Byte => {
+                bench_parse(
+                    group,
+                    "simdnbt-borrow",
+                    kind.name(),
+                    bytes,
+                    |b: &'_ [u8]| {
+                        let base = borrow::read(&mut Cursor::new(std::hint::black_box(b)))
+                            .expect("the document parses")
+                            .unwrap();
+                        let _ = std::hint::black_box(
+                            base.as_compound().byte_array("data").expect("data"),
+                        );
+                    },
+                );
+                bench_parse(
+                    group,
+                    "simdnbt-owned",
+                    kind.name(),
+                    bytes,
+                    |b: &'_ [u8]| {
+                        let base = owned::read(&mut Cursor::new(std::hint::black_box(b)))
+                            .expect("the document parses")
+                            .unwrap();
+                        let _ = std::hint::black_box(
+                            base.as_compound().byte_array("data").expect("data"),
+                        );
+                    },
+                );
+            }
+            Array::Short => {
+                bench_parse(
+                    group,
+                    "simdnbt-borrow",
+                    kind.name(),
+                    bytes,
+                    |b: &'_ [u8]| {
+                        let base = borrow::read(&mut Cursor::new(std::hint::black_box(b)))
+                            .expect("the document parses")
+                            .unwrap();
+                        let _ = std::hint::black_box(
+                            base.as_compound()
+                                .list("data")
+                                .and_then(|list| list.shorts())
+                                .expect("data"),
+                        );
+                    },
+                );
+                bench_parse(
+                    group,
+                    "simdnbt-owned",
+                    kind.name(),
+                    bytes,
+                    |b: &'_ [u8]| {
+                        let base = owned::read(&mut Cursor::new(std::hint::black_box(b)))
+                            .expect("the document parses")
+                            .unwrap();
+                        let _ = std::hint::black_box(
+                            base.as_compound()
+                                .list("data")
+                                .and_then(|list| list.shorts())
+                                .expect("data"),
+                        );
+                    },
+                );
+            }
+            Array::Int => {
+                bench_parse(
+                    group,
+                    "simdnbt-borrow",
+                    kind.name(),
+                    bytes,
+                    |b: &'_ [u8]| {
+                        let base = borrow::read(&mut Cursor::new(std::hint::black_box(b)))
+                            .expect("the document parses")
+                            .unwrap();
+                        let _ = std::hint::black_box(
+                            base.as_compound().int_array("data").expect("data"),
+                        );
+                    },
+                );
+                bench_parse(
+                    group,
+                    "simdnbt-owned",
+                    kind.name(),
+                    bytes,
+                    |b: &'_ [u8]| {
+                        let base = owned::read(&mut Cursor::new(std::hint::black_box(b)))
+                            .expect("the document parses")
+                            .unwrap();
+                        let _ = std::hint::black_box(
+                            base.as_compound().int_array("data").expect("data"),
+                        );
+                    },
+                );
+            }
+            Array::Long => {
+                bench_parse(
+                    group,
+                    "simdnbt-borrow",
+                    kind.name(),
+                    bytes,
+                    |b: &'_ [u8]| {
+                        let base = borrow::read(&mut Cursor::new(std::hint::black_box(b)))
+                            .expect("the document parses")
+                            .unwrap();
+                        let _ = std::hint::black_box(
+                            base.as_compound().long_array("data").expect("data"),
+                        );
+                    },
+                );
+                bench_parse(
+                    group,
+                    "simdnbt-owned",
+                    kind.name(),
+                    bytes,
+                    |b: &'_ [u8]| {
+                        let base = owned::read(&mut Cursor::new(std::hint::black_box(b)))
+                            .expect("the document parses")
+                            .unwrap();
+                        let _ = std::hint::black_box(
+                            base.as_compound().long_array("data").expect("data"),
+                        );
+                    },
+                );
+            }
+        },
     }
-}
-
-pub fn write_owned(group: &mut BenchmarkGroup<'_, WallTime>, doc: Doc, bytes: &[u8]) {
-    match doc {
-        Doc::Small => {
-            let base = owned::read(&mut Cursor::new(bytes))
-                .expect("document parses")
-                .unwrap();
-            let value = Small::from_owned(&base);
-            bench_write_value(group, "simdnbt-owned", doc, &value, Small::to_compound);
-        }
-        Doc::Player => {
-            let base = owned::read(&mut Cursor::new(bytes))
-                .expect("document parses")
-                .unwrap();
-            let value = Player::from_owned(&base);
-            bench_write_value(group, "simdnbt-owned", doc, &value, Player::to_compound);
-        }
-        Doc::Chunk => {
-            let base = owned::read(&mut Cursor::new(bytes))
-                .expect("document parses")
-                .unwrap();
-            let value = Chunk::from_owned(&base);
-            bench_write_value(group, "simdnbt-owned", doc, &value, Chunk::to_compound);
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// The array entries.
-// ---------------------------------------------------------------------------
-
-/// Runs one array parse benchmark, dropping the value inside the timed
-/// closure, since a borrowed value cannot outlive its tape or tree.
-fn bench_parse_array(
-    group: &mut BenchmarkGroup<'_, WallTime>,
-    name: &str,
-    kind: Array,
-    bytes: &[u8],
-    parse: impl Fn(&[u8]),
-) {
-    group.bench_function(BenchmarkId::new(name, kind.name()), |b| {
-        b.iter(|| parse(std::hint::black_box(bytes)));
-    });
 }
 
 /// The owned `data` entry of each kind, for the write entries.
@@ -1017,126 +1103,179 @@ fn long_data(bytes: &[u8]) -> Vec<i64> {
         .to_vec()
 }
 
-/// Runs the parse entries of one array kind.
-///
-/// The document holds a single `data` entry, so the accessor is the struct:
-/// nothing else is read.
-pub fn parse_array(group: &mut BenchmarkGroup<'_, WallTime>, kind: Array, bytes: &[u8]) {
-    match kind {
-        Array::Byte => {
-            bench_parse_array(group, "simdnbt-borrow", kind, bytes, |b| {
-                let base = borrow::read(&mut Cursor::new(b))
+pub fn write(group: &mut BenchmarkGroup<'_, WallTime>, input: BenchInput) {
+    match input {
+        BenchInput::Doc(doc, bytes) => match doc {
+            Doc::Small => {
+                let base = borrow::read(&mut Cursor::new(bytes))
                     .expect("the document parses")
                     .unwrap();
-                std::hint::black_box(base.as_compound().byte_array("data").expect("data"));
-            });
-            bench_parse_array(group, "simdnbt-owned", kind, bytes, |b| {
-                let base = owned::read(&mut Cursor::new(b))
-                    .expect("the document parses")
-                    .unwrap();
-                std::hint::black_box(base.as_compound().byte_array("data").expect("data"));
-            });
-        }
-        Array::Short => {
-            bench_parse_array(group, "simdnbt-borrow", kind, bytes, |b| {
-                let base = borrow::read(&mut Cursor::new(b))
-                    .expect("the document parses")
-                    .unwrap();
-                std::hint::black_box(
-                    base.as_compound()
-                        .list("data")
-                        .and_then(|list| list.shorts())
-                        .expect("data"),
+                let value = Small::from_borrow(&base);
+                bench_write_value(
+                    group,
+                    "simdnbt-borrow",
+                    doc.name(),
+                    &value,
+                    Small::to_compound,
                 );
-            });
-            bench_parse_array(group, "simdnbt-owned", kind, bytes, |b| {
-                let base = owned::read(&mut Cursor::new(b))
+                let base = owned::read(&mut Cursor::new(bytes))
                     .expect("the document parses")
                     .unwrap();
-                std::hint::black_box(
-                    base.as_compound()
-                        .list("data")
-                        .and_then(|list| list.shorts())
-                        .expect("data"),
+                let value = Small::from_owned(&base);
+                bench_write_value(
+                    group,
+                    "simdnbt-owned",
+                    doc.name(),
+                    &value,
+                    Small::to_compound,
                 );
-            });
-        }
-        Array::Int => {
-            bench_parse_array(group, "simdnbt-borrow", kind, bytes, |b| {
-                let base = borrow::read(&mut Cursor::new(b))
+            }
+            Doc::Player => {
+                let base = borrow::read(&mut Cursor::new(bytes))
                     .expect("the document parses")
                     .unwrap();
-                std::hint::black_box(base.as_compound().int_array("data").expect("data"));
-            });
-            bench_parse_array(group, "simdnbt-owned", kind, bytes, |b| {
-                let base = owned::read(&mut Cursor::new(b))
+                let value = Player::from_borrow(&base);
+                bench_write_value(
+                    group,
+                    "simdnbt-borrow",
+                    doc.name(),
+                    &value,
+                    Player::to_compound,
+                );
+                let base = owned::read(&mut Cursor::new(bytes))
                     .expect("the document parses")
                     .unwrap();
-                std::hint::black_box(base.as_compound().int_array("data").expect("data"));
-            });
-        }
-        Array::Long => {
-            bench_parse_array(group, "simdnbt-borrow", kind, bytes, |b| {
-                let base = borrow::read(&mut Cursor::new(b))
+                let value = Player::from_owned(&base);
+                bench_write_value(
+                    group,
+                    "simdnbt-owned",
+                    doc.name(),
+                    &value,
+                    Player::to_compound,
+                );
+            }
+            Doc::Chunk => {
+                let base = borrow::read(&mut Cursor::new(bytes))
                     .expect("the document parses")
                     .unwrap();
-                std::hint::black_box(base.as_compound().long_array("data").expect("data"));
-            });
-            bench_parse_array(group, "simdnbt-owned", kind, bytes, |b| {
-                let base = owned::read(&mut Cursor::new(b))
+                let value = Chunk::from_borrow(&base);
+                bench_write_value(
+                    group,
+                    "simdnbt-borrow",
+                    doc.name(),
+                    &value,
+                    Chunk::to_compound,
+                );
+                let base = owned::read(&mut Cursor::new(bytes))
                     .expect("the document parses")
                     .unwrap();
-                std::hint::black_box(base.as_compound().long_array("data").expect("data"));
-            });
-        }
-    }
-}
-
-/// Runs the write entries of one array kind.
-///
-/// Both entries share one implementation: once the value exists, where it was
-/// parsed from no longer matters, and the numbers should match.
-pub fn write_array(group: &mut BenchmarkGroup<'_, WallTime>, kind: Array, bytes: &[u8]) {
-    match kind {
-        Array::Byte => {
-            let value = byte_data(bytes);
-            let compound = |v: &Vec<u8>| {
-                let mut c = owned::NbtCompound::new();
-                c.insert("data", owned::NbtTag::ByteArray(v.clone()));
-                c
-            };
-            bench_write_value(group, "simdnbt-borrow", kind, &value, compound);
-            bench_write_value(group, "simdnbt-owned", kind, &value, compound);
-        }
-        Array::Short => {
-            let value = short_data(bytes);
-            let compound = |v: &Vec<i16>| {
-                let mut c = owned::NbtCompound::new();
-                c.insert("data", short_list(v));
-                c
-            };
-            bench_write_value(group, "simdnbt-borrow", kind, &value, compound);
-            bench_write_value(group, "simdnbt-owned", kind, &value, compound);
-        }
-        Array::Int => {
-            let value = int_data(bytes);
-            let compound = |v: &Vec<i32>| {
-                let mut c = owned::NbtCompound::new();
-                c.insert("data", owned::NbtTag::IntArray(v.clone()));
-                c
-            };
-            bench_write_value(group, "simdnbt-borrow", kind, &value, compound);
-            bench_write_value(group, "simdnbt-owned", kind, &value, compound);
-        }
-        Array::Long => {
-            let value = long_data(bytes);
-            let compound = |v: &Vec<i64>| {
-                let mut c = owned::NbtCompound::new();
-                c.insert("data", owned::NbtTag::LongArray(v.clone()));
-                c
-            };
-            bench_write_value(group, "simdnbt-borrow", kind, &value, compound);
-            bench_write_value(group, "simdnbt-owned", kind, &value, compound);
-        }
+                let value = Chunk::from_owned(&base);
+                bench_write_value(
+                    group,
+                    "simdnbt-owned",
+                    doc.name(),
+                    &value,
+                    Chunk::to_compound,
+                );
+            }
+        },
+        BenchInput::Array(kind, bytes) => match kind {
+            Array::Byte => {
+                let compound = |v: &Vec<u8>| {
+                    let mut c = owned::NbtCompound::new();
+                    c.insert("data", owned::NbtTag::ByteArray(v.clone()));
+                    c
+                };
+                bench_write(
+                    group,
+                    "simdnbt-borrow",
+                    kind.name(),
+                    bytes,
+                    byte_data,
+                    |v| {
+                        let mut out = Vec::new();
+                        owned::BaseNbt::new("", compound(v)).write(&mut out);
+                        out
+                    },
+                );
+                bench_write(group, "simdnbt-owned", kind.name(), bytes, byte_data, |v| {
+                    let mut out = Vec::new();
+                    owned::BaseNbt::new("", compound(v)).write(&mut out);
+                    out
+                });
+            }
+            Array::Short => {
+                let compound = |v: &Vec<i16>| {
+                    let mut c = owned::NbtCompound::new();
+                    c.insert("data", short_list(v));
+                    c
+                };
+                bench_write(
+                    group,
+                    "simdnbt-borrow",
+                    kind.name(),
+                    bytes,
+                    short_data,
+                    |v| {
+                        let mut out = Vec::new();
+                        owned::BaseNbt::new("", compound(v)).write(&mut out);
+                        out
+                    },
+                );
+                bench_write(
+                    group,
+                    "simdnbt-owned",
+                    kind.name(),
+                    bytes,
+                    short_data,
+                    |v| {
+                        let mut out = Vec::new();
+                        owned::BaseNbt::new("", compound(v)).write(&mut out);
+                        out
+                    },
+                );
+            }
+            Array::Int => {
+                let compound = |v: &Vec<i32>| {
+                    let mut c = owned::NbtCompound::new();
+                    c.insert("data", owned::NbtTag::IntArray(v.clone()));
+                    c
+                };
+                bench_write(group, "simdnbt-borrow", kind.name(), bytes, int_data, |v| {
+                    let mut out = Vec::new();
+                    owned::BaseNbt::new("", compound(v)).write(&mut out);
+                    out
+                });
+                bench_write(group, "simdnbt-owned", kind.name(), bytes, int_data, |v| {
+                    let mut out = Vec::new();
+                    owned::BaseNbt::new("", compound(v)).write(&mut out);
+                    out
+                });
+            }
+            Array::Long => {
+                let compound = |v: &Vec<i64>| {
+                    let mut c = owned::NbtCompound::new();
+                    c.insert("data", owned::NbtTag::LongArray(v.clone()));
+                    c
+                };
+                bench_write(
+                    group,
+                    "simdnbt-borrow",
+                    kind.name(),
+                    bytes,
+                    long_data,
+                    |v| {
+                        let mut out = Vec::new();
+                        owned::BaseNbt::new("", compound(v)).write(&mut out);
+                        out
+                    },
+                );
+                bench_write(group, "simdnbt-owned", kind.name(), bytes, long_data, |v| {
+                    let mut out = Vec::new();
+                    owned::BaseNbt::new("", compound(v)).write(&mut out);
+                    out
+                });
+            }
+        },
     }
 }

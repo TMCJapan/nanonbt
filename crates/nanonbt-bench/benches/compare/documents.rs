@@ -86,6 +86,12 @@ pub struct ArrayInput {
     pub bytes: Vec<u8>,
 }
 
+/// A single benchmark input: either a document or an array.
+pub enum BenchInput<'a> {
+    Doc(Doc, &'a [u8]),
+    Array(Array, &'a [u8]),
+}
+
 /// The array documents, serialized once by `nanonbt`.
 ///
 /// Each is a compound holding one entry, `data`, with [`ARRAY_LENGTH`]

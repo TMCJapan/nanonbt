@@ -9,14 +9,14 @@
 
 use std::borrow::Cow;
 
-use criterion::{BenchmarkGroup, measurement::WallTime};
+use criterion::{measurement::WallTime, BenchmarkGroup};
 use nanonbt::{
-    ByteArray, F32Be, F64Be, FromNBT, I16Be, I32Be, I64Be, IntArray, LongArray, ToNBT, U16Be,
-    U32Be, U64Be, serde_compat,
+    serde_compat, ByteArray, F32Be, F64Be, FromNBT, I16Be, I32Be, I64Be, IntArray, LongArray,
+    ToNBT, U16Be, U32Be, U64Be,
 };
 use serde::{Deserialize, Serialize};
 
-use crate::documents::{Array, Doc};
+use crate::documents::{Array, BenchInput, Doc};
 use crate::{bench_parse, bench_write};
 
 // ---------------------------------------------------------------------------
@@ -485,16 +485,16 @@ macro_rules! array_kinds {
 
                 /// The parse entries of this kind.
                 pub fn parse(group: &mut BenchmarkGroup<'_, WallTime>, kind: Array, bytes: &[u8]) {
-                    bench_parse(group, concat!("nanonbt-derive-", $usuffix), kind, bytes, |b| {
+                    bench_parse(group, "nanonbt-derive", kind.name(), bytes, |b| {
                         ::nanonbt::from_bytes::<OwnedU>(b).expect("the document parses")
                     });
-                    bench_parse(group, concat!("nanonbt-derive-", $ssuffix), kind, bytes, |b| {
+                    bench_parse(group, "nanonbt-derive-signed", kind.name(), bytes, |b| {
                         ::nanonbt::from_bytes::<OwnedS>(b).expect("the document parses")
                     });
-                    bench_parse(group, concat!("nanonbt-borrow-", $usuffix), kind, bytes, |b| {
+                    bench_parse(group, "nanonbt-borrow", kind.name(), bytes, |b| {
                         ::nanonbt::from_bytes::<BorrowedU<'_>>(b).expect("the document parses")
                     });
-                    bench_parse(group, concat!("nanonbt-borrow-", $ssuffix), kind, bytes, |b| {
+                    bench_parse(group, "nanonbt-borrow-signed", kind.name(), bytes, |b| {
                         ::nanonbt::from_bytes::<BorrowedS<'_>>(b).expect("the document parses")
                     });
                 }
@@ -503,32 +503,32 @@ macro_rules! array_kinds {
                 pub fn write(group: &mut BenchmarkGroup<'_, WallTime>, kind: Array, bytes: &[u8]) {
                     bench_write(
                         group,
-                        concat!("nanonbt-derive-", $usuffix),
-                        kind,
+                        "nanonbt-derive",
+                        kind.name(),
                         bytes,
                         |b| ::nanonbt::from_bytes::<OwnedU>(b).expect("the document parses"),
                         |v: &OwnedU| ::nanonbt::to_bytes(v).expect("the document writes"),
                     );
                     bench_write(
                         group,
-                        concat!("nanonbt-derive-", $ssuffix),
-                        kind,
+                        "nanonbt-derive-signed",
+                        kind.name(),
                         bytes,
                         |b| ::nanonbt::from_bytes::<OwnedS>(b).expect("the document parses"),
                         |v: &OwnedS| ::nanonbt::to_bytes(v).expect("the document writes"),
                     );
                     bench_write(
                         group,
-                        concat!("nanonbt-borrow-", $usuffix),
-                        kind,
+                        "nanonbt-borrow",
+                        kind.name(),
                         bytes,
                         |b| ::nanonbt::from_bytes::<BorrowedU<'_>>(b).expect("the document parses"),
                         |v: &BorrowedU<'_>| ::nanonbt::to_bytes(v).expect("the document writes"),
                     );
                     bench_write(
                         group,
-                        concat!("nanonbt-borrow-", $ssuffix),
-                        kind,
+                        "nanonbt-borrow-signed",
+                        kind.name(),
                         bytes,
                         |b| ::nanonbt::from_bytes::<BorrowedS<'_>>(b).expect("the document parses"),
                         |v: &BorrowedS<'_>| ::nanonbt::to_bytes(v).expect("the document writes"),
@@ -559,155 +559,143 @@ pub fn array_document(kind: Array, len: usize) -> Vec<u8> {
     }
 }
 
-/// Runs the parse entries of one array kind.
-pub fn parse_array(group: &mut BenchmarkGroup<'_, WallTime>, kind: Array, bytes: &[u8]) {
-    match kind {
-        Array::Byte => byte::parse(group, kind, bytes),
-        Array::Short => short::parse(group, kind, bytes),
-        Array::Int => int::parse(group, kind, bytes),
-        Array::Long => long::parse(group, kind, bytes),
-    }
-}
-
-/// Runs the write entries of one array kind.
-pub fn write_array(group: &mut BenchmarkGroup<'_, WallTime>, kind: Array, bytes: &[u8]) {
-    match kind {
-        Array::Byte => byte::write(group, kind, bytes),
-        Array::Short => short::write(group, kind, bytes),
-        Array::Int => int::write(group, kind, bytes),
-        Array::Long => long::write(group, kind, bytes),
-    }
-}
-
 // ---------------------------------------------------------------------------
 // The entries.
 // ---------------------------------------------------------------------------
 
-pub fn parse_serde(group: &mut BenchmarkGroup<'_, WallTime>, doc: Doc, bytes: &[u8]) {
-    match doc {
-        Doc::Small => bench_parse(group, "nanonbt-serde", doc, bytes, |b: &[u8]| {
-            serde_compat::from_bytes::<Small>(b).expect("document parses")
-        }),
-        Doc::Player => bench_parse(group, "nanonbt-serde", doc, bytes, |b: &[u8]| {
-            serde_compat::from_bytes::<Player>(b).expect("document parses")
-        }),
-        Doc::Chunk => bench_parse(group, "nanonbt-serde", doc, bytes, |b: &[u8]| {
-            serde_compat::from_bytes::<Chunk>(b).expect("document parses")
-        }),
+pub fn parse(group: &mut BenchmarkGroup<'_, WallTime>, input: BenchInput) {
+    match input {
+        BenchInput::Doc(doc, bytes) => match doc {
+            Doc::Small => {
+                bench_parse(group, "nanonbt-serde", doc.name(), bytes, |b: &[u8]| {
+                    serde_compat::from_bytes::<Small>(b).expect("document parses")
+                });
+                bench_parse(group, "nanonbt-derive", doc.name(), bytes, |b: &[u8]| {
+                    nanonbt::from_bytes::<Small>(b).expect("document parses")
+                });
+                bench_parse(group, "nanonbt-borrow", doc.name(), bytes, |b: &[u8]| {
+                    nanonbt::from_bytes::<SmallRef<'_>>(b).expect("document parses")
+                });
+            }
+            Doc::Player => {
+                bench_parse(group, "nanonbt-serde", doc.name(), bytes, |b: &[u8]| {
+                    serde_compat::from_bytes::<Player>(b).expect("document parses")
+                });
+                bench_parse(group, "nanonbt-derive", doc.name(), bytes, |b: &[u8]| {
+                    nanonbt::from_bytes::<Player>(b).expect("document parses")
+                });
+                bench_parse(group, "nanonbt-borrow", doc.name(), bytes, |b: &[u8]| {
+                    nanonbt::from_bytes::<PlayerRef<'_>>(b).expect("document parses")
+                });
+            }
+            Doc::Chunk => {
+                bench_parse(group, "nanonbt-serde", doc.name(), bytes, |b: &[u8]| {
+                    serde_compat::from_bytes::<Chunk>(b).expect("document parses")
+                });
+                bench_parse(group, "nanonbt-derive", doc.name(), bytes, |b: &[u8]| {
+                    nanonbt::from_bytes::<Chunk>(b).expect("document parses")
+                });
+                bench_parse(group, "nanonbt-borrow", doc.name(), bytes, |b: &[u8]| {
+                    nanonbt::from_bytes::<ChunkRef<'_>>(b).expect("document parses")
+                });
+            }
+        },
+        BenchInput::Array(kind, bytes) => match kind {
+            Array::Byte => byte::parse(group, kind, bytes),
+            Array::Short => short::parse(group, kind, bytes),
+            Array::Int => int::parse(group, kind, bytes),
+            Array::Long => long::parse(group, kind, bytes),
+        },
     }
 }
 
-pub fn write_serde(group: &mut BenchmarkGroup<'_, WallTime>, doc: Doc, bytes: &[u8]) {
-    match doc {
-        Doc::Small => bench_write(
-            group,
-            "nanonbt-serde",
-            doc,
-            bytes,
-            |b: &[u8]| serde_compat::from_bytes::<Small>(b).expect("document parses"),
-            |v: &Small| serde_compat::to_bytes(v).expect("struct writes"),
-        ),
-        Doc::Player => bench_write(
-            group,
-            "nanonbt-serde",
-            doc,
-            bytes,
-            |b: &[u8]| serde_compat::from_bytes::<Player>(b).expect("document parses"),
-            |v: &Player| serde_compat::to_bytes(v).expect("struct writes"),
-        ),
-        Doc::Chunk => bench_write(
-            group,
-            "nanonbt-serde",
-            doc,
-            bytes,
-            |b: &[u8]| serde_compat::from_bytes::<Chunk>(b).expect("document parses"),
-            |v: &Chunk| serde_compat::to_bytes(v).expect("struct writes"),
-        ),
-    }
-}
-
-pub fn parse_derive(group: &mut BenchmarkGroup<'_, WallTime>, doc: Doc, bytes: &[u8]) {
-    match doc {
-        Doc::Small => bench_parse(group, "nanonbt-derive", doc, bytes, |b: &[u8]| {
-            nanonbt::from_bytes::<Small>(b).expect("document parses")
-        }),
-        Doc::Player => bench_parse(group, "nanonbt-derive", doc, bytes, |b: &[u8]| {
-            nanonbt::from_bytes::<Player>(b).expect("document parses")
-        }),
-        Doc::Chunk => bench_parse(group, "nanonbt-derive", doc, bytes, |b: &[u8]| {
-            nanonbt::from_bytes::<Chunk>(b).expect("document parses")
-        }),
-    }
-}
-
-pub fn write_derive(group: &mut BenchmarkGroup<'_, WallTime>, doc: Doc, bytes: &[u8]) {
-    match doc {
-        Doc::Small => bench_write(
-            group,
-            "nanonbt-derive",
-            doc,
-            bytes,
-            |b: &[u8]| nanonbt::from_bytes::<Small>(b).expect("document parses"),
-            |v: &Small| nanonbt::to_bytes(v).expect("struct writes"),
-        ),
-        Doc::Player => bench_write(
-            group,
-            "nanonbt-derive",
-            doc,
-            bytes,
-            |b: &[u8]| nanonbt::from_bytes::<Player>(b).expect("document parses"),
-            |v: &Player| nanonbt::to_bytes(v).expect("struct writes"),
-        ),
-        Doc::Chunk => bench_write(
-            group,
-            "nanonbt-derive",
-            doc,
-            bytes,
-            |b: &[u8]| nanonbt::from_bytes::<Chunk>(b).expect("document parses"),
-            |v: &Chunk| nanonbt::to_bytes(v).expect("struct writes"),
-        ),
-    }
-}
-
-pub fn parse_borrow(group: &mut BenchmarkGroup<'_, WallTime>, doc: Doc, bytes: &[u8]) {
-    match doc {
-        Doc::Small => bench_parse(group, "nanonbt-borrow", doc, bytes, |b: &[u8]| {
-            nanonbt::from_bytes::<SmallRef<'_>>(b).expect("document parses")
-        }),
-        Doc::Player => bench_parse(group, "nanonbt-borrow", doc, bytes, |b: &[u8]| {
-            nanonbt::from_bytes::<PlayerRef<'_>>(b).expect("document parses")
-        }),
-        Doc::Chunk => bench_parse(group, "nanonbt-borrow", doc, bytes, |b: &[u8]| {
-            nanonbt::from_bytes::<ChunkRef<'_>>(b).expect("document parses")
-        }),
-    }
-}
-
-pub fn write_borrow(group: &mut BenchmarkGroup<'_, WallTime>, doc: Doc, bytes: &[u8]) {
-    match doc {
-        Doc::Small => bench_write(
-            group,
-            "nanonbt-borrow",
-            doc,
-            bytes,
-            |b: &[u8]| nanonbt::from_bytes::<SmallRef<'_>>(b).expect("document parses"),
-            |v: &SmallRef<'_>| nanonbt::to_bytes(v).expect("struct writes"),
-        ),
-        Doc::Player => bench_write(
-            group,
-            "nanonbt-borrow",
-            doc,
-            bytes,
-            |b: &[u8]| nanonbt::from_bytes::<PlayerRef<'_>>(b).expect("document parses"),
-            |v: &PlayerRef<'_>| nanonbt::to_bytes(v).expect("struct writes"),
-        ),
-        Doc::Chunk => bench_write(
-            group,
-            "nanonbt-borrow",
-            doc,
-            bytes,
-            |b: &[u8]| nanonbt::from_bytes::<ChunkRef<'_>>(b).expect("document parses"),
-            |v: &ChunkRef<'_>| nanonbt::to_bytes(v).expect("struct writes"),
-        ),
+pub fn write(group: &mut BenchmarkGroup<'_, WallTime>, input: BenchInput) {
+    match input {
+        BenchInput::Doc(doc, bytes) => match doc {
+            Doc::Small => {
+                bench_write(
+                    group,
+                    "nanonbt-serde",
+                    doc.name(),
+                    bytes,
+                    |b: &[u8]| serde_compat::from_bytes::<Small>(b).expect("document parses"),
+                    |v: &Small| serde_compat::to_bytes(v).expect("struct writes"),
+                );
+                bench_write(
+                    group,
+                    "nanonbt-derive",
+                    doc.name(),
+                    bytes,
+                    |b: &[u8]| nanonbt::from_bytes::<Small>(b).expect("document parses"),
+                    |v: &Small| nanonbt::to_bytes(v).expect("struct writes"),
+                );
+                bench_write(
+                    group,
+                    "nanonbt-borrow",
+                    doc.name(),
+                    bytes,
+                    |b: &[u8]| nanonbt::from_bytes::<SmallRef<'_>>(b).expect("document parses"),
+                    |v: &SmallRef<'_>| nanonbt::to_bytes(v).expect("struct writes"),
+                );
+            }
+            Doc::Player => {
+                bench_write(
+                    group,
+                    "nanonbt-serde",
+                    doc.name(),
+                    bytes,
+                    |b: &[u8]| serde_compat::from_bytes::<Player>(b).expect("document parses"),
+                    |v: &Player| serde_compat::to_bytes(v).expect("struct writes"),
+                );
+                bench_write(
+                    group,
+                    "nanonbt-derive",
+                    doc.name(),
+                    bytes,
+                    |b: &[u8]| nanonbt::from_bytes::<Player>(b).expect("document parses"),
+                    |v: &Player| nanonbt::to_bytes(v).expect("struct writes"),
+                );
+                bench_write(
+                    group,
+                    "nanonbt-borrow",
+                    doc.name(),
+                    bytes,
+                    |b: &[u8]| nanonbt::from_bytes::<PlayerRef<'_>>(b).expect("document parses"),
+                    |v: &PlayerRef<'_>| nanonbt::to_bytes(v).expect("struct writes"),
+                );
+            }
+            Doc::Chunk => {
+                bench_write(
+                    group,
+                    "nanonbt-serde",
+                    doc.name(),
+                    bytes,
+                    |b: &[u8]| serde_compat::from_bytes::<Chunk>(b).expect("document parses"),
+                    |v: &Chunk| serde_compat::to_bytes(v).expect("struct writes"),
+                );
+                bench_write(
+                    group,
+                    "nanonbt-derive",
+                    doc.name(),
+                    bytes,
+                    |b: &[u8]| nanonbt::from_bytes::<Chunk>(b).expect("document parses"),
+                    |v: &Chunk| nanonbt::to_bytes(v).expect("struct writes"),
+                );
+                bench_write(
+                    group,
+                    "nanonbt-borrow",
+                    doc.name(),
+                    bytes,
+                    |b: &[u8]| nanonbt::from_bytes::<ChunkRef<'_>>(b).expect("document parses"),
+                    |v: &ChunkRef<'_>| nanonbt::to_bytes(v).expect("struct writes"),
+                );
+            }
+        },
+        BenchInput::Array(kind, bytes) => match kind {
+            Array::Byte => byte::write(group, kind, bytes),
+            Array::Short => short::write(group, kind, bytes),
+            Array::Int => int::write(group, kind, bytes),
+            Array::Long => long::write(group, kind, bytes),
+        },
     }
 }

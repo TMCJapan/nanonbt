@@ -47,8 +47,8 @@
 use std::{hint::black_box, time::Duration};
 
 use criterion::{
-    BenchmarkGroup, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main,
-    measurement::WallTime,
+    criterion_group, criterion_main, measurement::WallTime, BenchmarkGroup, BenchmarkId, Criterion,
+    Throughput,
 };
 
 mod documents;
@@ -58,33 +58,18 @@ mod targets;
 ///
 /// The [`Doc`](documents::Doc) documents and the [`Array`](documents::Array)
 /// shapes both label their entries, so the helpers take either.
-pub trait Label: Copy {
-    /// The name in the report.
-    fn label(self) -> &'static str;
-}
-
-impl Label for documents::Doc {
-    fn label(self) -> &'static str {
-        self.name()
-    }
-}
-
-impl Label for documents::Array {
-    fn label(self) -> &'static str {
-        self.name()
-    }
-}
+/// (Replaced by direct [`std::fmt::Display`] parameters.)
 
 /// Runs one parse benchmark: `parse` decodes `bytes` into a `T` on every
 /// iteration.
-pub fn bench_parse<'a, T>(
+pub fn bench_parse<'a, T, S: std::fmt::Display>(
     group: &mut BenchmarkGroup<'_, WallTime>,
     name: &str,
-    label: impl Label,
+    label: S,
     bytes: &'a [u8],
     parse: impl Fn(&'a [u8]) -> T,
 ) {
-    group.bench_function(BenchmarkId::new(name, label.label()), |b| {
+    group.bench_function(BenchmarkId::new(name, label), |b| {
         b.iter(|| parse(black_box(bytes)));
     });
 }
@@ -94,17 +79,17 @@ pub fn bench_parse<'a, T>(
 ///
 /// Throughput is the length `write` produces, which for a borrowed struct is
 /// not always the length of the input.
-pub fn bench_write<'a, T, O: AsRef<[u8]>>(
+pub fn bench_write<'a, T, O: AsRef<[u8]>, S: std::fmt::Display>(
     group: &mut BenchmarkGroup<'_, WallTime>,
     name: &str,
-    label: impl Label,
+    label: S,
     bytes: &'a [u8],
     parse: impl Fn(&'a [u8]) -> T,
     write: impl Fn(&T) -> O,
 ) {
     let value = parse(bytes);
     group.throughput(Throughput::Bytes(write(&value).as_ref().len() as u64));
-    group.bench_function(BenchmarkId::new(name, label.label()), |b| {
+    group.bench_function(BenchmarkId::new(name, label), |b| {
         b.iter(|| write(black_box(&value)));
     });
 }
@@ -126,18 +111,25 @@ fn parse(c: &mut Criterion) {
         // The `bench_parse` entries record this length; the `write` group sets
         // its own per entry.
         group.throughput(Throughput::Bytes(input.bytes.len() as u64));
-        targets::nanonbt::parse_serde(&mut group, input.doc, &input.bytes);
-        targets::nanonbt::parse_derive(&mut group, input.doc, &input.bytes);
-        targets::nanonbt::parse_borrow(&mut group, input.doc, &input.bytes);
+        targets::nanonbt::parse(
+            &mut group,
+            documents::BenchInput::Doc(input.doc, &input.bytes),
+        );
         #[cfg(feature = "fastnbt")]
-        targets::fastnbt::parse(&mut group, input.doc, &input.bytes);
+        targets::fastnbt::parse(
+            &mut group,
+            documents::BenchInput::Doc(input.doc, &input.bytes),
+        );
         #[cfg(feature = "simdnbt")]
-        {
-            targets::simdnbt::parse_borrow(&mut group, input.doc, &input.bytes);
-            targets::simdnbt::parse_owned(&mut group, input.doc, &input.bytes);
-        }
+        targets::simdnbt::parse(
+            &mut group,
+            documents::BenchInput::Doc(input.doc, &input.bytes),
+        );
         #[cfg(feature = "pumpkin-nbt")]
-        targets::pumpkin::parse(&mut group, input.doc, &input.bytes);
+        targets::pumpkin::parse(
+            &mut group,
+            documents::BenchInput::Doc(input.doc, &input.bytes),
+        );
     }
     // The array entries are many and their iterations are milliseconds long,
     // so a shorter measurement keeps the suite near its five minutes.
@@ -147,13 +139,25 @@ fn parse(c: &mut Criterion) {
         .measurement_time(Duration::from_secs(1));
     for input in &arrays {
         group.throughput(Throughput::Bytes(input.bytes.len() as u64));
-        targets::nanonbt::parse_array(&mut group, input.kind, &input.bytes);
+        targets::nanonbt::parse(
+            &mut group,
+            documents::BenchInput::Array(input.kind, &input.bytes),
+        );
         #[cfg(feature = "fastnbt")]
-        targets::fastnbt::parse_array(&mut group, input.kind, &input.bytes);
+        targets::fastnbt::parse(
+            &mut group,
+            documents::BenchInput::Array(input.kind, &input.bytes),
+        );
         #[cfg(feature = "simdnbt")]
-        targets::simdnbt::parse_array(&mut group, input.kind, &input.bytes);
+        targets::simdnbt::parse(
+            &mut group,
+            documents::BenchInput::Array(input.kind, &input.bytes),
+        );
         #[cfg(feature = "pumpkin-nbt")]
-        targets::pumpkin::parse_array(&mut group, input.kind, &input.bytes);
+        targets::pumpkin::parse(
+            &mut group,
+            documents::BenchInput::Array(input.kind, &input.bytes),
+        );
     }
     group.finish();
 }
@@ -164,31 +168,50 @@ fn write(c: &mut Criterion) {
     let mut group = c.benchmark_group("write");
     configure(&mut group);
     for input in &inputs {
-        targets::nanonbt::write_serde(&mut group, input.doc, &input.bytes);
-        targets::nanonbt::write_derive(&mut group, input.doc, &input.bytes);
-        targets::nanonbt::write_borrow(&mut group, input.doc, &input.bytes);
+        targets::nanonbt::write(
+            &mut group,
+            documents::BenchInput::Doc(input.doc, &input.bytes),
+        );
         #[cfg(feature = "fastnbt")]
-        targets::fastnbt::write(&mut group, input.doc, &input.bytes);
+        targets::fastnbt::write(
+            &mut group,
+            documents::BenchInput::Doc(input.doc, &input.bytes),
+        );
         #[cfg(feature = "simdnbt")]
-        {
-            targets::simdnbt::write_borrow(&mut group, input.doc, &input.bytes);
-            targets::simdnbt::write_owned(&mut group, input.doc, &input.bytes);
-        }
+        targets::simdnbt::write(
+            &mut group,
+            documents::BenchInput::Doc(input.doc, &input.bytes),
+        );
         #[cfg(feature = "pumpkin-nbt")]
-        targets::pumpkin::write(&mut group, input.doc, &input.bytes);
+        targets::pumpkin::write(
+            &mut group,
+            documents::BenchInput::Doc(input.doc, &input.bytes),
+        );
     }
     group
         .sample_size(30)
         .warm_up_time(Duration::from_millis(500))
         .measurement_time(Duration::from_secs(1));
     for input in &arrays {
-        targets::nanonbt::write_array(&mut group, input.kind, &input.bytes);
+        targets::nanonbt::write(
+            &mut group,
+            documents::BenchInput::Array(input.kind, &input.bytes),
+        );
         #[cfg(feature = "fastnbt")]
-        targets::fastnbt::write_array(&mut group, input.kind, &input.bytes);
+        targets::fastnbt::write(
+            &mut group,
+            documents::BenchInput::Array(input.kind, &input.bytes),
+        );
         #[cfg(feature = "simdnbt")]
-        targets::simdnbt::write_array(&mut group, input.kind, &input.bytes);
+        targets::simdnbt::write(
+            &mut group,
+            documents::BenchInput::Array(input.kind, &input.bytes),
+        );
         #[cfg(feature = "pumpkin-nbt")]
-        targets::pumpkin::write_array(&mut group, input.kind, &input.bytes);
+        targets::pumpkin::write(
+            &mut group,
+            documents::BenchInput::Array(input.kind, &input.bytes),
+        );
     }
     group.finish();
 }
