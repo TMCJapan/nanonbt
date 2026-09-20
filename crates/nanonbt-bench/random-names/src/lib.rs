@@ -103,12 +103,12 @@ fn names(args: &Args) -> Result<Vec<String>, String> {
         }
         let mut s = args.prefix.clone();
         for _ in 0..suffix {
-            s.push(ALNUM[rng.gen_range(0..ALNUM.len())] as char);
+            if s.is_empty() {
+                s.push(ALNUM[rng.gen_range(0..26)] as char);
+            } else {
+                s.push(ALNUM[rng.gen_range(0..ALNUM.len())] as char);
+            }
         }
-        // First byte after prefix must be a letter if it is the very first
-        // byte of the random part (so that the whole identifier starts with a
-        // letter when the prefix is empty). Since the prefix always starts with
-        // a letter in practice, we just need the rest to stay valid.
         if s.is_empty() {
             s.push(ALNUM[rng.gen_range(0..26)] as char);
         }
