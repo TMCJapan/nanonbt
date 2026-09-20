@@ -197,7 +197,7 @@ jobs:
         run: cargo fmt --all --check
       - name: clippy
         working-directory: crates/nanonbt-bench
-        run: cargo clippy --benches --locked -- -D warnings
+        run: cargo clippy --all-targets --locked -- -D warnings
 
   # One required check for branch protection.
   ci:

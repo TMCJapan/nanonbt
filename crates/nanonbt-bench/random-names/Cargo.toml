@@ -1,0 +1,15 @@
+[package]
+name = "random-names"
+description = "The `random_names` attribute macro behind the bench's name documents"
+publish = false
+edition = "2024"
+version = "0.1.0"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1"
+quote = "1"
+rand = "0.8"
+syn = "3"

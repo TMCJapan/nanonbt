@@ -1,9 +1,11 @@
 //! The documents every target parses and writes.
 //!
 //! Each document is built as the owned `nanonbt` derive model and serialized
-//! by `nanonbt`, so every entry reads the same bytes. Besides the three
+//! by `nanonbt`, so every entry reads the same bytes. Besides the five
 //! structs there are four array shapes, each one compound holding one huge
-//! `data` array or list.
+//! `data` array or list. `short-names` and `long-names` hold the same 64
+//! `i32` fields and differ only in key length, so their numbers read as a
+//! pair; the `random_names` attribute draws their keys.
 
 use nanonbt::ToNBT;
 
@@ -19,6 +21,8 @@ pub enum Doc {
     Small,
     Player,
     Chunk,
+    ShortNames,
+    LongNames,
 }
 
 impl Doc {
@@ -27,6 +31,8 @@ impl Doc {
             Self::Small => "small",
             Self::Player => "player",
             Self::Chunk => "chunk",
+            Self::ShortNames => "short-names",
+            Self::LongNames => "long-names",
         }
     }
 }
@@ -43,6 +49,8 @@ pub fn inputs() -> Vec<Input> {
         input(Doc::Small, &model::sample_small()),
         input(Doc::Player, &model::sample_player()),
         input(Doc::Chunk, &model::sample_chunk(8)),
+        input(Doc::ShortNames, &model::ShortNames::sample()),
+        input(Doc::LongNames, &model::LongNames::sample()),
     ]
 }
 

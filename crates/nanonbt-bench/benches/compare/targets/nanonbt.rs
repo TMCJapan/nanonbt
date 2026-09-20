@@ -1,19 +1,23 @@
-//! The three `nanonbt` entries: `serde`, `derive` and borrowed `derive`.
+//! The `nanonbt` entries: `serde`, `derive` and borrowed `derive`.
 //!
 //! The owned model below doubles as the input source: `documents` serializes
-//! [`sample_small`], [`sample_player`] and [`sample_chunk`], and every target
-//! then parses those same bytes.
+//! [`sample_small`], [`sample_player`], [`sample_chunk`], [`ShortNames`] and
+//! [`LongNames`], and every target then parses those same bytes. The name pair
+//! carries only `i32` fields, so it has no `nanonbt-borrow` entry: the
+//! borrowed struct would compile to the owned one. Their field names are drawn
+//! by the `random_names` attribute, so no name appears in this source.
 //!
 //! Field names are the NBT keys, so neither `serde` nor the derive needs a
 //! rename attribute; the parser rejects unknown fields, not unknown attributes.
 
 use std::borrow::Cow;
 
-use criterion::{measurement::WallTime, BenchmarkGroup};
+use criterion::{BenchmarkGroup, measurement::WallTime};
 use nanonbt::{
-    serde_compat, ByteArray, F32Be, F64Be, FromNBT, I16Be, I32Be, I64Be, IntArray, LongArray,
-    ToNBT, U16Be, U32Be, U64Be,
+    ByteArray, F32Be, F64Be, FromNBT, I16Be, I32Be, I64Be, IntArray, LongArray, ToNBT, U16Be,
+    U32Be, U64Be, serde_compat,
 };
+use random_names::random_names;
 use serde::{Deserialize, Serialize};
 
 use crate::documents::{Array, BenchInput, Doc};
@@ -169,6 +173,26 @@ pub struct BlockEntity {
     pub z: i32,
     pub KeepPacked: i8,
 }
+
+/// A compound of 64 `i32` fields whose keys are a fixed 60-byte prefix plus
+/// four random bytes, drawn by the `random_names` attribute.
+#[random_names(
+    64,
+    len = 64,
+    prefix = "benchmark_field_with_a_deliberately_long_name_shared_prefix_"
+)]
+#[random_names(
+    64,
+    len = 64,
+    prefix = "benchmark_field_with_a_deliberately_long_name_shared_prefix_"
+)]
+#[derive(Serialize, Deserialize, FromNBT, ToNBT)]
+pub struct LongNames;
+
+/// The same 64 `i32` fields as [`LongNames`], named by three random bytes.
+#[random_names(64, len = 3)]
+#[derive(Serialize, Deserialize, FromNBT, ToNBT)]
+pub struct ShortNames;
 
 /// The attributes of [`sample_player`], as `(name, base value)`.
 const ATTRIBUTES: [(&str, f64); 5] = [
@@ -425,6 +449,14 @@ pub struct BlockEntityRef<'a> {
     pub KeepPacked: i8,
 }
 
+pub fn sample_long_names() -> LongNames {
+    LongNames::sample()
+}
+
+pub fn sample_short_names() -> ShortNames {
+    ShortNames::sample()
+}
+
 // ---------------------------------------------------------------------------
 // The array model, one compound per array kind.
 // ---------------------------------------------------------------------------
@@ -599,6 +631,22 @@ pub fn parse(group: &mut BenchmarkGroup<'_, WallTime>, input: BenchInput) {
                     nanonbt::from_bytes::<ChunkRef<'_>>(b).expect("document parses")
                 });
             }
+            Doc::ShortNames => {
+                bench_parse(group, "nanonbt-serde", doc.name(), bytes, |b: &[u8]| {
+                    serde_compat::from_bytes::<ShortNames>(b).expect("document parses")
+                });
+                bench_parse(group, "nanonbt-derive", doc.name(), bytes, |b: &[u8]| {
+                    nanonbt::from_bytes::<ShortNames>(b).expect("document parses")
+                });
+            }
+            Doc::LongNames => {
+                bench_parse(group, "nanonbt-serde", doc.name(), bytes, |b: &[u8]| {
+                    serde_compat::from_bytes::<LongNames>(b).expect("document parses")
+                });
+                bench_parse(group, "nanonbt-derive", doc.name(), bytes, |b: &[u8]| {
+                    nanonbt::from_bytes::<LongNames>(b).expect("document parses")
+                });
+            }
         },
         BenchInput::Array(kind, bytes) => match kind {
             Array::Byte => byte::parse(group, kind, bytes),
@@ -688,6 +736,42 @@ pub fn write(group: &mut BenchmarkGroup<'_, WallTime>, input: BenchInput) {
                     bytes,
                     |b: &[u8]| nanonbt::from_bytes::<ChunkRef<'_>>(b).expect("document parses"),
                     |v: &ChunkRef<'_>| nanonbt::to_bytes(v).expect("struct writes"),
+                );
+            }
+            Doc::ShortNames => {
+                bench_write(
+                    group,
+                    "nanonbt-serde",
+                    doc.name(),
+                    bytes,
+                    |b: &[u8]| serde_compat::from_bytes::<ShortNames>(b).expect("document parses"),
+                    |v: &ShortNames| serde_compat::to_bytes(v).expect("struct writes"),
+                );
+                bench_write(
+                    group,
+                    "nanonbt-derive",
+                    doc.name(),
+                    bytes,
+                    |b: &[u8]| nanonbt::from_bytes::<ShortNames>(b).expect("document parses"),
+                    |v: &ShortNames| nanonbt::to_bytes(v).expect("struct writes"),
+                );
+            }
+            Doc::LongNames => {
+                bench_write(
+                    group,
+                    "nanonbt-serde",
+                    doc.name(),
+                    bytes,
+                    |b: &[u8]| serde_compat::from_bytes::<LongNames>(b).expect("document parses"),
+                    |v: &LongNames| serde_compat::to_bytes(v).expect("struct writes"),
+                );
+                bench_write(
+                    group,
+                    "nanonbt-derive",
+                    doc.name(),
+                    bytes,
+                    |b: &[u8]| nanonbt::from_bytes::<LongNames>(b).expect("document parses"),
+                    |v: &LongNames| nanonbt::to_bytes(v).expect("struct writes"),
                 );
             }
         },

@@ -6,8 +6,9 @@
 
 use std::io::Cursor;
 
-use criterion::{measurement::WallTime, BenchmarkGroup};
-use pumpkin_nbt::{deserializer::NbtReadHelperJava, tag::NbtTag, Nbt, NbtCompound};
+use criterion::{BenchmarkGroup, measurement::WallTime};
+use pumpkin_nbt::{Nbt, NbtCompound, deserializer::NbtReadHelperJava, tag::NbtTag};
+use random_names::random_names;
 
 use crate::documents::{Array, BenchInput, Doc};
 use crate::{bench_parse, bench_write};
@@ -444,6 +445,21 @@ pub struct BlockEntity {
     KeepPacked: i8,
 }
 
+/// 64 `i32` fields whose keys are a fixed 60-byte prefix plus four random
+/// bytes, drawn by the `random_names` attribute.
+#[random_names(
+    64,
+    len = 64,
+    prefix = "benchmark_field_with_a_deliberately_long_name_shared_prefix_"
+)]
+#[derive(Debug)]
+pub struct LongNames;
+
+/// The same 64 `i32` fields as [`LongNames`], named by three random bytes.
+#[random_names(64, len = 3)]
+#[derive(Debug)]
+pub struct ShortNames;
+
 impl Chunk {
     fn from_compound(c: &NbtCompound) -> Self {
         Self {
@@ -656,6 +672,30 @@ impl BlockEntity {
     }
 }
 
+impl LongNames {
+    fn from_compound(c: &NbtCompound) -> Self {
+        Self::from_lookup(|name| c.get_int(name).expect(name))
+    }
+
+    fn to_compound(&self) -> NbtCompound {
+        let mut c = NbtCompound::new();
+        self.for_each(|name, value| c.put_int(name, value));
+        c
+    }
+}
+
+impl ShortNames {
+    fn from_compound(c: &NbtCompound) -> Self {
+        Self::from_lookup(|name| c.get_int(name).expect(name))
+    }
+
+    fn to_compound(&self) -> NbtCompound {
+        let mut c = NbtCompound::new();
+        self.for_each(|name, value| c.put_int(name, value));
+        c
+    }
+}
+
 // ---------------------------------------------------------------------------
 // The entries.
 // ---------------------------------------------------------------------------
@@ -718,6 +758,16 @@ pub fn parse(group: &mut BenchmarkGroup<'_, WallTime>, input: BenchInput) {
                 let mut reader = NbtReadHelperJava::new(Cursor::new(b));
                 Chunk::from_compound(&Nbt::read(&mut reader).expect("document parses").root_tag)
             }),
+            Doc::ShortNames => bench_parse(group, "pumpkin", doc.name(), bytes, |b: &[u8]| {
+                let mut reader = NbtReadHelperJava::new(Cursor::new(b));
+                ShortNames::from_compound(
+                    &Nbt::read(&mut reader).expect("document parses").root_tag,
+                )
+            }),
+            Doc::LongNames => bench_parse(group, "pumpkin", doc.name(), bytes, |b: &[u8]| {
+                let mut reader = NbtReadHelperJava::new(Cursor::new(b));
+                LongNames::from_compound(&Nbt::read(&mut reader).expect("document parses").root_tag)
+            }),
         },
         BenchInput::Array(kind, bytes) => match kind {
             Array::Byte => bench_parse(group, "pumpkin", kind.name(), bytes, byte_data),
@@ -765,6 +815,32 @@ pub fn write(group: &mut BenchmarkGroup<'_, WallTime>, input: BenchInput) {
                     Chunk::from_compound(&Nbt::read(&mut reader).expect("document parses").root_tag)
                 },
                 |v: &Chunk| Nbt::new(String::new(), v.to_compound()).write(),
+            ),
+            Doc::ShortNames => bench_write(
+                group,
+                "pumpkin",
+                doc.name(),
+                bytes,
+                |b: &[u8]| {
+                    let mut reader = NbtReadHelperJava::new(Cursor::new(b));
+                    ShortNames::from_compound(
+                        &Nbt::read(&mut reader).expect("document parses").root_tag,
+                    )
+                },
+                |v: &ShortNames| Nbt::new(String::new(), v.to_compound()).write(),
+            ),
+            Doc::LongNames => bench_write(
+                group,
+                "pumpkin",
+                doc.name(),
+                bytes,
+                |b: &[u8]| {
+                    let mut reader = NbtReadHelperJava::new(Cursor::new(b));
+                    LongNames::from_compound(
+                        &Nbt::read(&mut reader).expect("document parses").root_tag,
+                    )
+                },
+                |v: &LongNames| Nbt::new(String::new(), v.to_compound()).write(),
             ),
         },
         BenchInput::Array(kind, bytes) => match kind {

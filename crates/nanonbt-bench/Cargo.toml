@@ -19,6 +19,7 @@ simdnbt = { version = "0.10", optional = true }
 [dev-dependencies]
 criterion = "0.8"
 nanonbt = { path = "../nanonbt", features = ["serde"] }
+random-names = { path = "random-names" }
 serde = { version = "1", features = ["derive"] }
 
 [features]

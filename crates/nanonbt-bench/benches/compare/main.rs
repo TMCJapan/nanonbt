@@ -3,9 +3,17 @@
 //! Every entry parses the same bytes into its own struct, and `write` encodes
 //! that struct back. The documents are built and serialized by the owned
 //! `nanonbt` derive model, so every implementation reads the same bytes.
-//! Besides the three structs there are four array shapes — a byte, int and
+//! Besides the five structs there are four array shapes — a byte, int and
 //! long array and a short list — half a million elements each, so the array
 //! paths are measured on their own.
+//!
+//! `short-names` and `long-names` are the same compound of 64 `i32` fields
+//! with three- and sixty-four-byte keys, so the pair isolates what the names
+//! themselves cost each target. Their keys are drawn by the `random_names`
+//! attribute macro from a fixed seed, so they never appear in this source and
+//! every target still reads the same bytes. The name pair has no
+//! `nanonbt-borrow` entry: with nothing to borrow, its struct would compile
+//! to the owned one.
 //!
 //! The array documents give every element both spellings on the `nanonbt`
 //! side, owned and borrowed: bytes lend as `&[u8]`/`&[i8]`, and the wider
@@ -47,18 +55,12 @@
 use std::{hint::black_box, time::Duration};
 
 use criterion::{
-    criterion_group, criterion_main, measurement::WallTime, BenchmarkGroup, BenchmarkId, Criterion,
-    Throughput,
+    BenchmarkGroup, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main,
+    measurement::WallTime,
 };
 
 mod documents;
 mod targets;
-
-/// The name a document goes by in the report.
-///
-/// The [`Doc`](documents::Doc) documents and the [`Array`](documents::Array)
-/// shapes both label their entries, so the helpers take either.
-/// (Replaced by direct [`std::fmt::Display`] parameters.)
 
 /// Runs one parse benchmark: `parse` decodes `bytes` into a `T` on every
 /// iteration.
@@ -94,7 +96,7 @@ pub fn bench_write<'a, T, O: AsRef<[u8]>, S: std::fmt::Display>(
     });
 }
 
-/// Keeps the suite, many benchmarks long, around five minutes.
+/// Keeps the suite, many benchmarks long, around seven minutes.
 pub fn configure(group: &mut BenchmarkGroup<'_, WallTime>) {
     group
         .sample_size(50)

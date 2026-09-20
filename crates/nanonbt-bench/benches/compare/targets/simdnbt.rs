@@ -11,8 +11,9 @@
 
 use std::{borrow::Cow, io::Cursor};
 
-use criterion::{measurement::WallTime, BenchmarkGroup, BenchmarkId, Throughput};
-use simdnbt::{borrow, owned, Mutf8Str, Mutf8String};
+use criterion::{BenchmarkGroup, BenchmarkId, Throughput, measurement::WallTime};
+use random_names::random_names;
+use simdnbt::{Mutf8Str, Mutf8String, borrow, owned};
 
 use crate::{
     bench_parse, bench_write,
@@ -571,6 +572,23 @@ pub struct BlockEntity<'a> {
     KeepPacked: i8,
 }
 
+/// 64 `i32` fields whose keys are a fixed 60-byte prefix plus four random
+/// bytes, drawn by the `random_names` attribute.
+#[random_names(
+    64,
+    len = 64,
+    prefix = "benchmark_field_with_a_deliberately_long_name_shared_prefix_"
+)]
+#[derive(Debug)]
+pub struct LongNames;
+
+/// The same 64 `i32` fields as [`LongNames`], named by three random bytes.
+#[random_names(64, len = 3)]
+#[derive(Debug)]
+pub struct ShortNames;
+
+// (simdnbt uses manual accessors, no derive needed)
+
 impl<'a> Chunk<'a> {
     fn from_borrow(nbt: &'a borrow::BaseNbt<'a>) -> Self {
         let nbt = nbt.as_compound();
@@ -827,6 +845,40 @@ impl<'a> BlockEntity<'a> {
     }
 }
 
+impl LongNames {
+    fn from_borrow<'a>(nbt: &'a borrow::BaseNbt<'a>) -> Self {
+        let nbt = nbt.as_compound();
+        Self::from_lookup(|name| nbt.int(name).expect(name))
+    }
+
+    fn from_owned(nbt: &owned::BaseNbt) -> Self {
+        Self::from_lookup(|name| nbt.int(name).expect(name))
+    }
+
+    fn to_compound(&self) -> owned::NbtCompound {
+        let mut c = owned::NbtCompound::new();
+        self.for_each(|name, value| c.insert(name, value));
+        c
+    }
+}
+
+impl ShortNames {
+    fn from_borrow<'a>(nbt: &'a borrow::BaseNbt<'a>) -> Self {
+        let nbt = nbt.as_compound();
+        Self::from_lookup(|name| nbt.int(name).expect(name))
+    }
+
+    fn from_owned(nbt: &owned::BaseNbt) -> Self {
+        Self::from_lookup(|name| nbt.int(name).expect(name))
+    }
+
+    fn to_compound(&self) -> owned::NbtCompound {
+        let mut c = owned::NbtCompound::new();
+        self.for_each(|name, value| c.insert(name, value));
+        c
+    }
+}
+
 // ---------------------------------------------------------------------------
 // The entries.
 // ---------------------------------------------------------------------------
@@ -930,6 +982,58 @@ pub fn parse(group: &mut BenchmarkGroup<'_, WallTime>, input: BenchInput) {
                             .expect("the document parses")
                             .unwrap();
                         let _ = std::hint::black_box(Chunk::from_owned(&base));
+                    },
+                );
+            }
+            Doc::ShortNames => {
+                bench_parse(
+                    group,
+                    "simdnbt-borrow",
+                    doc.name(),
+                    bytes,
+                    |b: &'_ [u8]| {
+                        let base = borrow::read(&mut Cursor::new(std::hint::black_box(b)))
+                            .expect("the document parses")
+                            .unwrap();
+                        let _ = std::hint::black_box(ShortNames::from_borrow(&base));
+                    },
+                );
+                bench_parse(
+                    group,
+                    "simdnbt-owned",
+                    doc.name(),
+                    bytes,
+                    |b: &'_ [u8]| {
+                        let base = owned::read(&mut Cursor::new(std::hint::black_box(b)))
+                            .expect("the document parses")
+                            .unwrap();
+                        let _ = std::hint::black_box(ShortNames::from_owned(&base));
+                    },
+                );
+            }
+            Doc::LongNames => {
+                bench_parse(
+                    group,
+                    "simdnbt-borrow",
+                    doc.name(),
+                    bytes,
+                    |b: &'_ [u8]| {
+                        let base = borrow::read(&mut Cursor::new(std::hint::black_box(b)))
+                            .expect("the document parses")
+                            .unwrap();
+                        let _ = std::hint::black_box(LongNames::from_borrow(&base));
+                    },
+                );
+                bench_parse(
+                    group,
+                    "simdnbt-owned",
+                    doc.name(),
+                    bytes,
+                    |b: &'_ [u8]| {
+                        let base = owned::read(&mut Cursor::new(std::hint::black_box(b)))
+                            .expect("the document parses")
+                            .unwrap();
+                        let _ = std::hint::black_box(LongNames::from_owned(&base));
                     },
                 );
             }
@@ -1176,6 +1280,54 @@ pub fn write(group: &mut BenchmarkGroup<'_, WallTime>, input: BenchInput) {
                     doc.name(),
                     &value,
                     Chunk::to_compound,
+                );
+            }
+            Doc::ShortNames => {
+                let base = borrow::read(&mut Cursor::new(bytes))
+                    .expect("the document parses")
+                    .unwrap();
+                let value = ShortNames::from_borrow(&base);
+                bench_write_value(
+                    group,
+                    "simdnbt-borrow",
+                    doc.name(),
+                    &value,
+                    ShortNames::to_compound,
+                );
+                let base = owned::read(&mut Cursor::new(bytes))
+                    .expect("the document parses")
+                    .unwrap();
+                let value = ShortNames::from_owned(&base);
+                bench_write_value(
+                    group,
+                    "simdnbt-owned",
+                    doc.name(),
+                    &value,
+                    ShortNames::to_compound,
+                );
+            }
+            Doc::LongNames => {
+                let base = borrow::read(&mut Cursor::new(bytes))
+                    .expect("the document parses")
+                    .unwrap();
+                let value = LongNames::from_borrow(&base);
+                bench_write_value(
+                    group,
+                    "simdnbt-borrow",
+                    doc.name(),
+                    &value,
+                    LongNames::to_compound,
+                );
+                let base = owned::read(&mut Cursor::new(bytes))
+                    .expect("the document parses")
+                    .unwrap();
+                let value = LongNames::from_owned(&base);
+                bench_write_value(
+                    group,
+                    "simdnbt-owned",
+                    doc.name(),
+                    &value,
+                    LongNames::to_compound,
                 );
             }
         },

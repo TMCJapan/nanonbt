@@ -1,7 +1,8 @@
 //! The `fastnbt` entry: one serde struct per document.
 
-use criterion::{measurement::WallTime, BenchmarkGroup};
+use criterion::{BenchmarkGroup, measurement::WallTime};
 use fastnbt::{ByteArray, IntArray, LongArray};
+use random_names::random_names;
 use serde::{Deserialize, Serialize};
 
 use crate::documents::{Array, BenchInput, Doc};
@@ -154,6 +155,41 @@ pub struct BlockEntity {
     pub KeepPacked: i8,
 }
 
+/// 64 `i32` fields whose keys are a fixed 60-byte prefix plus four random
+/// bytes, drawn by the `random_names` attribute.
+#[random_names(
+    64,
+    len = 64,
+    prefix = "benchmark_field_with_a_deliberately_long_name_shared_prefix_"
+)]
+#[random_names(
+    64,
+    len = 64,
+    prefix = "benchmark_field_with_a_deliberately_long_name_shared_prefix_"
+)]
+#[random_names(
+    64,
+    len = 64,
+    prefix = "benchmark_field_with_a_deliberately_long_name_shared_prefix_"
+)]
+#[random_names(
+    64,
+    len = 64,
+    prefix = "benchmark_field_with_a_deliberately_long_name_shared_prefix_"
+)]
+#[random_names(
+    64,
+    len = 64,
+    prefix = "benchmark_field_with_a_deliberately_long_name_shared_prefix_"
+)]
+#[derive(Serialize, Deserialize)]
+pub struct LongNames;
+
+/// The same 64 `i32` fields as [`LongNames`], named by three random bytes.
+#[random_names(64, len = 3)]
+#[derive(Serialize, Deserialize)]
+pub struct ShortNames;
+
 // ---------------------------------------------------------------------------
 // The array model, one compound per array kind.
 // ---------------------------------------------------------------------------
@@ -215,6 +251,12 @@ pub fn parse(group: &mut BenchmarkGroup<'_, WallTime>, input: BenchInput) {
             }),
             Doc::Chunk => bench_parse(group, "fastnbt", doc.name(), bytes, |b: &[u8]| {
                 fastnbt::from_bytes::<Chunk>(b).expect("the document parses")
+            }),
+            Doc::ShortNames => bench_parse(group, "fastnbt", doc.name(), bytes, |b: &[u8]| {
+                fastnbt::from_bytes::<ShortNames>(b).expect("the document parses")
+            }),
+            Doc::LongNames => bench_parse(group, "fastnbt", doc.name(), bytes, |b: &[u8]| {
+                fastnbt::from_bytes::<LongNames>(b).expect("the document parses")
             }),
         },
         BenchInput::Array(kind, bytes) => match kind {
@@ -278,6 +320,22 @@ pub fn write(group: &mut BenchmarkGroup<'_, WallTime>, input: BenchInput) {
                 bytes,
                 |b: &[u8]| fastnbt::from_bytes::<Chunk>(b).expect("the document parses"),
                 |v: &Chunk| fastnbt::to_bytes(v).expect("the document writes"),
+            ),
+            Doc::ShortNames => bench_write(
+                group,
+                "fastnbt",
+                doc.name(),
+                bytes,
+                |b: &[u8]| fastnbt::from_bytes::<ShortNames>(b).expect("the document parses"),
+                |v: &ShortNames| fastnbt::to_bytes(v).expect("the document writes"),
+            ),
+            Doc::LongNames => bench_write(
+                group,
+                "fastnbt",
+                doc.name(),
+                bytes,
+                |b: &[u8]| fastnbt::from_bytes::<LongNames>(b).expect("the document parses"),
+                |v: &LongNames| fastnbt::to_bytes(v).expect("the document writes"),
             ),
         },
         BenchInput::Array(kind, bytes) => match kind {
