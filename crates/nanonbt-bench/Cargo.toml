@@ -10,15 +10,25 @@ version = "0.1.0"
 [workspace]
 resolver = "2"
 
+[dependencies]
+# All three are in `default`, so all benchmarks run out of the box.
+fastnbt = { version = "2.6.3", optional = true }
+pumpkin-nbt = { git = "https://github.com/Pumpkin-MC/Pumpkin.git", rev = "218a7fe46767235a917f94ba1120afbd33e7ef8c", optional = true }
+simdnbt = { version = "0.10", optional = true }
+
 [dev-dependencies]
 criterion = "0.8"
-fastnbt = "2.6.3"
 nanonbt = { path = "../nanonbt", features = ["serde"] }
-# pumpkin-nbt is not on crates.io; the rev is the API the bench was written
-# against.
-pumpkin-nbt = { git = "https://github.com/Pumpkin-MC/Pumpkin.git", rev = "218a7fe46767235a917f94ba1120afbd33e7ef8c" }
 serde = { version = "1", features = ["derive"] }
-simdnbt = "0.10"
+
+[features]
+default = ["fastnbt", "pumpkin-nbt", "simdnbt"]
+# Enable the fastnbt benchmarks.
+fastnbt = ["dep:fastnbt"]
+# Enable the pumpkin-nbt benchmarks (always listed last).
+pumpkin-nbt = ["dep:pumpkin-nbt"]
+# Enable the simdnbt benchmarks.
+simdnbt = ["dep:simdnbt"]
 
 [[bench]]
 name = "compare"

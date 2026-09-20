@@ -29,7 +29,9 @@
 //! for a rough pass. A single entry or document can be selected, as in
 //! `cargo +nightly bench -- nanonbt-borrow` or
 //! `cargo +nightly bench -- player`. Add `--features nanonbt/simd` to run the
-//! `nanonbt` entries on the vectorized paths.
+//! `nanonbt` entries on the vectorized paths. All three of
+//! `fastnbt`, `pumpkin-nbt`, and `simdnbt` are enabled by default;
+//! `pumpkin-nbt` is always listed last in the report.
 //!
 //! Three entries need a note. `nanonbt-borrow` (above) changes the encoding of
 //! borrowed arrays. `simdnbt-borrow` keeps a tape over the input and decodes
@@ -127,9 +129,14 @@ fn parse(c: &mut Criterion) {
         targets::nanonbt::parse_serde(&mut group, input.doc, &input.bytes);
         targets::nanonbt::parse_derive(&mut group, input.doc, &input.bytes);
         targets::nanonbt::parse_borrow(&mut group, input.doc, &input.bytes);
+        #[cfg(feature = "fastnbt")]
         targets::fastnbt::parse(&mut group, input.doc, &input.bytes);
-        targets::simdnbt::parse_borrow(&mut group, input.doc, &input.bytes);
-        targets::simdnbt::parse_owned(&mut group, input.doc, &input.bytes);
+        #[cfg(feature = "simdnbt")]
+        {
+            targets::simdnbt::parse_borrow(&mut group, input.doc, &input.bytes);
+            targets::simdnbt::parse_owned(&mut group, input.doc, &input.bytes);
+        }
+        #[cfg(feature = "pumpkin-nbt")]
         targets::pumpkin::parse(&mut group, input.doc, &input.bytes);
     }
     // The array entries are many and their iterations are milliseconds long,
@@ -141,8 +148,11 @@ fn parse(c: &mut Criterion) {
     for input in &arrays {
         group.throughput(Throughput::Bytes(input.bytes.len() as u64));
         targets::nanonbt::parse_array(&mut group, input.kind, &input.bytes);
+        #[cfg(feature = "fastnbt")]
         targets::fastnbt::parse_array(&mut group, input.kind, &input.bytes);
+        #[cfg(feature = "simdnbt")]
         targets::simdnbt::parse_array(&mut group, input.kind, &input.bytes);
+        #[cfg(feature = "pumpkin-nbt")]
         targets::pumpkin::parse_array(&mut group, input.kind, &input.bytes);
     }
     group.finish();
@@ -157,9 +167,14 @@ fn write(c: &mut Criterion) {
         targets::nanonbt::write_serde(&mut group, input.doc, &input.bytes);
         targets::nanonbt::write_derive(&mut group, input.doc, &input.bytes);
         targets::nanonbt::write_borrow(&mut group, input.doc, &input.bytes);
+        #[cfg(feature = "fastnbt")]
         targets::fastnbt::write(&mut group, input.doc, &input.bytes);
-        targets::simdnbt::write_borrow(&mut group, input.doc, &input.bytes);
-        targets::simdnbt::write_owned(&mut group, input.doc, &input.bytes);
+        #[cfg(feature = "simdnbt")]
+        {
+            targets::simdnbt::write_borrow(&mut group, input.doc, &input.bytes);
+            targets::simdnbt::write_owned(&mut group, input.doc, &input.bytes);
+        }
+        #[cfg(feature = "pumpkin-nbt")]
         targets::pumpkin::write(&mut group, input.doc, &input.bytes);
     }
     group
@@ -168,8 +183,11 @@ fn write(c: &mut Criterion) {
         .measurement_time(Duration::from_secs(1));
     for input in &arrays {
         targets::nanonbt::write_array(&mut group, input.kind, &input.bytes);
+        #[cfg(feature = "fastnbt")]
         targets::fastnbt::write_array(&mut group, input.kind, &input.bytes);
+        #[cfg(feature = "simdnbt")]
         targets::simdnbt::write_array(&mut group, input.kind, &input.bytes);
+        #[cfg(feature = "pumpkin-nbt")]
         targets::pumpkin::write_array(&mut group, input.kind, &input.bytes);
     }
     group.finish();
