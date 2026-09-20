@@ -9,7 +9,7 @@ use std::io::Cursor;
 use criterion::{BenchmarkGroup, measurement::WallTime};
 use pumpkin_nbt::{Nbt, NbtCompound, deserializer::NbtReadHelperJava, tag::NbtTag};
 
-use crate::documents::Doc;
+use crate::documents::{Array, Doc};
 use crate::{bench_parse, bench_write};
 
 /// Extracts each tag of a list of compounds.
@@ -712,5 +712,91 @@ pub fn write(group: &mut BenchmarkGroup<'_, WallTime>, doc: Doc, bytes: &[u8]) {
             },
             |v: &Chunk| Nbt::new(String::new(), v.to_compound()).write(),
         ),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The array entries.
+// ---------------------------------------------------------------------------
+
+/// The owned `data` entry of each kind, for the write entries.
+fn byte_data(bytes: &[u8]) -> Vec<i8> {
+    let mut reader = NbtReadHelperJava::new(Cursor::new(bytes));
+    Nbt::read(&mut reader)
+        .expect("the document parses")
+        .root_tag
+        .get_byte_array("data")
+        .expect("data")
+        .to_vec()
+}
+
+fn short_data(bytes: &[u8]) -> Vec<i16> {
+    let mut reader = NbtReadHelperJava::new(Cursor::new(bytes));
+    Nbt::read(&mut reader)
+        .expect("the document parses")
+        .root_tag
+        .get_list("data")
+        .expect("data")
+        .iter()
+        .map(|tag| tag.extract_short().expect("short"))
+        .collect()
+}
+
+fn int_data(bytes: &[u8]) -> Vec<i32> {
+    let mut reader = NbtReadHelperJava::new(Cursor::new(bytes));
+    Nbt::read(&mut reader)
+        .expect("the document parses")
+        .root_tag
+        .get_int_array("data")
+        .expect("data")
+        .to_vec()
+}
+
+fn long_data(bytes: &[u8]) -> Vec<i64> {
+    let mut reader = NbtReadHelperJava::new(Cursor::new(bytes));
+    Nbt::read(&mut reader)
+        .expect("the document parses")
+        .root_tag
+        .get_long_array("data")
+        .expect("data")
+        .to_vec()
+}
+
+/// Runs the parse entries of one array kind.
+pub fn parse_array(group: &mut BenchmarkGroup<'_, WallTime>, kind: Array, bytes: &[u8]) {
+    match kind {
+        Array::Byte => bench_parse(group, "pumpkin", kind, bytes, byte_data),
+        Array::Short => bench_parse(group, "pumpkin", kind, bytes, short_data),
+        Array::Int => bench_parse(group, "pumpkin", kind, bytes, int_data),
+        Array::Long => bench_parse(group, "pumpkin", kind, bytes, long_data),
+    }
+}
+
+/// Runs the write entries of one array kind.
+pub fn write_array(group: &mut BenchmarkGroup<'_, WallTime>, kind: Array, bytes: &[u8]) {
+    match kind {
+        Array::Byte => bench_write(group, "pumpkin", kind, bytes, byte_data, |v: &Vec<i8>| {
+            let mut c = NbtCompound::new();
+            c.put("data", NbtTag::ByteArray(v.clone().into()));
+            Nbt::new(String::new(), c).write()
+        }),
+        Array::Short => bench_write(group, "pumpkin", kind, bytes, short_data, |v: &Vec<i16>| {
+            let mut c = NbtCompound::new();
+            c.put(
+                "data",
+                NbtTag::List(v.iter().map(|value| NbtTag::Short(*value)).collect()),
+            );
+            Nbt::new(String::new(), c).write()
+        }),
+        Array::Int => bench_write(group, "pumpkin", kind, bytes, int_data, |v: &Vec<i32>| {
+            let mut c = NbtCompound::new();
+            c.put("data", NbtTag::IntArray(v.clone()));
+            Nbt::new(String::new(), c).write()
+        }),
+        Array::Long => bench_write(group, "pumpkin", kind, bytes, long_data, |v: &Vec<i64>| {
+            let mut c = NbtCompound::new();
+            c.put("data", NbtTag::LongArray(v.clone()));
+            Nbt::new(String::new(), c).write()
+        }),
     }
 }

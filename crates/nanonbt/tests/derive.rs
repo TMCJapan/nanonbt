@@ -271,6 +271,119 @@ fn modified_utf8_owns_and_cannot_borrow() {
 }
 
 #[test]
+fn array_fields_are_written_and_read_as_arrays() {
+    #[derive(FromNBT, ToNBT, PartialEq, Debug)]
+    struct Arrays {
+        #[nbt(array = "byte")]
+        bytes: Vec<u8>,
+        #[nbt(array = "int")]
+        ints: Vec<u32>,
+        #[nbt(array = "long")]
+        longs: Vec<i64>,
+    }
+
+    let value = Arrays {
+        bytes: vec![0, 1, u8::MAX],
+        ints: vec![0, 1, u32::MAX],
+        longs: vec![i64::MIN, i64::MAX],
+    };
+    let bytes = to_bytes(&value).unwrap();
+
+    // The document the array types write for the same values.
+    #[derive(ToNBT)]
+    struct Native {
+        bytes: ByteArray,
+        ints: IntArray,
+        longs: LongArray,
+    }
+    let native = Native {
+        bytes: ByteArray::new(vec![0, 1, -1]),
+        ints: IntArray::new(vec![0, 1, -1]),
+        longs: LongArray::new(vec![i64::MIN, i64::MAX]),
+    };
+    assert_eq!(bytes, to_bytes(&native).unwrap());
+
+    assert_eq!(from_bytes::<Arrays>(&bytes).unwrap(), value);
+    assert_eq!(
+        from_value::<Arrays>(&to_value(&value).unwrap()).unwrap(),
+        value
+    );
+
+    // A tree keeps them as arrays, where a plain `Vec` would be a list.
+    let Value::Compound(tree) = to_value(&value).unwrap() else {
+        panic!("the root is a compound");
+    };
+    assert!(matches!(tree["bytes"], Value::ByteArray(_)));
+    assert!(matches!(tree["ints"], Value::IntArray(_)));
+    assert!(matches!(tree["longs"], Value::LongArray(_)));
+}
+
+#[test]
+fn array_fields_take_fixed_arrays_options_and_borrows() {
+    #[derive(FromNBT, ToNBT, PartialEq, Debug)]
+    struct Arrays<'a> {
+        #[nbt(array = "long")]
+        fixed: [u64; 2],
+        #[nbt(array = "int")]
+        signed: Vec<i32>,
+        #[nbt(array = "long")]
+        absent: Option<Vec<i64>>,
+        #[nbt(array = "byte")]
+        present: Option<Vec<u8>>,
+        #[nbt(array = "byte")]
+        borrowed: &'a [i8],
+    }
+
+    let value = Arrays {
+        fixed: [1, u64::MAX],
+        signed: vec![i32::MIN, i32::MAX],
+        absent: None,
+        present: Some(vec![5, 6]),
+        borrowed: &[-1, 0],
+    };
+    let bytes = to_bytes(&value).unwrap();
+    assert_eq!(from_bytes::<Arrays<'_>>(&bytes).unwrap(), value);
+
+    // The absent entry is left out, not written empty.
+    assert!(!bytes.windows(6).any(|w| w == b"absent"));
+}
+
+#[test]
+fn array_fields_are_strict() {
+    #[derive(FromNBT, ToNBT, PartialEq, Debug)]
+    struct Longs {
+        #[nbt(array = "long")]
+        data: Vec<i64>,
+    }
+
+    #[allow(dead_code)] // compared through the parse outcome
+    #[derive(FromNBT, Debug)]
+    struct Ints {
+        #[nbt(array = "int")]
+        data: Vec<i32>,
+    }
+
+    // A long array does not read as an int array, nor the other way.
+    let bytes = to_bytes(&Longs { data: vec![1, 2] }).unwrap();
+    assert_eq!(
+        from_bytes::<Ints>(&bytes).unwrap_err().to_string(),
+        "invalid nbt tag value: 12"
+    );
+
+    // A fixed array checks the length.
+    #[allow(dead_code)] // compared through the parse outcome
+    #[derive(FromNBT, Debug)]
+    struct Three {
+        #[nbt(array = "long")]
+        data: [i64; 3],
+    }
+    assert_eq!(
+        from_bytes::<Three>(&bytes).unwrap_err().to_string(),
+        "sequence has a different length than the target array"
+    );
+}
+
+#[test]
 fn missing_fields_error_and_unknown_fields_skip() {
     #[derive(FromNBT, ToNBT, PartialEq, Debug)]
     struct Sparse {

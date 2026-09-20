@@ -1,11 +1,17 @@
 //! The documents every target parses and writes.
 //!
 //! Each document is built as the owned `nanonbt` derive model and serialized
-//! by `nanonbt`, so every entry reads the same bytes.
+//! by `nanonbt`, so every entry reads the same bytes. Besides the three
+//! structs there are four array shapes, each one compound holding one huge
+//! `data` array or list.
 
 use nanonbt::ToNBT;
 
 use crate::targets::nanonbt as model;
+
+/// The length of every array document: half a million elements, far past
+/// cache and within the 512,000 elements `pumpkin-nbt` accepts.
+pub const ARRAY_LENGTH: usize = 500_000;
 
 /// One document shape.
 #[derive(Clone, Copy)]
@@ -45,4 +51,51 @@ fn input<T: ToNBT>(doc: Doc, value: &T) -> Input {
         doc,
         bytes: nanonbt::to_bytes(value).expect("documents are valid NBT"),
     }
+}
+
+/// One array shape: a byte, int or long array, or a short list.
+///
+/// NBT has no short array, so 16-bit elements go through lists; the other
+/// three are the arrays of their tags.
+#[derive(Clone, Copy)]
+pub enum Array {
+    Byte,
+    Short,
+    Int,
+    Long,
+}
+
+impl Array {
+    /// Every shape, in the order the report lists them.
+    pub const ALL: [Self; 4] = [Self::Byte, Self::Short, Self::Int, Self::Long];
+
+    /// The name in the report.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Byte => "byte-array",
+            Self::Short => "short-list",
+            Self::Int => "int-array",
+            Self::Long => "long-array",
+        }
+    }
+}
+
+/// A serialized array document.
+pub struct ArrayInput {
+    pub kind: Array,
+    pub bytes: Vec<u8>,
+}
+
+/// The array documents, serialized once by `nanonbt`.
+///
+/// Each is a compound holding one entry, `data`, with [`ARRAY_LENGTH`]
+/// elements, written by the owned unsigned struct of that kind.
+pub fn array_inputs() -> Vec<ArrayInput> {
+    Array::ALL
+        .into_iter()
+        .map(|kind| ArrayInput {
+            kind,
+            bytes: model::array_document(kind, ARRAY_LENGTH),
+        })
+        .collect()
 }

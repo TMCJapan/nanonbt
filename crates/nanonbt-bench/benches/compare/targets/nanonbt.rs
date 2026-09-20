@@ -11,11 +11,12 @@ use std::borrow::Cow;
 
 use criterion::{BenchmarkGroup, measurement::WallTime};
 use nanonbt::{
-    ByteArray, F32Be, F64Be, FromNBT, I32Be, IntArray, LongArray, ToNBT, U64Be, serde_compat,
+    ByteArray, F32Be, F64Be, FromNBT, I16Be, I32Be, I64Be, IntArray, LongArray, ToNBT, U16Be,
+    U32Be, U64Be, serde_compat,
 };
 use serde::{Deserialize, Serialize};
 
-use crate::documents::Doc;
+use crate::documents::{Array, Doc};
 use crate::{bench_parse, bench_write};
 
 // ---------------------------------------------------------------------------
@@ -422,6 +423,160 @@ pub struct BlockEntityRef<'a> {
     pub y: i32,
     pub z: i32,
     pub KeepPacked: i8,
+}
+
+// ---------------------------------------------------------------------------
+// The array model, one compound per array kind.
+// ---------------------------------------------------------------------------
+
+/// One array kind's four structs and its entries: the unsigned and signed
+/// `Vec<T>` a derived field writes and reads, and the unsigned and signed
+/// slice it lends.
+///
+/// Bytes keep the array attribute on both sides, so a borrowed byte slice
+/// round trips as an array; the wider borrowed slices write lists, as
+/// borrowed slices do everywhere.
+macro_rules! array_kinds {
+    ($(
+        $(#[$owned:meta])?
+        $module:ident, $usuffix:literal, $ssuffix:literal,
+        $unsigned:ty, $signed:ty, $uview:ty, $sview:ty $(, #[$borrowed:meta])?;
+    )*) => {
+        $(
+            pub mod $module {
+                use super::*;
+
+                /// The owned spelling, unsigned.
+                #[derive(FromNBT, ToNBT)]
+                pub struct OwnedU {
+                    $(#[$owned])?
+                    data: Vec<$unsigned>,
+                }
+
+                /// The owned spelling, signed.
+                #[derive(FromNBT, ToNBT)]
+                pub struct OwnedS {
+                    $(#[$owned])?
+                    data: Vec<$signed>,
+                }
+
+                /// The borrowed spelling, unsigned.
+                #[derive(FromNBT, ToNBT)]
+                pub struct BorrowedU<'a> {
+                    $(#[$borrowed])?
+                    data: &'a [$uview],
+                }
+
+                /// The borrowed spelling, signed.
+                #[derive(FromNBT, ToNBT)]
+                pub struct BorrowedS<'a> {
+                    $(#[$borrowed])?
+                    data: &'a [$sview],
+                }
+
+                /// The document: a compound holding one huge `data` array or
+                /// list, written by the owned unsigned struct.
+                pub fn document(len: usize) -> Vec<u8> {
+                    let value = OwnedU {
+                        data: (0..len).map(|i| i as $unsigned).collect(),
+                    };
+                    ::nanonbt::to_bytes(&value).expect("the document writes")
+                }
+
+                /// The parse entries of this kind.
+                pub fn parse(group: &mut BenchmarkGroup<'_, WallTime>, kind: Array, bytes: &[u8]) {
+                    bench_parse(group, concat!("nanonbt-derive-", $usuffix), kind, bytes, |b| {
+                        ::nanonbt::from_bytes::<OwnedU>(b).expect("the document parses")
+                    });
+                    bench_parse(group, concat!("nanonbt-derive-", $ssuffix), kind, bytes, |b| {
+                        ::nanonbt::from_bytes::<OwnedS>(b).expect("the document parses")
+                    });
+                    bench_parse(group, concat!("nanonbt-borrow-", $usuffix), kind, bytes, |b| {
+                        ::nanonbt::from_bytes::<BorrowedU<'_>>(b).expect("the document parses")
+                    });
+                    bench_parse(group, concat!("nanonbt-borrow-", $ssuffix), kind, bytes, |b| {
+                        ::nanonbt::from_bytes::<BorrowedS<'_>>(b).expect("the document parses")
+                    });
+                }
+
+                /// The write entries of this kind.
+                pub fn write(group: &mut BenchmarkGroup<'_, WallTime>, kind: Array, bytes: &[u8]) {
+                    bench_write(
+                        group,
+                        concat!("nanonbt-derive-", $usuffix),
+                        kind,
+                        bytes,
+                        |b| ::nanonbt::from_bytes::<OwnedU>(b).expect("the document parses"),
+                        |v: &OwnedU| ::nanonbt::to_bytes(v).expect("the document writes"),
+                    );
+                    bench_write(
+                        group,
+                        concat!("nanonbt-derive-", $ssuffix),
+                        kind,
+                        bytes,
+                        |b| ::nanonbt::from_bytes::<OwnedS>(b).expect("the document parses"),
+                        |v: &OwnedS| ::nanonbt::to_bytes(v).expect("the document writes"),
+                    );
+                    bench_write(
+                        group,
+                        concat!("nanonbt-borrow-", $usuffix),
+                        kind,
+                        bytes,
+                        |b| ::nanonbt::from_bytes::<BorrowedU<'_>>(b).expect("the document parses"),
+                        |v: &BorrowedU<'_>| ::nanonbt::to_bytes(v).expect("the document writes"),
+                    );
+                    bench_write(
+                        group,
+                        concat!("nanonbt-borrow-", $ssuffix),
+                        kind,
+                        bytes,
+                        |b| ::nanonbt::from_bytes::<BorrowedS<'_>>(b).expect("the document parses"),
+                        |v: &BorrowedS<'_>| ::nanonbt::to_bytes(v).expect("the document writes"),
+                    );
+                }
+            }
+        )*
+    };
+}
+
+array_kinds! {
+    #[nbt(array = "byte")]
+    byte, "u8", "i8", u8, i8, u8, i8, #[nbt(array = "byte")];
+    short, "u16", "i16", u16, i16, U16Be, I16Be;
+    #[nbt(array = "int")]
+    int, "u32", "i32", u32, i32, U32Be, I32Be;
+    #[nbt(array = "long")]
+    long, "u64", "i64", u64, i64, U64Be, I64Be;
+}
+
+/// The document bytes of one array kind.
+pub fn array_document(kind: Array, len: usize) -> Vec<u8> {
+    match kind {
+        Array::Byte => byte::document(len),
+        Array::Short => short::document(len),
+        Array::Int => int::document(len),
+        Array::Long => long::document(len),
+    }
+}
+
+/// Runs the parse entries of one array kind.
+pub fn parse_array(group: &mut BenchmarkGroup<'_, WallTime>, kind: Array, bytes: &[u8]) {
+    match kind {
+        Array::Byte => byte::parse(group, kind, bytes),
+        Array::Short => short::parse(group, kind, bytes),
+        Array::Int => int::parse(group, kind, bytes),
+        Array::Long => long::parse(group, kind, bytes),
+    }
+}
+
+/// Runs the write entries of one array kind.
+pub fn write_array(group: &mut BenchmarkGroup<'_, WallTime>, kind: Array, bytes: &[u8]) {
+    match kind {
+        Array::Byte => byte::write(group, kind, bytes),
+        Array::Short => short::write(group, kind, bytes),
+        Array::Int => int::write(group, kind, bytes),
+        Array::Long => long::write(group, kind, bytes),
+    }
 }
 
 // ---------------------------------------------------------------------------

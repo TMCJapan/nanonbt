@@ -1,8 +1,8 @@
 //! The validated description of a type to generate code for.
 
-use syn::{Data, DeriveInput, Error, Fields, Generics, Ident, Path, Result, Type};
+use syn::{Data, DeriveInput, Error, Fields, Generics, Ident, Path, Result, Type, TypePath};
 
-use crate::attrs;
+use crate::attrs::{self, ArrayKind};
 
 pub struct Model {
     pub ident: Ident,
@@ -25,6 +25,26 @@ pub struct Field {
     pub ty: Type,
     pub name: String,
     pub ignore: bool,
+    /// `#[nbt(array = "...")]`, if the field has one.
+    pub array: Option<Array>,
+}
+
+/// How an `array` field holds its elements, which decides how it reads.
+pub enum ArrayContainer {
+    /// A `Vec<T>`, read through `From<Array>`.
+    Vec,
+    /// A `[T; N]`, read through `TryFrom<Array>`, which checks the length.
+    Fixed,
+    /// A `&[T]`, read through the field type's own `FromNBT`.
+    Borrowed,
+}
+
+/// An `#[nbt(array = "...")]` field: the NBT array it is written as.
+pub struct Array {
+    pub kind: ArrayKind,
+    pub container: ArrayContainer,
+    /// The element type, as written: `i64` for a `Vec<i64>`.
+    pub element: Type,
 }
 
 pub struct Variant {
@@ -53,11 +73,18 @@ impl Model {
                                 ));
                             }
                             let name = attrs.rename.unwrap_or_else(|| unraw(&ident));
+                            let array = attrs
+                                .array
+                                .map(|kind| {
+                                    array_of(kind, option_inner(&field.ty).unwrap_or(&field.ty))
+                                })
+                                .transpose()?;
                             Ok(Field {
                                 ident,
                                 ty: field.ty.clone(),
                                 name,
                                 ignore: attrs.ignore,
+                                array,
                             })
                         })
                         .collect::<Result<Vec<_>>>()?;
@@ -110,6 +137,105 @@ impl Model {
 fn unraw(ident: &Ident) -> String {
     let name = ident.to_string();
     name.strip_prefix("r#").unwrap_or(&name).to_owned()
+}
+
+/// Describes an `#[nbt(array = "...")]` field from the type it is written as.
+fn array_of(kind: ArrayKind, ty: &Type) -> Result<Array> {
+    let (container, element) = match ty {
+        Type::Array(array) => (ArrayContainer::Fixed, (*array.elem).clone()),
+        Type::Reference(reference) => match &*reference.elem {
+            Type::Slice(slice) => (ArrayContainer::Borrowed, (*slice.elem).clone()),
+            elem => return Err(unsupported_array_field(elem)),
+        },
+        Type::Path(path) => match vec_element(path) {
+            Some(element) => (ArrayContainer::Vec, element.clone()),
+            None => return Err(unsupported_array_field(ty)),
+        },
+        _ => return Err(unsupported_array_field(ty)),
+    };
+    check_element(kind, &element)?;
+    Ok(Array {
+        kind,
+        container,
+        element,
+    })
+}
+
+/// The integer primitives, which name an NBT array's elements.
+const ARRAY_ELEMENTS: [&str; 6] = ["i8", "u8", "i32", "u32", "i64", "u64"];
+
+/// The other primitives, which no NBT array holds.
+const OTHER_PRIMITIVES: [&str; 9] = [
+    "i16", "u16", "i128", "u128", "f32", "f64", "bool", "char", "String",
+];
+
+/// The element type names an NBT array can hold, by kind.
+const fn expected_elements(kind: ArrayKind) -> [&'static str; 2] {
+    match kind {
+        ArrayKind::Byte => ["i8", "u8"],
+        ArrayKind::Int => ["i32", "u32"],
+        ArrayKind::Long => ["i64", "u64"],
+    }
+}
+
+/// Refuses a known primitive that the kind cannot hold. A name that might be
+/// an alias or a generic parameter is left to the generated bounds.
+fn check_element(kind: ArrayKind, element: &Type) -> Result<()> {
+    let Some(name) = element_name(element) else {
+        return Ok(());
+    };
+    let expected = expected_elements(kind);
+    if expected.contains(&name.as_str()) {
+        return Ok(());
+    }
+    if ARRAY_ELEMENTS.contains(&name.as_str()) || OTHER_PRIMITIVES.contains(&name.as_str()) {
+        let [signed, unsigned] = expected;
+        return Err(Error::new_spanned(
+            element,
+            format!(
+                "an `array = \"{}\"` field holds {signed} or {unsigned} elements, not `{name}`",
+                kind.name()
+            ),
+        ));
+    }
+    Ok(())
+}
+
+/// A primitive type name written as the last segment of a plain path.
+fn element_name(element: &Type) -> Option<String> {
+    let Type::Path(path) = element else {
+        return None;
+    };
+    let segment = path.path.segments.last()?;
+    if !matches!(segment.arguments, syn::PathArguments::None) {
+        return None;
+    }
+    Some(segment.ident.to_string())
+}
+
+fn unsupported_array_field(ty: &Type) -> Error {
+    Error::new_spanned(
+        ty,
+        "an `array` field must be a `Vec<T>`, a `[T; N]` or a `&[T]`",
+    )
+}
+
+/// `Vec<T>` written as a path's last segment, if it is one.
+fn vec_element(path: &TypePath) -> Option<&Type> {
+    let segment = path.path.segments.last()?;
+    if segment.ident != "Vec" {
+        return None;
+    }
+    let syn::PathArguments::AngleBracketed(args) = &segment.arguments else {
+        return None;
+    };
+    if args.args.len() != 1 {
+        return None;
+    }
+    match args.args.first()? {
+        syn::GenericArgument::Type(element) => Some(element),
+        _ => None,
+    }
 }
 
 /// `Option<T>` written as a path's last segment, if it is one.

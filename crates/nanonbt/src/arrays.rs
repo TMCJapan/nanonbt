@@ -4,9 +4,22 @@
 //! single-entry map whose key is a reserved token and whose value is the
 //! big-endian payload as bytes. The tokens are fastnbt's, so its array types
 //! and these are interchangeable.
+//!
+//! [`ArrayOf`] writes and reads a slice of elements directly, in either
+//! spelling of the element, without building an array type or copying the
+//! elements; a derived field with `#[nbt(array = "...")]` goes through it.
+//!
+//! Conversions cover both spellings of an element: `ByteArray` comes from
+//! `&[i8]` and `&[u8]`, `IntArray` from `&[i32]` and `&[u32]`, and
+//! `LongArray` from `&[i64]` and `&[u64]`. An unsigned element shares its
+//! signed element's tag and reinterprets the bits, as it does everywhere
+//! else in the crate. The reverse conversions go to `Vec<T>`; a fixed array
+//! is `TryFrom` and checks the length.
 
 use alloc::vec::Vec;
 use core::ops::{Deref, DerefMut};
+
+use crate::be::{as_i8, as_u8};
 
 #[cfg(feature = "serde")]
 use alloc::string::String;
@@ -111,8 +124,144 @@ fn serialize_array<S: Serializer>(
     wrapper.end()
 }
 
+/// An NBT array type holding elements of `E`.
+///
+/// [`ByteArray`] holds `i8` and `u8`, [`IntArray`] `i32` and `u32`, and
+/// [`LongArray`] `i64` and `u64`. An unsigned element shares its signed
+/// element's tag and reinterprets the bits, as it does everywhere else in
+/// the crate.
+///
+/// The methods work on a slice of elements directly, so a derived field with
+/// `#[nbt(array = "...")]` neither builds an array type nor copies its
+/// elements to write them.
+///
+/// ```
+/// use nanonbt::{ArrayOf, LongArray, TAG_LONG_ARRAY, Writer};
+///
+/// let mut out = Vec::new();
+/// let mut writer = Writer::new(&mut out);
+/// <LongArray as ArrayOf<u64>>::write_entry(&[1, u64::MAX], "data", &mut writer).unwrap();
+/// assert_eq!(out[0], TAG_LONG_ARRAY);
+/// ```
+pub trait ArrayOf<E>: Sized {
+    /// The tag byte that precedes this array.
+    const TAG: u8;
+
+    /// Writes the payload: the `i32` length, then the elements, big-endian.
+    fn write_payload<W: crate::Write>(elements: &[E], writer: &mut W) -> crate::Result<()>;
+
+    /// Reads the payload, `len` elements, big-endian.
+    fn read_payload<'de, R: crate::Read<'de>>(len: usize, reader: &mut R) -> crate::Result<Vec<E>>;
+
+    /// Writes a compound entry: the tag, the name, then the payload.
+    fn write_entry<W: crate::Write>(
+        elements: &[E],
+        name: &str,
+        writer: &mut W,
+    ) -> crate::Result<()> {
+        writer.write_tag(Self::TAG)?;
+        writer.write_name(name)?;
+        Self::write_payload(elements, writer)
+    }
+
+    /// Reads an array, refusing a tag other than [`Self::TAG`].
+    fn read<'de, R: crate::Read<'de>>(tag: u8, reader: &mut R) -> crate::Result<Vec<E>> {
+        if tag != Self::TAG {
+            return Err(crate::Error::invalid_tag(tag));
+        }
+        let len = reader.read_len()?;
+        Self::read_payload(len, reader)
+    }
+}
+
+/// Decodes `len` big-endian elements of `SIZE` bytes each.
+fn read_be<'de, T, const SIZE: usize, R: crate::Read<'de>>(
+    len: usize,
+    reader: &mut R,
+    decode: fn([u8; SIZE]) -> T,
+) -> crate::Result<Vec<T>> {
+    let n = len
+        .checked_mul(SIZE)
+        .ok_or_else(crate::Error::array_too_large)?;
+    let bytes = reader.read_bytes(n)?;
+    Ok(bytes
+        .as_chunks::<SIZE>()
+        .0
+        .iter()
+        .map(|chunk| decode(*chunk))
+        .collect())
+}
+
+/// How one spelling of an element is written and read as an array's payload.
+///
+/// One byte elements have no endianness to settle, so a byte array's payload
+/// is the slice as it is, in one write. The wider elements go through the
+/// writer one at a time, which is what a list does too.
+trait Elements: Copy + Sized {
+    /// Writes the `i32` length, then the elements, big-endian.
+    fn write<W: crate::Write>(elements: &[Self], writer: &mut W) -> crate::Result<()>;
+
+    /// Reads `len` elements of the payload, big-endian.
+    fn read<'de, R: crate::Read<'de>>(len: usize, reader: &mut R) -> crate::Result<Vec<Self>>;
+}
+
+impl Elements for i8 {
+    fn write<W: crate::Write>(elements: &[Self], writer: &mut W) -> crate::Result<()> {
+        writer.write_len(elements.len())?;
+        writer.write_bytes(as_u8(elements))
+    }
+
+    fn read<'de, R: crate::Read<'de>>(len: usize, reader: &mut R) -> crate::Result<Vec<Self>> {
+        Ok(as_i8(&reader.read_bytes(len)?).to_vec())
+    }
+}
+
+impl Elements for u8 {
+    fn write<W: crate::Write>(elements: &[Self], writer: &mut W) -> crate::Result<()> {
+        writer.write_len(elements.len())?;
+        writer.write_bytes(elements)
+    }
+
+    fn read<'de, R: crate::Read<'de>>(len: usize, reader: &mut R) -> crate::Result<Vec<Self>> {
+        Ok(reader.read_bytes(len)?.into_owned())
+    }
+}
+
+macro_rules! elements {
+    ($($ty:ty: $write:ident, $to_signed:expr;)*) => {
+        $(
+            impl Elements for $ty {
+                fn write<W: crate::Write>(
+                    elements: &[$ty],
+                    writer: &mut W,
+                ) -> crate::Result<()> {
+                    writer.write_len(elements.len())?;
+                    for element in elements {
+                        writer.$write(($to_signed)(*element))?;
+                    }
+                    Ok(())
+                }
+
+                fn read<'de, R: crate::Read<'de>>(
+                    len: usize,
+                    reader: &mut R,
+                ) -> crate::Result<Vec<$ty>> {
+                    read_be(len, reader, <$ty>::from_be_bytes)
+                }
+            }
+        )*
+    };
+}
+
+elements! {
+    i32: write_i32, |element: i32| element;
+    u32: write_i32, |element: u32| element.cast_signed();
+    i64: write_i64, |element: i64| element;
+    u64: write_i64, |element: u64| element.cast_signed();
+}
+
 macro_rules! array {
-    ($(#[$doc:meta])* $name:ident($element:ty, $tag:ident $(, $token:ident, $expecting:literal)?)) => {
+    ($(#[$doc:meta])* $name:ident($element:ty, $other:ty, $tag:ident $(, $token:ident, $expecting:literal)?)) => {
         $(#[$doc])*
         #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
         pub struct $name {
@@ -129,6 +278,7 @@ macro_rules! array {
             }
 
             /// Reads big-endian elements, ignoring a trailing partial one.
+            #[cfg(feature = "serde")]
             pub(crate) fn from_be_bytes(bytes: &[u8]) -> Self {
                 const SIZE: usize = size_of::<$element>();
                 let data = bytes
@@ -171,8 +321,7 @@ macro_rules! array {
             }
 
             fn write<W: crate::Write>(&self, writer: &mut W) -> crate::Result<()> {
-                writer.write_len(self.data.len())?;
-                writer.write_bytes(&self.to_be_bytes())
+                <Self as crate::ArrayOf<$element>>::write_payload(&self.data, writer)
             }
         }
 
@@ -181,14 +330,97 @@ macro_rules! array {
                 tag: u8,
                 reader: &mut R,
             ) -> crate::Result<Self> {
-                if tag != crate::tag::$tag {
-                    return Err(crate::Error::invalid_tag(tag));
-                }
-                let len = reader.read_len()?;
-                let n = len
-                    .checked_mul(size_of::<$element>())
-                    .ok_or_else(crate::Error::array_too_large)?;
-                Ok(Self::from_be_bytes(&reader.read_bytes(n)?))
+                Ok(Self::new(<Self as crate::ArrayOf<$element>>::read(
+                    tag, reader,
+                )?))
+            }
+        }
+
+        impl crate::ArrayOf<$element> for $name {
+            const TAG: u8 = crate::tag::$tag;
+
+            fn write_payload<W: crate::Write>(
+                elements: &[$element],
+                writer: &mut W,
+            ) -> crate::Result<()> {
+                <$element as Elements>::write(elements, writer)
+            }
+
+            fn read_payload<'de, R: crate::Read<'de>>(
+                len: usize,
+                reader: &mut R,
+            ) -> crate::Result<Vec<$element>> {
+                <$element as Elements>::read(len, reader)
+            }
+        }
+
+        /// The unsigned spelling of the element, sharing the same bits.
+        impl crate::ArrayOf<$other> for $name {
+            const TAG: u8 = crate::tag::$tag;
+
+            fn write_payload<W: crate::Write>(
+                elements: &[$other],
+                writer: &mut W,
+            ) -> crate::Result<()> {
+                <$other as Elements>::write(elements, writer)
+            }
+
+            fn read_payload<'de, R: crate::Read<'de>>(
+                len: usize,
+                reader: &mut R,
+            ) -> crate::Result<Vec<$other>> {
+                <$other as Elements>::read(len, reader)
+            }
+        }
+
+        impl From<&[$element]> for $name {
+            fn from(items: &[$element]) -> Self {
+                Self::new(items.to_vec())
+            }
+        }
+
+        /// The unsigned spelling of the element, sharing the same bits.
+        impl From<&[$other]> for $name {
+            fn from(items: &[$other]) -> Self {
+                Self::new(items.iter().map(|&item| item.cast_signed()).collect())
+            }
+        }
+
+        impl From<$name> for Vec<$element> {
+            fn from(array: $name) -> Self {
+                array.into_inner()
+            }
+        }
+
+        /// The unsigned spelling of the element, sharing the same bits.
+        impl From<$name> for Vec<$other> {
+            fn from(array: $name) -> Self {
+                array
+                    .into_inner()
+                    .into_iter()
+                    .map(<$element>::cast_unsigned)
+                    .collect()
+            }
+        }
+
+        impl<const N: usize> TryFrom<$name> for [$element; N] {
+            type Error = crate::Error;
+
+            fn try_from(array: $name) -> crate::Result<Self> {
+                array
+                    .into_inner()
+                    .try_into()
+                    .map_err(|_| crate::Error::wrong_len())
+            }
+        }
+
+        impl<const N: usize> TryFrom<$name> for [$other; N] {
+            type Error = crate::Error;
+
+            fn try_from(array: $name) -> crate::Result<Self> {
+                Vec::<$other>::from(array)
+                    .try_into()
+                    .map_err(|_| crate::Error::wrong_len())
             }
         }
 
@@ -227,15 +459,15 @@ macro_rules! array {
 
 array! {
     /// An NBT byte array.
-    ByteArray(i8, TAG_BYTE_ARRAY, BYTE_ARRAY_TOKEN, "byte array")
+    ByteArray(i8, u8, TAG_BYTE_ARRAY, BYTE_ARRAY_TOKEN, "byte array")
 }
 
 array! {
     /// An NBT int array.
-    IntArray(i32, TAG_INT_ARRAY, INT_ARRAY_TOKEN, "int array")
+    IntArray(i32, u32, TAG_INT_ARRAY, INT_ARRAY_TOKEN, "int array")
 }
 
 array! {
     /// An NBT long array.
-    LongArray(i64, TAG_LONG_ARRAY, LONG_ARRAY_TOKEN, "long array")
+    LongArray(i64, u64, TAG_LONG_ARRAY, LONG_ARRAY_TOKEN, "long array")
 }

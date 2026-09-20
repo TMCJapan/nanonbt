@@ -66,9 +66,10 @@ impl Error {
         Self(Kind::Static("integer is not a unicode scalar value"))
     }
 
-    pub(crate) const fn wrong_len() -> Self {
+    /// A sequence whose length differs from the target fixed-size array.
+    pub const fn wrong_len() -> Self {
         Self(Kind::Static(
-            "list has a different length than the target array",
+            "sequence has a different length than the target array",
         ))
     }
 

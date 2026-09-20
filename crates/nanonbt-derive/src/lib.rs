@@ -17,6 +17,13 @@
 //! Field attributes:
 //! * `ignore`: leave the field out; it reads as `Default::default()`.
 //! * `rename = "name"`: the compound entry's name (default: the field name).
+//! * `array = "byte" | "int" | "long"`: write a `Vec<T>`, `[T; N]` or `&[T]`
+//!   field as an NBT array of that kind, and read it back as one, instead of
+//!   the list a sequence writes by default. `T` is `i8` or `u8` for `"byte"`,
+//!   `i32` or `u32` for `"int"`, and `i64` or `u64` for `"long"`. A borrowed
+//!   `&[T]` reads through its own `FromNBT`, which byte slices have and wider
+//!   integers do not, their bytes being big-endian: use `Vec<T>` or `[T; N]`
+//!   to read ints and longs.
 //!
 //! Variant attributes:
 //! * `rename = "name"`: the string an enum variant reads and writes as.

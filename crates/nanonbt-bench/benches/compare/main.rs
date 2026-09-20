@@ -3,6 +3,19 @@
 //! Every entry parses the same bytes into its own struct, and `write` encodes
 //! that struct back. The documents are built and serialized by the owned
 //! `nanonbt` derive model, so every implementation reads the same bytes.
+//! Besides the three structs there are four array shapes — a byte, int and
+//! long array and a short list — half a million elements each, so the array
+//! paths are measured on their own.
+//!
+//! The array documents give every element both spellings on the `nanonbt`
+//! side, owned and borrowed: bytes lend as `&[u8]`/`&[i8]`, and the wider
+//! elements as the big-endian wrappers, `&[U16Be]` through `&[I64Be]`. The
+//! other libraries appear with the array types they have: `fastnbt` owns its
+//! `ByteArray`/`IntArray`/`LongArray` and borrows from the input,
+//! `simdnbt-borrow` and `simdnbt-owned` read a tape or a tree (their borrowed
+//! int and long arrays copy), and `pumpkin-nbt` reads and writes through its
+//! accessors. NBT has no short array, so 16-bit elements are lists, and
+//! `fastnbt` has no borrowed list to read them with.
 //!
 //! `nanonbt` has three entries: `nanonbt-serde` uses the `serde` feature,
 //! `nanonbt-derive` the owned `FromNBT`/`ToNBT` derive, and `nanonbt-borrow` a
@@ -39,16 +52,37 @@ use criterion::{
 mod documents;
 mod targets;
 
+/// The name a document goes by in the report.
+///
+/// The [`Doc`](documents::Doc) documents and the [`Array`](documents::Array)
+/// shapes both label their entries, so the helpers take either.
+pub trait Label: Copy {
+    /// The name in the report.
+    fn label(self) -> &'static str;
+}
+
+impl Label for documents::Doc {
+    fn label(self) -> &'static str {
+        self.name()
+    }
+}
+
+impl Label for documents::Array {
+    fn label(self) -> &'static str {
+        self.name()
+    }
+}
+
 /// Runs one parse benchmark: `parse` decodes `bytes` into a `T` on every
 /// iteration.
 pub fn bench_parse<'a, T>(
     group: &mut BenchmarkGroup<'_, WallTime>,
     name: &str,
-    doc: documents::Doc,
+    label: impl Label,
     bytes: &'a [u8],
     parse: impl Fn(&'a [u8]) -> T,
 ) {
-    group.bench_function(BenchmarkId::new(name, doc.name()), |b| {
+    group.bench_function(BenchmarkId::new(name, label.label()), |b| {
         b.iter(|| parse(black_box(bytes)));
     });
 }
@@ -61,14 +95,14 @@ pub fn bench_parse<'a, T>(
 pub fn bench_write<'a, T, O: AsRef<[u8]>>(
     group: &mut BenchmarkGroup<'_, WallTime>,
     name: &str,
-    doc: documents::Doc,
+    label: impl Label,
     bytes: &'a [u8],
     parse: impl Fn(&'a [u8]) -> T,
     write: impl Fn(&T) -> O,
 ) {
     let value = parse(bytes);
     group.throughput(Throughput::Bytes(write(&value).as_ref().len() as u64));
-    group.bench_function(BenchmarkId::new(name, doc.name()), |b| {
+    group.bench_function(BenchmarkId::new(name, label.label()), |b| {
         b.iter(|| write(black_box(&value)));
     });
 }
@@ -83,6 +117,7 @@ pub fn configure(group: &mut BenchmarkGroup<'_, WallTime>) {
 
 fn parse(c: &mut Criterion) {
     let inputs = documents::inputs();
+    let arrays = documents::array_inputs();
     let mut group = c.benchmark_group("parse");
     configure(&mut group);
     for input in &inputs {
@@ -97,11 +132,25 @@ fn parse(c: &mut Criterion) {
         targets::simdnbt::parse_owned(&mut group, input.doc, &input.bytes);
         targets::pumpkin::parse(&mut group, input.doc, &input.bytes);
     }
+    // The array entries are many and their iterations are milliseconds long,
+    // so a shorter measurement keeps the suite near its five minutes.
+    group
+        .sample_size(30)
+        .warm_up_time(Duration::from_millis(500))
+        .measurement_time(Duration::from_secs(1));
+    for input in &arrays {
+        group.throughput(Throughput::Bytes(input.bytes.len() as u64));
+        targets::nanonbt::parse_array(&mut group, input.kind, &input.bytes);
+        targets::fastnbt::parse_array(&mut group, input.kind, &input.bytes);
+        targets::simdnbt::parse_array(&mut group, input.kind, &input.bytes);
+        targets::pumpkin::parse_array(&mut group, input.kind, &input.bytes);
+    }
     group.finish();
 }
 
 fn write(c: &mut Criterion) {
     let inputs = documents::inputs();
+    let arrays = documents::array_inputs();
     let mut group = c.benchmark_group("write");
     configure(&mut group);
     for input in &inputs {
@@ -112,6 +161,16 @@ fn write(c: &mut Criterion) {
         targets::simdnbt::write_borrow(&mut group, input.doc, &input.bytes);
         targets::simdnbt::write_owned(&mut group, input.doc, &input.bytes);
         targets::pumpkin::write(&mut group, input.doc, &input.bytes);
+    }
+    group
+        .sample_size(30)
+        .warm_up_time(Duration::from_millis(500))
+        .measurement_time(Duration::from_secs(1));
+    for input in &arrays {
+        targets::nanonbt::write_array(&mut group, input.kind, &input.bytes);
+        targets::fastnbt::write_array(&mut group, input.kind, &input.bytes);
+        targets::simdnbt::write_array(&mut group, input.kind, &input.bytes);
+        targets::pumpkin::write_array(&mut group, input.kind, &input.bytes);
     }
     group.finish();
 }

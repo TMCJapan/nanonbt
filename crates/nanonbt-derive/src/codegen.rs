@@ -2,9 +2,9 @@
 
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
-use syn::{GenericParam, Generics, Lifetime, LifetimeParam, WherePredicate, parse_quote};
+use syn::{GenericParam, Generics, Lifetime, LifetimeParam, Path, WherePredicate, parse_quote};
 
-use crate::model::{Field, Model, Shape, Variant, option_inner};
+use crate::model::{Array, ArrayContainer, Field, Model, Shape, Variant, option_inner};
 
 pub fn to_nbt(model: &Model) -> TokenStream {
     match &model.shape {
@@ -44,6 +44,12 @@ fn bounded_type(field: &Field) -> &syn::Type {
     option_inner(&field.ty).unwrap_or(&field.ty)
 }
 
+/// The array type that writes and reads an `array` field.
+fn array_type(krate: &Path, array: &Array) -> TokenStream {
+    let name = format_ident!("{}", array.kind.type_name());
+    quote!(#krate::#name)
+}
+
 fn struct_to_nbt(model: &Model, fields: &[Field]) -> TokenStream {
     let krate = &model.krate;
     let ident = &model.ident;
@@ -51,10 +57,18 @@ fn struct_to_nbt(model: &Model, fields: &[Field]) -> TokenStream {
     {
         let where_clause = generics.make_where_clause();
         for field in fields.iter().filter(|field| !field.ignore) {
-            let ty = bounded_type(field);
-            where_clause
-                .predicates
-                .push(parse_quote!(#ty: #krate::ToNBT));
+            if let Some(array) = &field.array {
+                let array_ty = array_type(krate, array);
+                let element = &array.element;
+                where_clause
+                    .predicates
+                    .push(parse_quote!(#array_ty: #krate::ArrayOf<#element>));
+            } else {
+                let ty = bounded_type(field);
+                where_clause
+                    .predicates
+                    .push(parse_quote!(#ty: #krate::ToNBT));
+            }
         }
     }
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
@@ -62,16 +76,35 @@ fn struct_to_nbt(model: &Model, fields: &[Field]) -> TokenStream {
     let writes = fields.iter().filter(|field| !field.ignore).map(|field| {
         let field_ident = &field.ident;
         let name = &field.name;
-        if option_inner(&field.ty).is_some() {
+        let option = option_inner(&field.ty).is_some();
+        let write = match &field.array {
+            Some(array) => {
+                let array_ty = array_type(krate, array);
+                let element = &array.element;
+                let slice = if option {
+                    quote!(&value[..])
+                } else {
+                    quote!(&self.#field_ident[..])
+                };
+                quote! {
+                    <#array_ty as #krate::ArrayOf<#element>>::write_entry(#slice, #name, writer)?;
+                }
+            }
+            None if option => quote! {
+                #krate::ToNBT::write_entry(value, #name, writer)?;
+            },
+            None => quote! {
+                #krate::ToNBT::write_entry(&self.#field_ident, #name, writer)?;
+            },
+        };
+        if option {
             quote! {
                 if let ::core::option::Option::Some(value) = &self.#field_ident {
-                    #krate::ToNBT::write_entry(value, #name, writer)?;
+                    #write
                 }
             }
         } else {
-            quote! {
-                #krate::ToNBT::write_entry(&self.#field_ident, #name, writer)?;
-            }
+            write
         }
     });
 
@@ -151,6 +184,18 @@ fn struct_from_nbt(model: &Model, fields: &[Field]) -> TokenStream {
             let predicate: WherePredicate = if field.ignore {
                 let ty = &field.ty;
                 parse_quote!(#ty: ::core::default::Default)
+            } else if let Some(array) = &field.array {
+                let array_ty = array_type(krate, array);
+                let element = &array.element;
+                match array.container {
+                    ArrayContainer::Borrowed => {
+                        let ty = bounded_type(field);
+                        parse_quote!(#ty: #krate::FromNBT<#de>)
+                    }
+                    ArrayContainer::Vec | ArrayContainer::Fixed => {
+                        parse_quote!(#array_ty: #krate::ArrayOf<#element>)
+                    }
+                }
             } else {
                 let ty = bounded_type(field);
                 parse_quote!(#ty: #krate::FromNBT<#de>)
@@ -170,13 +215,35 @@ fn struct_from_nbt(model: &Model, fields: &[Field]) -> TokenStream {
     });
     let arms = fields.iter().filter(|field| !field.ignore).map(|field| {
         let acc = format_ident!("__nbt_{}", field.ident);
-        let ty = bounded_type(field);
         let name = &field.name;
+        let read = field.array.as_ref().map_or_else(
+            || {
+                let ty = bounded_type(field);
+                quote!(<#ty as #krate::FromNBT<#de>>::read(tag, reader)?)
+            },
+            |array| {
+                let array_ty = array_type(krate, array);
+                let element = &array.element;
+                let read = quote!(<#array_ty as #krate::ArrayOf<#element>>::read(tag, reader)?);
+                match array.container {
+                    // A borrow keeps the input, so it reads through its own
+                    // implementation, byte arrays having one and wider
+                    // integers not, since their bytes are big-endian.
+                    ArrayContainer::Borrowed => {
+                        let ty = bounded_type(field);
+                        quote!(<#ty as #krate::FromNBT<#de>>::read(tag, reader)?)
+                    }
+                    ArrayContainer::Vec => read,
+                    ArrayContainer::Fixed => quote!(
+                        ::core::convert::TryInto::try_into(#read)
+                            .map_err(|_| #krate::Error::wrong_len())?
+                    ),
+                }
+            },
+        );
         quote! {
             #name => {
-                #acc = ::core::option::Option::Some(
-                    <#ty as #krate::FromNBT<#de>>::read(tag, reader)?,
-                );
+                #acc = ::core::option::Option::Some(#read);
             }
         }
     });

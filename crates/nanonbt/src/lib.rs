@@ -13,9 +13,11 @@
 //!     name: String,
 //!     #[nbt(ignore)]
 //!     cached: u64,
+//!     #[nbt(array = "int")]
+//!     uuid: Vec<u32>,
 //! }
 //!
-//! let player = Player { health: 20, name: "topi".into(), cached: 0 };
+//! let player = Player { health: 20, name: "topi".into(), cached: 0, uuid: vec![1, 2] };
 //! let bytes = nanonbt::to_bytes(&player).unwrap();
 //! let back: Player = nanonbt::from_bytes(&bytes).unwrap();
 //! assert_eq!(back, player);
@@ -40,6 +42,15 @@
 //! cannot appear in a list. [`Vec`], arrays and slices are lists; the empty
 //! list is written as a list of End, the way fastnbt writes one.
 //!
+//! A field with `#[nbt(array = "byte")]`, `"int"` or `"long"` writes a
+//! `Vec<T>`, `[T; N]` or `&[T]` as the NBT array of that kind instead of a
+//! list, and reads one back; `T` is `i8` or `u8`, `i32` or `u32`, `i64` or
+//! `u64` to match the kind. The elements go straight to and from the
+//! document — [`ArrayOf`] is the trait behind it — so nothing is copied into
+//! an array type first. A borrowed `&[T]` reads through its own
+//! [`FromNBT`], which byte slices have and wider integers do not, their
+//! bytes being big-endian: use `Vec<T>` or `[T; N]` to read those.
+//!
 //! Strings borrow: [`FromNBT`] is implemented for `&'de str`,
 //! `Cow<'de, str>`, `&'de Cesu8`, [`Cesu8Buf`] and `Cow<'de, Cesu8>`. A
 //! string that needs no decoding borrows from the input; one written in
@@ -58,9 +69,9 @@
 //! A borrowed slice reads an array's tag or a list of the same element, so a
 //! `&'de [U64Be]` reads a `TAG_Long_Array` or a `TAG_List` of `TAG_Long`.
 //! Writing one writes a list, not an array: [`LongArray`], [`IntArray`] and
-//! [`ByteArray`] are the types that write arrays. `from_value` cannot lend
-//! bytes, so borrowed numbers and byte arrays are errors there, as a `&'de
-//! str` is for a string that needs decoding.
+//! [`ByteArray`] write arrays, and so does a field with `#[nbt(array = ...)]`.
+//! `from_value` cannot lend bytes, so borrowed numbers and byte arrays are
+//! errors there, as a `&'de str` is for a string that needs decoding.
 //!
 //! # Where fastnbt is not followed
 //!
@@ -75,8 +86,9 @@
 //!   to; this crate's rule is simpler and stricter, and `char` round trips
 //!   through bytes, which fastnbt's does not.
 //! - A borrowed slice such as `&'de [U64Be]` writes as a list, where
-//!   fastnbt's `borrow::LongArray` writes a long array. [`LongArray`] and the
-//!   other array types are the ones that write arrays.
+//!   fastnbt's `borrow::LongArray` writes a long array. [`LongArray`], the
+//!   other array types, and derived fields with `#[nbt(array = ...)]` are the
+//!   ones that write arrays.
 //! - [`Value::Compound`] is ordered by key, fastnbt's by hash, so compounds
 //!   of several entries serialize in a different order.
 //! - There is no `from_reader` or `to_writer`, as there is no `std::io`.
@@ -100,7 +112,7 @@ pub mod write;
 
 use alloc::{string::String, vec::Vec};
 
-pub use arrays::{ByteArray, IntArray, LongArray};
+pub use arrays::{ArrayOf, ByteArray, IntArray, LongArray};
 pub use be::{F32Be, F64Be, I16Be, I32Be, I64Be, U16Be, U32Be, U64Be};
 pub use error::{Error, Result};
 pub use nanocesu8::{Cesu8, Cesu8Buf};

@@ -14,7 +14,7 @@ use std::{borrow::Cow, io::Cursor};
 use criterion::{BenchmarkGroup, BenchmarkId, Throughput, measurement::WallTime};
 use simdnbt::{Mutf8Str, Mutf8String, borrow, owned};
 
-use crate::documents::Doc;
+use crate::documents::{Array, Doc};
 
 // ---------------------------------------------------------------------------
 // Conversion helpers.
@@ -832,7 +832,7 @@ impl<'a> BlockEntity<'a> {
 fn bench_write_value<T>(
     group: &mut BenchmarkGroup<'_, WallTime>,
     name: &str,
-    doc: Doc,
+    label: impl crate::Label,
     value: &T,
     to_compound: impl Fn(&T) -> owned::NbtCompound,
 ) {
@@ -840,7 +840,7 @@ fn bench_write_value<T>(
     owned::BaseNbt::new("", to_compound(value)).write(&mut measure);
     let len = measure.len();
     group.throughput(Throughput::Bytes(len as u64));
-    group.bench_function(BenchmarkId::new(name, doc.name()), |b| {
+    group.bench_function(BenchmarkId::new(name, label.label()), |b| {
         b.iter(|| {
             let mut out = Vec::with_capacity(len);
             owned::BaseNbt::new("", to_compound(std::hint::black_box(value))).write(&mut out);
@@ -957,6 +957,186 @@ pub fn write_owned(group: &mut BenchmarkGroup<'_, WallTime>, doc: Doc, bytes: &[
                 .unwrap();
             let value = Chunk::from_owned(&base);
             bench_write_value(group, "simdnbt-owned", doc, &value, Chunk::to_compound);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The array entries.
+// ---------------------------------------------------------------------------
+
+/// Runs one array parse benchmark, dropping the value inside the timed
+/// closure, since a borrowed value cannot outlive its tape or tree.
+fn bench_parse_array(
+    group: &mut BenchmarkGroup<'_, WallTime>,
+    name: &str,
+    kind: Array,
+    bytes: &[u8],
+    parse: impl Fn(&[u8]),
+) {
+    group.bench_function(BenchmarkId::new(name, kind.name()), |b| {
+        b.iter(|| parse(std::hint::black_box(bytes)));
+    });
+}
+
+/// The owned `data` entry of each kind, for the write entries.
+fn byte_data(bytes: &[u8]) -> Vec<u8> {
+    let base = owned::read(&mut Cursor::new(bytes))
+        .expect("the document parses")
+        .unwrap();
+    base.as_compound()
+        .byte_array("data")
+        .expect("data")
+        .to_vec()
+}
+
+fn short_data(bytes: &[u8]) -> Vec<i16> {
+    let base = owned::read(&mut Cursor::new(bytes))
+        .expect("the document parses")
+        .unwrap();
+    base.as_compound()
+        .list("data")
+        .and_then(|list| list.shorts())
+        .expect("data")
+}
+
+fn int_data(bytes: &[u8]) -> Vec<i32> {
+    let base = owned::read(&mut Cursor::new(bytes))
+        .expect("the document parses")
+        .unwrap();
+    base.as_compound().int_array("data").expect("data").to_vec()
+}
+
+fn long_data(bytes: &[u8]) -> Vec<i64> {
+    let base = owned::read(&mut Cursor::new(bytes))
+        .expect("the document parses")
+        .unwrap();
+    base.as_compound()
+        .long_array("data")
+        .expect("data")
+        .to_vec()
+}
+
+/// Runs the parse entries of one array kind.
+///
+/// The document holds a single `data` entry, so the accessor is the struct:
+/// nothing else is read.
+pub fn parse_array(group: &mut BenchmarkGroup<'_, WallTime>, kind: Array, bytes: &[u8]) {
+    match kind {
+        Array::Byte => {
+            bench_parse_array(group, "simdnbt-borrow", kind, bytes, |b| {
+                let base = borrow::read(&mut Cursor::new(b))
+                    .expect("the document parses")
+                    .unwrap();
+                std::hint::black_box(base.as_compound().byte_array("data").expect("data"));
+            });
+            bench_parse_array(group, "simdnbt-owned", kind, bytes, |b| {
+                let base = owned::read(&mut Cursor::new(b))
+                    .expect("the document parses")
+                    .unwrap();
+                std::hint::black_box(base.as_compound().byte_array("data").expect("data"));
+            });
+        }
+        Array::Short => {
+            bench_parse_array(group, "simdnbt-borrow", kind, bytes, |b| {
+                let base = borrow::read(&mut Cursor::new(b))
+                    .expect("the document parses")
+                    .unwrap();
+                std::hint::black_box(
+                    base.as_compound()
+                        .list("data")
+                        .and_then(|list| list.shorts())
+                        .expect("data"),
+                );
+            });
+            bench_parse_array(group, "simdnbt-owned", kind, bytes, |b| {
+                let base = owned::read(&mut Cursor::new(b))
+                    .expect("the document parses")
+                    .unwrap();
+                std::hint::black_box(
+                    base.as_compound()
+                        .list("data")
+                        .and_then(|list| list.shorts())
+                        .expect("data"),
+                );
+            });
+        }
+        Array::Int => {
+            bench_parse_array(group, "simdnbt-borrow", kind, bytes, |b| {
+                let base = borrow::read(&mut Cursor::new(b))
+                    .expect("the document parses")
+                    .unwrap();
+                std::hint::black_box(base.as_compound().int_array("data").expect("data"));
+            });
+            bench_parse_array(group, "simdnbt-owned", kind, bytes, |b| {
+                let base = owned::read(&mut Cursor::new(b))
+                    .expect("the document parses")
+                    .unwrap();
+                std::hint::black_box(base.as_compound().int_array("data").expect("data"));
+            });
+        }
+        Array::Long => {
+            bench_parse_array(group, "simdnbt-borrow", kind, bytes, |b| {
+                let base = borrow::read(&mut Cursor::new(b))
+                    .expect("the document parses")
+                    .unwrap();
+                std::hint::black_box(base.as_compound().long_array("data").expect("data"));
+            });
+            bench_parse_array(group, "simdnbt-owned", kind, bytes, |b| {
+                let base = owned::read(&mut Cursor::new(b))
+                    .expect("the document parses")
+                    .unwrap();
+                std::hint::black_box(base.as_compound().long_array("data").expect("data"));
+            });
+        }
+    }
+}
+
+/// Runs the write entries of one array kind.
+///
+/// Both entries share one implementation: once the value exists, where it was
+/// parsed from no longer matters, and the numbers should match.
+pub fn write_array(group: &mut BenchmarkGroup<'_, WallTime>, kind: Array, bytes: &[u8]) {
+    match kind {
+        Array::Byte => {
+            let value = byte_data(bytes);
+            let compound = |v: &Vec<u8>| {
+                let mut c = owned::NbtCompound::new();
+                c.insert("data", owned::NbtTag::ByteArray(v.clone()));
+                c
+            };
+            bench_write_value(group, "simdnbt-borrow", kind, &value, compound);
+            bench_write_value(group, "simdnbt-owned", kind, &value, compound);
+        }
+        Array::Short => {
+            let value = short_data(bytes);
+            let compound = |v: &Vec<i16>| {
+                let mut c = owned::NbtCompound::new();
+                c.insert("data", short_list(v));
+                c
+            };
+            bench_write_value(group, "simdnbt-borrow", kind, &value, compound);
+            bench_write_value(group, "simdnbt-owned", kind, &value, compound);
+        }
+        Array::Int => {
+            let value = int_data(bytes);
+            let compound = |v: &Vec<i32>| {
+                let mut c = owned::NbtCompound::new();
+                c.insert("data", owned::NbtTag::IntArray(v.clone()));
+                c
+            };
+            bench_write_value(group, "simdnbt-borrow", kind, &value, compound);
+            bench_write_value(group, "simdnbt-owned", kind, &value, compound);
+        }
+        Array::Long => {
+            let value = long_data(bytes);
+            let compound = |v: &Vec<i64>| {
+                let mut c = owned::NbtCompound::new();
+                c.insert("data", owned::NbtTag::LongArray(v.clone()));
+                c
+            };
+            bench_write_value(group, "simdnbt-borrow", kind, &value, compound);
+            bench_write_value(group, "simdnbt-owned", kind, &value, compound);
         }
     }
 }

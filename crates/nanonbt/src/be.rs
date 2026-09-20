@@ -306,9 +306,15 @@ impl<'de> FromNBT<'de> for &'de [i8] {
 }
 
 /// Reinterprets bytes as signed bytes.
-const fn as_i8(bytes: &[u8]) -> &[i8] {
+pub(crate) const fn as_i8(bytes: &[u8]) -> &[i8] {
     // SAFETY: `i8` and `u8` have the same size and alignment, and every bit
     // pattern of one is a valid value of the other.
+    unsafe { core::slice::from_raw_parts(bytes.as_ptr().cast(), bytes.len()) }
+}
+
+/// Reinterprets signed bytes as the bytes they are.
+pub(crate) const fn as_u8(bytes: &[i8]) -> &[u8] {
+    // SAFETY: as in `as_i8`.
     unsafe { core::slice::from_raw_parts(bytes.as_ptr().cast(), bytes.len()) }
 }
 

@@ -4,7 +4,7 @@ use criterion::{BenchmarkGroup, measurement::WallTime};
 use fastnbt::{ByteArray, IntArray, LongArray};
 use serde::{Deserialize, Serialize};
 
-use crate::documents::Doc;
+use crate::documents::{Array, Doc};
 use crate::{bench_parse, bench_write};
 
 #[derive(Serialize, Deserialize)]
@@ -152,6 +152,160 @@ pub struct BlockEntity {
     pub y: i32,
     pub z: i32,
     pub KeepPacked: i8,
+}
+
+// ---------------------------------------------------------------------------
+// The array model, one compound per array kind.
+// ---------------------------------------------------------------------------
+
+/// The byte array document: `data` is a byte array.
+#[derive(Serialize, Deserialize)]
+pub struct ByteOwned {
+    pub data: ByteArray,
+}
+
+/// The borrowed byte array, lent by the input.
+#[derive(Serialize, Deserialize)]
+pub struct ByteBorrowed<'a> {
+    #[serde(borrow)]
+    pub data: fastnbt::borrow::ByteArray<'a>,
+}
+
+/// The short list document: `data` is a list of shorts.
+#[derive(Serialize, Deserialize)]
+pub struct ShortOwned {
+    pub data: Vec<i16>,
+}
+
+/// The int array document: `data` is an int array.
+#[derive(Serialize, Deserialize)]
+pub struct IntOwned {
+    pub data: IntArray,
+}
+
+/// The borrowed int array, lent by the input.
+#[derive(Serialize, Deserialize)]
+pub struct IntBorrowed<'a> {
+    #[serde(borrow)]
+    pub data: fastnbt::borrow::IntArray<'a>,
+}
+
+/// The long array document: `data` is a long array.
+#[derive(Serialize, Deserialize)]
+pub struct LongOwned {
+    pub data: LongArray,
+}
+
+/// The borrowed long array, lent by the input.
+#[derive(Serialize, Deserialize)]
+pub struct LongBorrowed<'a> {
+    #[serde(borrow)]
+    pub data: fastnbt::borrow::LongArray<'a>,
+}
+
+/// Runs the parse entries of one array kind.
+pub fn parse_array(group: &mut BenchmarkGroup<'_, WallTime>, kind: Array, bytes: &[u8]) {
+    match kind {
+        Array::Byte => {
+            bench_parse(group, "fastnbt", kind, bytes, |b| {
+                fastnbt::from_bytes::<ByteOwned>(b).expect("the document parses")
+            });
+            bench_parse(group, "fastnbt-borrow", kind, bytes, |b| {
+                fastnbt::from_bytes::<ByteBorrowed<'_>>(b).expect("the document parses")
+            });
+        }
+        Array::Short => {
+            bench_parse(group, "fastnbt", kind, bytes, |b| {
+                fastnbt::from_bytes::<ShortOwned>(b).expect("the document parses")
+            });
+        }
+        Array::Int => {
+            bench_parse(group, "fastnbt", kind, bytes, |b| {
+                fastnbt::from_bytes::<IntOwned>(b).expect("the document parses")
+            });
+            bench_parse(group, "fastnbt-borrow", kind, bytes, |b| {
+                fastnbt::from_bytes::<IntBorrowed<'_>>(b).expect("the document parses")
+            });
+        }
+        Array::Long => {
+            bench_parse(group, "fastnbt", kind, bytes, |b| {
+                fastnbt::from_bytes::<LongOwned>(b).expect("the document parses")
+            });
+            bench_parse(group, "fastnbt-borrow", kind, bytes, |b| {
+                fastnbt::from_bytes::<LongBorrowed<'_>>(b).expect("the document parses")
+            });
+        }
+    }
+}
+
+/// Runs the write entries of one array kind.
+pub fn write_array(group: &mut BenchmarkGroup<'_, WallTime>, kind: Array, bytes: &[u8]) {
+    match kind {
+        Array::Byte => {
+            bench_write(
+                group,
+                "fastnbt",
+                kind,
+                bytes,
+                |b| fastnbt::from_bytes::<ByteOwned>(b).expect("the document parses"),
+                |v: &ByteOwned| fastnbt::to_bytes(v).expect("the document writes"),
+            );
+            bench_write(
+                group,
+                "fastnbt-borrow",
+                kind,
+                bytes,
+                |b| fastnbt::from_bytes::<ByteBorrowed<'_>>(b).expect("the document parses"),
+                |v: &ByteBorrowed<'_>| fastnbt::to_bytes(v).expect("the document writes"),
+            );
+        }
+        Array::Short => {
+            bench_write(
+                group,
+                "fastnbt",
+                kind,
+                bytes,
+                |b| fastnbt::from_bytes::<ShortOwned>(b).expect("the document parses"),
+                |v: &ShortOwned| fastnbt::to_bytes(v).expect("the document writes"),
+            );
+        }
+        Array::Int => {
+            bench_write(
+                group,
+                "fastnbt",
+                kind,
+                bytes,
+                |b| fastnbt::from_bytes::<IntOwned>(b).expect("the document parses"),
+                |v: &IntOwned| fastnbt::to_bytes(v).expect("the document writes"),
+            );
+            bench_write(
+                group,
+                "fastnbt-borrow",
+                kind,
+                bytes,
+                |b| fastnbt::from_bytes::<IntBorrowed<'_>>(b).expect("the document parses"),
+                |v: &IntBorrowed<'_>| fastnbt::to_bytes(v).expect("the document writes"),
+            );
+        }
+        Array::Long => {
+            bench_write(
+                group,
+                "fastnbt",
+                kind,
+                bytes,
+                |b| fastnbt::from_bytes::<LongOwned>(b).expect("the document parses"),
+                |v: &LongOwned| fastnbt::to_bytes(v).expect("the document writes"),
+            );
+            bench_write(
+                group,
+                "fastnbt-borrow",
+                kind,
+                bytes,
+                |b| fastnbt::from_bytes::<LongBorrowed<'_>>(b).expect("the document parses"),
+                |v: &LongBorrowed<'_>| fastnbt::to_bytes(v).expect("the document writes"),
+            );
+        }
+    }
 }
 
 pub fn parse(group: &mut BenchmarkGroup<'_, WallTime>, doc: Doc, bytes: &[u8]) {

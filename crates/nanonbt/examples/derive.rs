@@ -13,6 +13,8 @@ struct Player {
     dimension: Dimension,
     position: Position,
     inventory: Vec<ItemStack>,
+    #[nbt(array = "int")]
+    uuid: Vec<i32>,
     #[nbt(ignore)]
     cached_hurt_time: u16,
 }
@@ -72,6 +74,7 @@ fn main() -> nanonbt::Result<()> {
                 custom_name: None,
             },
         ],
+        uuid: vec![0x1234_5678, -1, 0, 7],
         cached_hurt_time: 99,
     };
 
