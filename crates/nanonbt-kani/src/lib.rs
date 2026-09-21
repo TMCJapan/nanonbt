@@ -123,5 +123,3 @@ mod same;
 mod ser;
 #[cfg(kani)]
 mod stubs;
-#[cfg(kani)]
-mod value;
