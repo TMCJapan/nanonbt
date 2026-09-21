@@ -294,9 +294,7 @@ impl DerefMut for ByteArray {
     }
 }
 impl crate::ToNBT for ByteArray {
-    fn tag(&self) -> u8 {
-        crate::tag::TAG_BYTE_ARRAY
-    }
+    const TAG: u8 = crate::tag::TAG_BYTE_ARRAY;
     fn write<W: crate::Write>(&self, writer: &mut W) -> crate::Result<()> {
         <Self as crate::ArrayOf<i8>>::write_payload(&self.data, writer)
     }
@@ -444,9 +442,7 @@ impl DerefMut for IntArray {
     }
 }
 impl crate::ToNBT for IntArray {
-    fn tag(&self) -> u8 {
-        crate::tag::TAG_INT_ARRAY
-    }
+    const TAG: u8 = crate::tag::TAG_INT_ARRAY;
     fn write<W: crate::Write>(&self, writer: &mut W) -> crate::Result<()> {
         <Self as crate::ArrayOf<i32>>::write_payload(&self.data, writer)
     }
@@ -594,9 +590,7 @@ impl DerefMut for LongArray {
     }
 }
 impl crate::ToNBT for LongArray {
-    fn tag(&self) -> u8 {
-        crate::tag::TAG_LONG_ARRAY
-    }
+    const TAG: u8 = crate::tag::TAG_LONG_ARRAY;
     fn write<W: crate::Write>(&self, writer: &mut W) -> crate::Result<()> {
         <Self as crate::ArrayOf<i64>>::write_payload(&self.data, writer)
     }

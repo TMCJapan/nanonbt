@@ -24,9 +24,7 @@ const fn expect(tag: u8, expected: u8) -> Result<()> {
     }
 }
 impl ToNBT for i8 {
-    fn tag(&self) -> u8 {
-        TAG_BYTE
-    }
+    const TAG: u8 = TAG_BYTE;
     fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_i8(*self)
     }
@@ -38,9 +36,7 @@ impl<'de> FromNBT<'de> for i8 {
     }
 }
 impl ToNBT for i16 {
-    fn tag(&self) -> u8 {
-        TAG_SHORT
-    }
+    const TAG: u8 = TAG_SHORT;
     fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_i16(*self)
     }
@@ -52,9 +48,7 @@ impl<'de> FromNBT<'de> for i16 {
     }
 }
 impl ToNBT for i32 {
-    fn tag(&self) -> u8 {
-        TAG_INT
-    }
+    const TAG: u8 = TAG_INT;
     fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_i32(*self)
     }
@@ -66,9 +60,7 @@ impl<'de> FromNBT<'de> for i32 {
     }
 }
 impl ToNBT for i64 {
-    fn tag(&self) -> u8 {
-        TAG_LONG
-    }
+    const TAG: u8 = TAG_LONG;
     fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_i64(*self)
     }
@@ -80,9 +72,7 @@ impl<'de> FromNBT<'de> for i64 {
     }
 }
 impl ToNBT for f32 {
-    fn tag(&self) -> u8 {
-        TAG_FLOAT
-    }
+    const TAG: u8 = TAG_FLOAT;
     fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_f32(*self)
     }
@@ -94,9 +84,7 @@ impl<'de> FromNBT<'de> for f32 {
     }
 }
 impl ToNBT for f64 {
-    fn tag(&self) -> u8 {
-        TAG_DOUBLE
-    }
+    const TAG: u8 = TAG_DOUBLE;
     fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_f64(*self)
     }
@@ -108,9 +96,8 @@ impl<'de> FromNBT<'de> for f64 {
     }
 }
 impl ToNBT for u8 {
-    fn tag(&self) -> u8 {
-        TAG_BYTE
-    }
+    #[allow(clippy::use_self)]
+    const TAG: u8 = TAG_BYTE;
     fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_i8(self.cast_signed())
     }
@@ -122,9 +109,7 @@ impl<'de> FromNBT<'de> for u8 {
     }
 }
 impl ToNBT for u16 {
-    fn tag(&self) -> u8 {
-        TAG_SHORT
-    }
+    const TAG: u8 = TAG_SHORT;
     fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_i16(self.cast_signed())
     }
@@ -136,9 +121,7 @@ impl<'de> FromNBT<'de> for u16 {
     }
 }
 impl ToNBT for u32 {
-    fn tag(&self) -> u8 {
-        TAG_INT
-    }
+    const TAG: u8 = TAG_INT;
     fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_i32(self.cast_signed())
     }
@@ -150,9 +133,7 @@ impl<'de> FromNBT<'de> for u32 {
     }
 }
 impl ToNBT for u64 {
-    fn tag(&self) -> u8 {
-        TAG_LONG
-    }
+    const TAG: u8 = TAG_LONG;
     fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_i64(self.cast_signed())
     }
@@ -164,9 +145,7 @@ impl<'de> FromNBT<'de> for u64 {
     }
 }
 impl ToNBT for bool {
-    fn tag(&self) -> u8 {
-        TAG_BYTE
-    }
+    const TAG: u8 = TAG_BYTE;
     fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_i8(i8::from(*self))
     }
@@ -179,9 +158,7 @@ impl<'de> FromNBT<'de> for bool {
     }
 }
 impl ToNBT for char {
-    fn tag(&self) -> u8 {
-        TAG_INT
-    }
+    const TAG: u8 = TAG_INT;
     fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_i32(u32::from(*self).cast_signed())
     }
@@ -204,9 +181,7 @@ fn int_array_128<'de, R: Read<'de>>(reader: &mut R) -> Result<[u8; 16]> {
         .map_err(|_| Error::expected_int_array())
 }
 impl ToNBT for i128 {
-    fn tag(&self) -> u8 {
-        TAG_INT_ARRAY
-    }
+    const TAG: u8 = TAG_INT_ARRAY;
     fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_len(4)?;
         writer.write_bytes(&self.to_be_bytes())
@@ -219,9 +194,7 @@ impl<'de> FromNBT<'de> for i128 {
     }
 }
 impl ToNBT for u128 {
-    fn tag(&self) -> u8 {
-        TAG_INT_ARRAY
-    }
+    const TAG: u8 = TAG_INT_ARRAY;
     fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_len(4)?;
         writer.write_bytes(&self.to_be_bytes())
@@ -234,49 +207,37 @@ impl<'de> FromNBT<'de> for u128 {
     }
 }
 impl ToNBT for str {
-    fn tag(&self) -> u8 {
-        TAG_STRING
-    }
+    const TAG: u8 = TAG_STRING;
     fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_str(self)
     }
 }
 impl ToNBT for String {
-    fn tag(&self) -> u8 {
-        TAG_STRING
-    }
+    const TAG: u8 = TAG_STRING;
     fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_str(self)
     }
 }
 impl ToNBT for Cow<'_, str> {
-    fn tag(&self) -> u8 {
-        TAG_STRING
-    }
+    const TAG: u8 = TAG_STRING;
     fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_str(self)
     }
 }
 impl ToNBT for Cesu8 {
-    fn tag(&self) -> u8 {
-        TAG_STRING
-    }
+    const TAG: u8 = TAG_STRING;
     fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_cesu8(self)
     }
 }
 impl ToNBT for Cesu8Buf {
-    fn tag(&self) -> u8 {
-        TAG_STRING
-    }
+    const TAG: u8 = TAG_STRING;
     fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_cesu8(self)
     }
 }
 impl ToNBT for Cow<'_, Cesu8> {
-    fn tag(&self) -> u8 {
-        TAG_STRING
-    }
+    const TAG: u8 = TAG_STRING;
     fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_cesu8(self)
     }
@@ -327,9 +288,7 @@ impl<'de> FromNBT<'de> for Cow<'de, Cesu8> {
 }
 /// A reference writes like the value it points at.
 impl<T: ToNBT + ?Sized> ToNBT for &T {
-    fn tag(&self) -> u8 {
-        (**self).tag()
-    }
+    const TAG: u8 = T::TAG;
     fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
         (**self).write(writer)
     }
@@ -337,7 +296,7 @@ impl<T: ToNBT + ?Sized> ToNBT for &T {
 /// A list's element tag comes from its first element; an empty list is a list
 /// of End, the way fastnbt writes one.
 pub(crate) fn write_list<T: ToNBT, W: Write>(items: &[T], writer: &mut W) -> Result<()> {
-    let element = items.first().map_or(TAG_END, ToNBT::tag);
+    let element = items.first().map_or(TAG_END, |_| T::TAG);
     writer.write_tag(element)?;
     writer.write_len(items.len())?;
     for item in items {
@@ -359,25 +318,19 @@ pub(crate) fn read_list<'de, T: FromNBT<'de>, R: Read<'de>>(reader: &mut R) -> R
     })
 }
 impl<T: ToNBT> ToNBT for [T] {
-    fn tag(&self) -> u8 {
-        TAG_LIST
-    }
+    const TAG: u8 = TAG_LIST;
     fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
         write_list(self, writer)
     }
 }
 impl<T: ToNBT, const N: usize> ToNBT for [T; N] {
-    fn tag(&self) -> u8 {
-        TAG_LIST
-    }
+    const TAG: u8 = TAG_LIST;
     fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
         write_list(self, writer)
     }
 }
 impl<T: ToNBT> ToNBT for Vec<T> {
-    fn tag(&self) -> u8 {
-        TAG_LIST
-    }
+    const TAG: u8 = TAG_LIST;
     fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
         write_list(self, writer)
     }
@@ -397,9 +350,7 @@ impl<'de, T: FromNBT<'de>> FromNBT<'de> for Vec<T> {
     }
 }
 impl<K: AsRef<str> + Ord, V: ToNBT> ToNBT for BTreeMap<K, V> {
-    fn tag(&self) -> u8 {
-        crate::tag::TAG_COMPOUND
-    }
+    const TAG: u8 = crate::tag::TAG_COMPOUND;
     fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
         for (key, value) in self {
             value.write_entry(key.as_ref(), writer)?;

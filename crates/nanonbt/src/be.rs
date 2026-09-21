@@ -196,9 +196,7 @@ impl core::fmt::Debug for U16Be {
     }
 }
 impl ToNBT for U16Be {
-    fn tag(&self) -> u8 {
-        TAG_SHORT
-    }
+    const TAG: u8 = TAG_SHORT;
     fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_bytes(self.as_bytes())
     }
@@ -304,9 +302,7 @@ impl core::fmt::Debug for I16Be {
     }
 }
 impl ToNBT for I16Be {
-    fn tag(&self) -> u8 {
-        TAG_SHORT
-    }
+    const TAG: u8 = TAG_SHORT;
     fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_bytes(self.as_bytes())
     }
@@ -412,9 +408,7 @@ impl core::fmt::Debug for U32Be {
     }
 }
 impl ToNBT for U32Be {
-    fn tag(&self) -> u8 {
-        TAG_INT
-    }
+    const TAG: u8 = TAG_INT;
     fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_bytes(self.as_bytes())
     }
@@ -520,9 +514,7 @@ impl core::fmt::Debug for I32Be {
     }
 }
 impl ToNBT for I32Be {
-    fn tag(&self) -> u8 {
-        TAG_INT
-    }
+    const TAG: u8 = TAG_INT;
     fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_bytes(self.as_bytes())
     }
@@ -628,9 +620,7 @@ impl core::fmt::Debug for U64Be {
     }
 }
 impl ToNBT for U64Be {
-    fn tag(&self) -> u8 {
-        TAG_LONG
-    }
+    const TAG: u8 = TAG_LONG;
     fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_bytes(self.as_bytes())
     }
@@ -736,9 +726,7 @@ impl core::fmt::Debug for I64Be {
     }
 }
 impl ToNBT for I64Be {
-    fn tag(&self) -> u8 {
-        TAG_LONG
-    }
+    const TAG: u8 = TAG_LONG;
     fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_bytes(self.as_bytes())
     }
@@ -845,9 +833,7 @@ impl core::fmt::Debug for F32Be {
     }
 }
 impl ToNBT for F32Be {
-    fn tag(&self) -> u8 {
-        TAG_FLOAT
-    }
+    const TAG: u8 = TAG_FLOAT;
     fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_bytes(self.as_bytes())
     }
@@ -954,9 +940,7 @@ impl core::fmt::Debug for F64Be {
     }
 }
 impl ToNBT for F64Be {
-    fn tag(&self) -> u8 {
-        TAG_DOUBLE
-    }
+    const TAG: u8 = TAG_DOUBLE;
     fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_bytes(self.as_bytes())
     }

@@ -129,7 +129,7 @@ pub fn to_bytes<T: ToNBT + ?Sized>(value: &T) -> Result<Vec<u8>> {
 
 /// Serializes `value` as the root compound, named as `opts` says.
 pub fn to_bytes_with_opts<T: ToNBT + ?Sized>(value: &T, opts: SerOpts) -> Result<Vec<u8>> {
-    if value.tag() != TAG_COMPOUND {
+    if const { T::TAG != TAG_COMPOUND } {
         return Err(Error::no_root_compound());
     }
     let SerOpts {

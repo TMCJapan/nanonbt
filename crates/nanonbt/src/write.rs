@@ -153,14 +153,14 @@ pub trait ToNBT {
     /// The tag byte that precedes this value.
     ///
     /// A method rather than a constant because a value can hold any tag.
-    fn tag(&self) -> u8;
+    const TAG: u8;
 
     /// Writes the payload, without the tag or the name.
     fn write<W: Write>(&self, writer: &mut W) -> Result<()>;
 
     /// Writes a compound entry: the tag, the name, then the payload.
     fn write_entry<W: Write>(&self, name: &str, writer: &mut W) -> Result<()> {
-        writer.write_tag(self.tag())?;
+        writer.write_tag(Self::TAG)?;
         writer.write_name(name)?;
         self.write(writer)
     }

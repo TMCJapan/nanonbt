@@ -110,9 +110,7 @@ fn struct_to_nbt(model: &Model, fields: &[Field]) -> TokenStream {
 
     quote! {
         impl #impl_generics #krate::ToNBT for #ident #ty_generics #where_clause {
-            fn tag(&self) -> u8 {
-                #krate::TAG_COMPOUND
-            }
+            const TAG: u8 = #krate::TAG_COMPOUND;
 
             fn write<W: #krate::Write>(&self, writer: &mut W) -> #krate::Result<()> {
                 #(#writes)*
@@ -135,9 +133,7 @@ fn newtype_to_nbt(model: &Model, ty: &syn::Type) -> TokenStream {
 
     quote! {
         impl #impl_generics #krate::ToNBT for #ident #ty_generics #where_clause {
-            fn tag(&self) -> u8 {
-                #krate::ToNBT::tag(&self.0)
-            }
+            const TAG: u8 = <#ty as #krate::ToNBT>::TAG;
 
             fn write<W: #krate::Write>(&self, writer: &mut W) -> #krate::Result<()> {
                 #krate::ToNBT::write(&self.0, writer)
@@ -160,9 +156,7 @@ fn enum_to_nbt(model: &Model, variants: &[Variant]) -> TokenStream {
 
     quote! {
         impl #impl_generics #krate::ToNBT for #ident #ty_generics #where_clause {
-            fn tag(&self) -> u8 {
-                #krate::TAG_STRING
-            }
+            const TAG: u8 = #krate::TAG_STRING;
 
             fn write<W: #krate::Write>(&self, writer: &mut W) -> #krate::Result<()> {
                 match self {
