@@ -3,7 +3,7 @@
 
 use nanonbt::{
     ByteArray, F32Be, F64Be, FromNBT, I16Be, I32Be, I64Be, IntArray, LongArray, ToNBT, U16Be,
-    U32Be, U64Be, from_bytes, from_value, to_bytes, to_value,
+    U32Be, U64Be, from_bytes, to_bytes,
 };
 use serde::{Deserialize, Serialize};
 
@@ -285,43 +285,6 @@ fn malformed_arrays_are_refused() {
     assert_eq!(
         from_bytes::<Holder<'_>>(&bytes).unwrap_err().to_string(),
         "unexpected list of type 'end', which is not supported"
-    );
-}
-
-#[test]
-fn from_value_cannot_borrow() {
-    #[derive(ToNBT)]
-    struct Source {
-        long: i64,
-        bytes: ByteArray,
-    }
-
-    let value = to_value(&Source {
-        long: 7,
-        bytes: ByteArray::new(vec![1, 2]),
-    })
-    .unwrap();
-
-    #[derive(FromNBT, Debug)]
-    struct Number<'a> {
-        #[allow(dead_code)]
-        long: &'a U64Be,
-    }
-
-    #[derive(FromNBT, Debug)]
-    struct Bytes<'a> {
-        #[allow(dead_code)]
-        bytes: &'a [u8],
-    }
-
-    let message = "value is owned and cannot be borrowed; use an owned type";
-    assert_eq!(
-        from_value::<Number<'_>>(&value).unwrap_err().to_string(),
-        message
-    );
-    assert_eq!(
-        from_value::<Bytes<'_>>(&value).unwrap_err().to_string(),
-        message
     );
 }
 

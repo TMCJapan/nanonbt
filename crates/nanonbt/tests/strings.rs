@@ -3,8 +3,7 @@
 use std::borrow::Cow;
 
 use nanonbt::{
-    Cesu8, Cesu8Buf, DeOpts, FromNBT, Read, Reader, ToNBT, Write, Writer, from_bytes, from_value,
-    to_bytes, to_value,
+    Cesu8, Cesu8Buf, DeOpts, FromNBT, Read, Reader, ToNBT, Write, Writer, from_bytes, to_bytes,
 };
 
 #[test]
@@ -88,21 +87,4 @@ fn cesu8_fields_round_trip_without_allocating() {
     assert!(matches!(back.cow, Cow::Borrowed(_)));
     assert_eq!(&*back.borrowed.decode(), "a\0b");
     assert_eq!(back.owned.as_bytes(), b"c\0d");
-}
-
-#[test]
-fn value_conversion_normalizes_but_borrows() {
-    #[derive(FromNBT, ToNBT, PartialEq, Debug)]
-    struct Holder<'a> {
-        text: &'a Cesu8,
-    }
-
-    let value = to_value(&Holder {
-        text: Cesu8::new(b"a\xc0\x80b").unwrap(),
-    })
-    .unwrap();
-    let back: Holder<'_> = from_value(&value).unwrap();
-    assert_eq!(&*back.text.decode(), "a\0b");
-    // `Value::String` is a `String`, so `C0 80` became a raw NUL.
-    assert_eq!(back.text.as_bytes(), b"a\0b");
 }

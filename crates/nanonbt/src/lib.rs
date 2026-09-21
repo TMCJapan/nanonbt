@@ -89,8 +89,6 @@
 //!   fastnbt's `borrow::LongArray` writes a long array. [`LongArray`], the
 //!   other array types, and derived fields with `#[nbt(array = ...)]` are the
 //!   ones that write arrays.
-//! - [`Value::Compound`] is ordered by key, fastnbt's by hash, so compounds
-//!   of several entries serialize in a different order.
 //! - There is no `from_reader` or `to_writer`, as there is no `std::io`.
 
 #![no_std]
@@ -107,7 +105,6 @@ pub mod read;
 #[cfg(feature = "serde")]
 pub mod ser;
 mod tag;
-pub mod value;
 pub mod write;
 
 use alloc::{string::String, vec::Vec};
@@ -123,7 +120,6 @@ pub use tag::{
     TAG_BYTE, TAG_BYTE_ARRAY, TAG_COMPOUND, TAG_DOUBLE, TAG_END, TAG_FLOAT, TAG_INT, TAG_INT_ARRAY,
     TAG_LIST, TAG_LONG, TAG_LONG_ARRAY, TAG_SHORT, TAG_STRING,
 };
-pub use value::{Value, from_value, to_value};
 pub use write::{ToNBT, Write, Writer};
 
 /// Serializes `value` as the root compound, with an empty name.
@@ -236,12 +232,11 @@ impl DeOpts {
     /// megabyte. A smaller stack needs a smaller bound: measured here, a
     /// level costs a few hundred bytes, so 64 KiB holds about 70 of them.
     ///
-    /// This bounds reading only. [`to_bytes`], [`to_value`], [`from_value`]
-    /// and dropping a [`Value`] all recurse once per level as well, with no
-    /// bound of their own, so a tree deeper than this that was *not* built by
-    /// [`from_bytes`] still overflows the stack and aborts. Reading costs the
-    /// most stack per level, so a [`from_bytes`] then [`to_bytes`] round trip
-    /// within this bound is safe.
+    /// This bounds reading only. [`to_bytes`] recurses once per level as
+    /// well, with no bound of its own, so a tree deeper than this that was
+    /// *not* built by [`from_bytes`] still overflows the stack and aborts.
+    /// Reading costs the most stack per level, so a [`from_bytes`] then
+    /// [`to_bytes`] round trip within this bound is safe.
     #[must_use]
     pub const fn max_depth(mut self, max_depth: usize) -> Self {
         self.max_depth = max_depth;
@@ -285,7 +280,7 @@ pub mod serde_compat {
 
     use serde::{Deserialize, Serialize};
 
-    use crate::{DeOpts, Result, SerOpts, Value, de, ser};
+    use crate::{DeOpts, Result, SerOpts, de, ser};
 
     /// Serializes `value` as the root compound, with an empty name.
     pub fn to_bytes<T: Serialize + ?Sized>(value: &T) -> Result<Vec<u8>> {
@@ -311,15 +306,5 @@ pub mod serde_compat {
         opts: DeOpts,
     ) -> Result<T> {
         T::deserialize(&mut de::Deserializer::from_bytes(input, opts))
-    }
-
-    /// Interprets a [`Value`] as a `T`.
-    pub fn from_value<'de, T: Deserialize<'de>>(value: &'de Value) -> Result<T> {
-        crate::value::from_value_serde(value)
-    }
-
-    /// Converts any serializable `value` into a [`Value`].
-    pub fn to_value<T: Serialize + ?Sized>(value: &T) -> Result<Value> {
-        crate::value::to_value_serde(value)
     }
 }

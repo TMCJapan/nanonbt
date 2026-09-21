@@ -3,10 +3,7 @@
 
 use std::{borrow::Cow, collections::BTreeMap, vec, vec::Vec};
 
-use nanonbt::{
-    ByteArray, FromNBT, IntArray, LongArray, ToNBT, Value, from_bytes, from_value, to_bytes,
-    to_value,
-};
+use nanonbt::{ByteArray, FromNBT, IntArray, LongArray, ToNBT, from_bytes, to_bytes};
 
 #[derive(FromNBT, ToNBT, PartialEq, Debug)]
 struct Basic {
@@ -304,18 +301,6 @@ fn array_fields_are_written_and_read_as_arrays() {
     assert_eq!(bytes, to_bytes(&native).unwrap());
 
     assert_eq!(from_bytes::<Arrays>(&bytes).unwrap(), value);
-    assert_eq!(
-        from_value::<Arrays>(&to_value(&value).unwrap()).unwrap(),
-        value
-    );
-
-    // A tree keeps them as arrays, where a plain `Vec` would be a list.
-    let Value::Compound(tree) = to_value(&value).unwrap() else {
-        panic!("the root is a compound");
-    };
-    assert!(matches!(tree["bytes"], Value::ByteArray(_)));
-    assert!(matches!(tree["ints"], Value::IntArray(_)));
-    assert!(matches!(tree["longs"], Value::LongArray(_)));
 }
 
 #[test]
@@ -454,20 +439,6 @@ fn fixed_arrays_require_their_length() {
     let bytes = to_bytes(&Two { values: [1, 2] }).unwrap();
     assert!(from_bytes::<Three>(&bytes).is_err());
     assert_eq!(from_bytes::<Two>(&bytes).unwrap().values, [1, 2]);
-}
-
-#[test]
-fn values_convert_both_ways() {
-    let value = to_value(&basic()).unwrap();
-    let back: Basic = from_value(&value).unwrap();
-    assert_eq!(back, basic());
-
-    let tree = Value::Compound(BTreeMap::from([
-        ("a".into(), Value::Int(1)),
-        ("b".into(), Value::List(vec![Value::String("x".into())])),
-    ]));
-    let bytes = to_bytes(&tree).unwrap();
-    assert_eq!(from_bytes::<Value>(&bytes).unwrap(), tree);
 }
 
 #[test]

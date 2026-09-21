@@ -105,8 +105,6 @@ macro_rules! refuse {
     };
 }
 
-pub(crate) use refuse;
-
 impl<'a> ser::Serializer for &'a mut Serializer<'_> {
     type Ok = ();
     type Error = Error;

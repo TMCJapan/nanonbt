@@ -291,6 +291,7 @@ macro_rules! array {
             }
 
             /// The elements as big-endian bytes, as NBT stores them.
+            #[allow(dead_code)]
             pub(crate) fn to_be_bytes(&self) -> Vec<u8> {
                 const SIZE: usize = size_of::<$element>();
                 let mut bytes = Vec::with_capacity(self.data.len() * SIZE);

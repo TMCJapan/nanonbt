@@ -1,7 +1,7 @@
 #![allow(clippy::items_after_statements)]
 //! Serialization and deserialization options behave like fastnbt's.
 
-use nanonbt::{DeOpts, Error, FromNBT, Read, Reader, ToNBT, Value};
+use nanonbt::{DeOpts, Error, FromNBT, Read, Reader, ToNBT};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, ToNBT, FromNBT, PartialEq, Debug)]
@@ -127,7 +127,7 @@ fn nesting_deeper_than_max_depth_is_refused() {
             let bytes = document(depth);
             let opts = nanonbt::DeOpts::new().max_depth(depth);
             assert!(
-                nanonbt::from_bytes_with_opts::<Value>(&bytes, opts.clone()).is_ok(),
+                nanonbt::from_bytes_with_opts::<Empty>(&bytes, opts.clone()).is_ok(),
                 "depth {depth} refused at its own limit"
             );
             // Skipping the whole document counts the same levels.
@@ -135,7 +135,7 @@ fn nesting_deeper_than_max_depth_is_refused() {
 
             let opts = nanonbt::DeOpts::new().max_depth(depth - 1);
             assert!(
-                nanonbt::from_bytes_with_opts::<Value>(&bytes, opts.clone()).is_err(),
+                nanonbt::from_bytes_with_opts::<Empty>(&bytes, opts.clone()).is_err(),
                 "depth {depth} accepted one level past the limit"
             );
             assert!(nanonbt::from_bytes_with_opts::<Empty>(&bytes, opts).is_err());
@@ -143,7 +143,7 @@ fn nesting_deeper_than_max_depth_is_refused() {
     }
 
     // The default keeps a document that would overflow a small stack out.
-    assert!(nanonbt::from_bytes::<Value>(&nested_lists(100_000)).is_err());
+    assert!(nanonbt::from_bytes::<Empty>(&nested_lists(100_000)).is_err());
     assert!(nanonbt::from_bytes::<Empty>(&nested_compounds(100_000)).is_err());
 }
 

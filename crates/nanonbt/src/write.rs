@@ -152,8 +152,7 @@ impl Write for Writer<'_> {
 pub trait ToNBT {
     /// The tag byte that precedes this value.
     ///
-    /// A method rather than a constant because a [`Value`](crate::Value) can
-    /// hold any tag.
+    /// A method rather than a constant because a value can hold any tag.
     fn tag(&self) -> u8;
 
     /// Writes the payload, without the tag or the name.

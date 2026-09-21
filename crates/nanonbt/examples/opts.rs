@@ -1,10 +1,16 @@
 //! Root names, network NBT, and the limits that guard untrusted input.
 
-use std::collections::BTreeMap;
-
 use nanonbt::{
-    DeOpts, FromNBT, SerOpts, ToNBT, Value, from_bytes_with_opts, to_bytes, to_bytes_with_opts,
+    DeOpts, FromNBT, SerOpts, ToNBT, from_bytes_with_opts, to_bytes, to_bytes_with_opts,
 };
+
+#[derive(FromNBT, ToNBT, PartialEq, Debug)]
+struct LongList {
+    entries: Vec<i32>,
+}
+
+#[derive(FromNBT, ToNBT, PartialEq, Debug, Default)]
+struct Empty {}
 
 #[derive(FromNBT, ToNBT, PartialEq, Debug)]
 struct Level {
@@ -32,17 +38,17 @@ fn main() -> nanonbt::Result<()> {
     println!("both documents read back");
 
     // A list longer than `max_seq_len` is refused before it is allocated.
-    let long_list = Value::Compound(BTreeMap::from([(
-        "entries".into(),
-        Value::List((0..100).map(Value::Int).collect()),
-    )]));
+    let long_list = LongList {
+        entries: (0..100).map(|_| 1).collect(),
+    };
     let bytes = to_bytes(&long_list)?;
-    let error = from_bytes_with_opts::<Value>(&bytes, DeOpts::new().max_seq_len(10)).unwrap_err();
+    let error =
+        from_bytes_with_opts::<LongList>(&bytes, DeOpts::new().max_seq_len(10)).unwrap_err();
     println!("max_seq_len(10): {error}");
 
     // Reading recurses once per level, so deep documents are refused too.
     let bytes = nested_compounds(8);
-    let error = from_bytes_with_opts::<Value>(&bytes, DeOpts::new().max_depth(4)).unwrap_err();
+    let error = from_bytes_with_opts::<Empty>(&bytes, DeOpts::new().max_depth(4)).unwrap_err();
     println!("max_depth(4): {error}");
 
     Ok(())
