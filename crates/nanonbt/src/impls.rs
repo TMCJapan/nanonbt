@@ -3,11 +3,6 @@
 //! Tags are matched strictly: a value reads its own tag only. An unsigned
 //! integer shares its tag with the signed integer of the same width and
 //! reinterprets the bits, so every value of either type round trips.
-
-use alloc::{borrow::Cow, collections::BTreeMap, string::String, vec::Vec};
-
-use nanocesu8::{Cesu8, Cesu8Buf};
-
 use crate::{
     error::{Error, Result},
     read::{FromNBT, Read},
@@ -18,6 +13,8 @@ use crate::{
     write::{ToNBT, Write},
 };
 
+use alloc::{borrow::Cow, collections::BTreeMap, string::String, vec::Vec};
+use nanocesu8::{Cesu8, Cesu8Buf};
 /// Refuses a tag other than the one the target expects.
 const fn expect(tag: u8, expected: u8) -> Result<()> {
     if tag == expected {
@@ -26,79 +23,154 @@ const fn expect(tag: u8, expected: u8) -> Result<()> {
         Err(Error::invalid_tag(tag))
     }
 }
-
-macro_rules! scalar {
-    ($($ty:ty: $tag:ident, $write:ident, $read:ident;)*) => {
-        $(
-            impl ToNBT for $ty {
-                fn tag(&self) -> u8 {
-                    $tag
-                }
-
-                fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
-                    writer.$write(*self)
-                }
-            }
-
-            impl<'de> FromNBT<'de> for $ty {
-                fn read<R: Read<'de>>(tag: u8, reader: &mut R) -> Result<Self> {
-                    expect(tag, $tag)?;
-                    reader.$read()
-                }
-            }
-        )*
-    };
+impl ToNBT for i8 {
+    fn tag(&self) -> u8 {
+        TAG_BYTE
+    }
+    fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
+        writer.write_i8(*self)
+    }
 }
-
-scalar! {
-    i8: TAG_BYTE, write_i8, read_i8;
-    i16: TAG_SHORT, write_i16, read_i16;
-    i32: TAG_INT, write_i32, read_i32;
-    i64: TAG_LONG, write_i64, read_i64;
-    f32: TAG_FLOAT, write_f32, read_f32;
-    f64: TAG_DOUBLE, write_f64, read_f64;
+impl<'de> FromNBT<'de> for i8 {
+    fn read<R: Read<'de>>(tag: u8, reader: &mut R) -> Result<Self> {
+        expect(tag, TAG_BYTE)?;
+        reader.read_i8()
+    }
 }
-
-macro_rules! unsigned {
-    ($($ty:ty => $signed:ty: $tag:ident, $write:ident, $read:ident;)*) => {
-        $(
-            impl ToNBT for $ty {
-                fn tag(&self) -> u8 {
-                    $tag
-                }
-
-                fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
-                    writer.$write(self.cast_signed())
-                }
-            }
-
-            impl<'de> FromNBT<'de> for $ty {
-                fn read<R: Read<'de>>(tag: u8, reader: &mut R) -> Result<Self> {
-                    expect(tag, $tag)?;
-                    reader.$read().map(<$signed>::cast_unsigned)
-                }
-            }
-        )*
-    };
+impl ToNBT for i16 {
+    fn tag(&self) -> u8 {
+        TAG_SHORT
+    }
+    fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
+        writer.write_i16(*self)
+    }
 }
-
-unsigned! {
-    u8 => i8: TAG_BYTE, write_i8, read_i8;
-    u16 => i16: TAG_SHORT, write_i16, read_i16;
-    u32 => i32: TAG_INT, write_i32, read_i32;
-    u64 => i64: TAG_LONG, write_i64, read_i64;
+impl<'de> FromNBT<'de> for i16 {
+    fn read<R: Read<'de>>(tag: u8, reader: &mut R) -> Result<Self> {
+        expect(tag, TAG_SHORT)?;
+        reader.read_i16()
+    }
 }
-
+impl ToNBT for i32 {
+    fn tag(&self) -> u8 {
+        TAG_INT
+    }
+    fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
+        writer.write_i32(*self)
+    }
+}
+impl<'de> FromNBT<'de> for i32 {
+    fn read<R: Read<'de>>(tag: u8, reader: &mut R) -> Result<Self> {
+        expect(tag, TAG_INT)?;
+        reader.read_i32()
+    }
+}
+impl ToNBT for i64 {
+    fn tag(&self) -> u8 {
+        TAG_LONG
+    }
+    fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
+        writer.write_i64(*self)
+    }
+}
+impl<'de> FromNBT<'de> for i64 {
+    fn read<R: Read<'de>>(tag: u8, reader: &mut R) -> Result<Self> {
+        expect(tag, TAG_LONG)?;
+        reader.read_i64()
+    }
+}
+impl ToNBT for f32 {
+    fn tag(&self) -> u8 {
+        TAG_FLOAT
+    }
+    fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
+        writer.write_f32(*self)
+    }
+}
+impl<'de> FromNBT<'de> for f32 {
+    fn read<R: Read<'de>>(tag: u8, reader: &mut R) -> Result<Self> {
+        expect(tag, TAG_FLOAT)?;
+        reader.read_f32()
+    }
+}
+impl ToNBT for f64 {
+    fn tag(&self) -> u8 {
+        TAG_DOUBLE
+    }
+    fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
+        writer.write_f64(*self)
+    }
+}
+impl<'de> FromNBT<'de> for f64 {
+    fn read<R: Read<'de>>(tag: u8, reader: &mut R) -> Result<Self> {
+        expect(tag, TAG_DOUBLE)?;
+        reader.read_f64()
+    }
+}
+impl ToNBT for u8 {
+    fn tag(&self) -> u8 {
+        TAG_BYTE
+    }
+    fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
+        writer.write_i8(self.cast_signed())
+    }
+}
+impl<'de> FromNBT<'de> for u8 {
+    fn read<R: Read<'de>>(tag: u8, reader: &mut R) -> Result<Self> {
+        expect(tag, TAG_BYTE)?;
+        reader.read_i8().map(<i8>::cast_unsigned)
+    }
+}
+impl ToNBT for u16 {
+    fn tag(&self) -> u8 {
+        TAG_SHORT
+    }
+    fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
+        writer.write_i16(self.cast_signed())
+    }
+}
+impl<'de> FromNBT<'de> for u16 {
+    fn read<R: Read<'de>>(tag: u8, reader: &mut R) -> Result<Self> {
+        expect(tag, TAG_SHORT)?;
+        reader.read_i16().map(<i16>::cast_unsigned)
+    }
+}
+impl ToNBT for u32 {
+    fn tag(&self) -> u8 {
+        TAG_INT
+    }
+    fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
+        writer.write_i32(self.cast_signed())
+    }
+}
+impl<'de> FromNBT<'de> for u32 {
+    fn read<R: Read<'de>>(tag: u8, reader: &mut R) -> Result<Self> {
+        expect(tag, TAG_INT)?;
+        reader.read_i32().map(<i32>::cast_unsigned)
+    }
+}
+impl ToNBT for u64 {
+    fn tag(&self) -> u8 {
+        TAG_LONG
+    }
+    fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
+        writer.write_i64(self.cast_signed())
+    }
+}
+impl<'de> FromNBT<'de> for u64 {
+    fn read<R: Read<'de>>(tag: u8, reader: &mut R) -> Result<Self> {
+        expect(tag, TAG_LONG)?;
+        reader.read_i64().map(<i64>::cast_unsigned)
+    }
+}
 impl ToNBT for bool {
     fn tag(&self) -> u8 {
         TAG_BYTE
     }
-
     fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_i8(i8::from(*self))
     }
 }
-
 /// Any non-zero byte is true.
 impl<'de> FromNBT<'de> for bool {
     fn read<R: Read<'de>>(tag: u8, reader: &mut R) -> Result<Self> {
@@ -106,24 +178,20 @@ impl<'de> FromNBT<'de> for bool {
         Ok(reader.read_i8()? != 0)
     }
 }
-
 impl ToNBT for char {
     fn tag(&self) -> u8 {
         TAG_INT
     }
-
     fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_i32(u32::from(*self).cast_signed())
     }
 }
-
 impl<'de> FromNBT<'de> for char {
     fn read<R: Read<'de>>(tag: u8, reader: &mut R) -> Result<Self> {
         expect(tag, TAG_INT)?;
         Self::from_u32(reader.read_i32()?.cast_unsigned()).ok_or_else(Error::invalid_char)
     }
 }
-
 /// Reads the four big-endian ints a 128-bit integer is stored as.
 fn int_array_128<'de, R: Read<'de>>(reader: &mut R) -> Result<[u8; 16]> {
     if reader.read_len()? != 4 {
@@ -135,96 +203,84 @@ fn int_array_128<'de, R: Read<'de>>(reader: &mut R) -> Result<[u8; 16]> {
         .try_into()
         .map_err(|_| Error::expected_int_array())
 }
-
-macro_rules! wide {
-    ($($ty:ty;)*) => {
-        $(
-            impl ToNBT for $ty {
-                fn tag(&self) -> u8 {
-                    TAG_INT_ARRAY
-                }
-
-                fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
-                    writer.write_len(4)?;
-                    writer.write_bytes(&self.to_be_bytes())
-                }
-            }
-
-            impl<'de> FromNBT<'de> for $ty {
-                fn read<R: Read<'de>>(tag: u8, reader: &mut R) -> Result<Self> {
-                    expect(tag, TAG_INT_ARRAY)?;
-                    Ok(Self::from_be_bytes(int_array_128(reader)?))
-                }
-            }
-        )*
-    };
+impl ToNBT for i128 {
+    fn tag(&self) -> u8 {
+        TAG_INT_ARRAY
+    }
+    fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
+        writer.write_len(4)?;
+        writer.write_bytes(&self.to_be_bytes())
+    }
 }
-
-wide! {
-    i128;
-    u128;
+impl<'de> FromNBT<'de> for i128 {
+    fn read<R: Read<'de>>(tag: u8, reader: &mut R) -> Result<Self> {
+        expect(tag, TAG_INT_ARRAY)?;
+        Ok(Self::from_be_bytes(int_array_128(reader)?))
+    }
 }
-
+impl ToNBT for u128 {
+    fn tag(&self) -> u8 {
+        TAG_INT_ARRAY
+    }
+    fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
+        writer.write_len(4)?;
+        writer.write_bytes(&self.to_be_bytes())
+    }
+}
+impl<'de> FromNBT<'de> for u128 {
+    fn read<R: Read<'de>>(tag: u8, reader: &mut R) -> Result<Self> {
+        expect(tag, TAG_INT_ARRAY)?;
+        Ok(Self::from_be_bytes(int_array_128(reader)?))
+    }
+}
 impl ToNBT for str {
     fn tag(&self) -> u8 {
         TAG_STRING
     }
-
     fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_str(self)
     }
 }
-
 impl ToNBT for String {
     fn tag(&self) -> u8 {
         TAG_STRING
     }
-
     fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_str(self)
     }
 }
-
 impl ToNBT for Cow<'_, str> {
     fn tag(&self) -> u8 {
         TAG_STRING
     }
-
     fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_str(self)
     }
 }
-
 impl ToNBT for Cesu8 {
     fn tag(&self) -> u8 {
         TAG_STRING
     }
-
     fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_cesu8(self)
     }
 }
-
 impl ToNBT for Cesu8Buf {
     fn tag(&self) -> u8 {
         TAG_STRING
     }
-
     fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_cesu8(self)
     }
 }
-
 impl ToNBT for Cow<'_, Cesu8> {
     fn tag(&self) -> u8 {
         TAG_STRING
     }
-
     fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_cesu8(self)
     }
 }
-
 /// Only a string the input already spells as UTF-8 can be borrowed.
 impl<'de> FromNBT<'de> for &'de str {
     fn read<R: Read<'de>>(tag: u8, reader: &mut R) -> Result<Self> {
@@ -235,21 +291,18 @@ impl<'de> FromNBT<'de> for &'de str {
         }
     }
 }
-
 impl<'de> FromNBT<'de> for String {
     fn read<R: Read<'de>>(tag: u8, reader: &mut R) -> Result<Self> {
         expect(tag, TAG_STRING)?;
         Ok(reader.read_str()?.into_owned())
     }
 }
-
 impl<'de> FromNBT<'de> for Cow<'de, str> {
     fn read<R: Read<'de>>(tag: u8, reader: &mut R) -> Result<Self> {
         expect(tag, TAG_STRING)?;
         reader.read_str()
     }
 }
-
 /// A `Cesu8` borrows whenever the reader can lend its bytes.
 impl<'de> FromNBT<'de> for &'de Cesu8 {
     fn read<R: Read<'de>>(tag: u8, reader: &mut R) -> Result<Self> {
@@ -260,32 +313,27 @@ impl<'de> FromNBT<'de> for &'de Cesu8 {
         }
     }
 }
-
 impl<'de> FromNBT<'de> for Cesu8Buf {
     fn read<R: Read<'de>>(tag: u8, reader: &mut R) -> Result<Self> {
         expect(tag, TAG_STRING)?;
         Ok(reader.read_cesu8()?.into_owned())
     }
 }
-
 impl<'de> FromNBT<'de> for Cow<'de, Cesu8> {
     fn read<R: Read<'de>>(tag: u8, reader: &mut R) -> Result<Self> {
         expect(tag, TAG_STRING)?;
         reader.read_cesu8()
     }
 }
-
 /// A reference writes like the value it points at.
 impl<T: ToNBT + ?Sized> ToNBT for &T {
     fn tag(&self) -> u8 {
         (**self).tag()
     }
-
     fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
         (**self).write(writer)
     }
 }
-
 /// A list's element tag comes from its first element; an empty list is a list
 /// of End, the way fastnbt writes one.
 pub(crate) fn write_list<T: ToNBT, W: Write>(items: &[T], writer: &mut W) -> Result<()> {
@@ -297,7 +345,6 @@ pub(crate) fn write_list<T: ToNBT, W: Write>(items: &[T], writer: &mut W) -> Res
     }
     Ok(())
 }
-
 pub(crate) fn read_list<'de, T: FromNBT<'de>, R: Read<'de>>(reader: &mut R) -> Result<Vec<T>> {
     let (element, len) = reader.read_list_header()?;
     if element == TAG_END && len != 0 {
@@ -311,37 +358,30 @@ pub(crate) fn read_list<'de, T: FromNBT<'de>, R: Read<'de>>(reader: &mut R) -> R
         Ok(out)
     })
 }
-
 impl<T: ToNBT> ToNBT for [T] {
     fn tag(&self) -> u8 {
         TAG_LIST
     }
-
     fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
         write_list(self, writer)
     }
 }
-
 impl<T: ToNBT, const N: usize> ToNBT for [T; N] {
     fn tag(&self) -> u8 {
         TAG_LIST
     }
-
     fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
         write_list(self, writer)
     }
 }
-
 impl<T: ToNBT> ToNBT for Vec<T> {
     fn tag(&self) -> u8 {
         TAG_LIST
     }
-
     fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
         write_list(self, writer)
     }
 }
-
 impl<'de, T: FromNBT<'de>, const N: usize> FromNBT<'de> for [T; N] {
     fn read<R: Read<'de>>(tag: u8, reader: &mut R) -> Result<Self> {
         expect(tag, TAG_LIST)?;
@@ -350,19 +390,16 @@ impl<'de, T: FromNBT<'de>, const N: usize> FromNBT<'de> for [T; N] {
             .map_err(|_| Error::wrong_len())
     }
 }
-
 impl<'de, T: FromNBT<'de>> FromNBT<'de> for Vec<T> {
     fn read<R: Read<'de>>(tag: u8, reader: &mut R) -> Result<Self> {
         expect(tag, TAG_LIST)?;
         read_list(reader)
     }
 }
-
 impl<K: AsRef<str> + Ord, V: ToNBT> ToNBT for BTreeMap<K, V> {
     fn tag(&self) -> u8 {
         crate::tag::TAG_COMPOUND
     }
-
     fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
         for (key, value) in self {
             value.write_entry(key.as_ref(), writer)?;
@@ -370,7 +407,6 @@ impl<K: AsRef<str> + Ord, V: ToNBT> ToNBT for BTreeMap<K, V> {
         writer.write_end()
     }
 }
-
 impl<'de, V: FromNBT<'de>> FromNBT<'de> for BTreeMap<String, V> {
     fn read<R: Read<'de>>(tag: u8, reader: &mut R) -> Result<Self> {
         expect(tag, crate::tag::TAG_COMPOUND)?;
