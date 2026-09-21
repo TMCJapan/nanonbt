@@ -9,7 +9,7 @@
 //! The Kani proofs cover the scalar paths only; the differential tests are
 //! what pin this down.
 
-use wide::{CmpEq, u8x32};
+use wide::u8x32;
 
 /// The width of one scan block.
 const BLOCK: usize = 32;
@@ -23,7 +23,7 @@ pub(crate) fn contains_null_or_utf8_4_byte_char_header(bytes: &[u8]) -> bool {
     let (chunks, rest) = bytes.as_chunks::<BLOCK>();
     for chunk in chunks {
         let bytes = u8x32::new(*chunk);
-        if bytes.cmp_eq(zero).any() || (bytes & mask).cmp_eq(header).any() {
+        if bytes.simd_eq(zero).any() || (bytes & mask).simd_eq(header).any() {
             return true;
         }
     }
