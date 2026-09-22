@@ -2,7 +2,7 @@
 
 use core::fmt;
 
-/// The bytes are neither UTF-8 nor modified UTF-8.
+/// The bytes are not Java's modified UTF-8.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DecodeError;
 

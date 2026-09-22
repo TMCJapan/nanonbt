@@ -31,6 +31,25 @@ fn read_cesu8_refuses_invalid_bytes() {
     );
 }
 
+/// Java's spelling is the only one read: plain UTF-8 with a raw NUL is
+/// refused, where fastnbt takes it because the bytes are valid UTF-8.
+#[test]
+fn read_str_requires_java_spelling() {
+    let mut reader = Reader::new(&[0, 3, b'a', 0, b'b'], DeOpts::new());
+    assert_eq!(
+        reader.read_str().unwrap_err().to_string(),
+        "invalid nbt string: nonunicode"
+    );
+    let document = [
+        0x0a, 0x00, 0x00, 0x08, 0x00, 0x01, b'x', 0, 3, b'a', 0, b'b', 0x00,
+    ];
+    assert!(fastnbt::from_bytes::<fastnbt::Value>(&document).is_ok());
+
+    // The modified spelling of the same text is accepted.
+    let mut reader = Reader::new(&[0, 4, b'a', 0xc0, 0x80, b'b'], DeOpts::new());
+    assert_eq!(&*reader.read_str().unwrap(), "a\0b");
+}
+
 #[test]
 fn write_cesu8_writes_the_exact_bytes() {
     let mut out = Vec::new();
@@ -86,5 +105,6 @@ fn cesu8_fields_round_trip_without_allocating() {
     assert_eq!(back, value);
     assert!(matches!(back.cow, Cow::Borrowed(_)));
     assert_eq!(&*back.borrowed.decode(), "a\0b");
-    assert_eq!(back.owned.as_bytes(), b"c\0d");
+    // `From<&str>` encodes, so the buffer holds Java's spelling.
+    assert_eq!(back.owned.as_bytes(), b"c\xc0\x80d");
 }

@@ -59,7 +59,9 @@
 //! modified UTF-8 (a NUL or a non-BMP character) decodes into an owned
 //! `Cow<str>`, and reading it into a `&'de str` is an error. A [`Cesu8`]
 //! keeps the bytes as they were written instead, so even that string
-//! borrows; [`Cesu8::decode`] yields the text on demand.
+//! borrows; [`Cesu8::decode`] yields the text on demand. Only Java's
+//! spelling is read: a string whose bytes are plain UTF-8 with a raw NUL or
+//! a four-byte sequence is refused.
 //!
 //! Numbers and byte arrays borrow too. [`U64Be`] is a `TAG_Long` kept as the
 //! eight bytes NBT wrote, and `&'de [U64Be]` a whole long array; both read
@@ -84,6 +86,9 @@
 //!   and aborts, which no error can report and no `catch_unwind` can catch.
 //! - Strings longer than 65535 bytes are refused; fastnbt truncates their
 //!   length and writes corrupt NBT.
+//! - A string is read only in Java's modified UTF-8 spelling: plain UTF-8
+//!   with a raw NUL or a four-byte sequence is refused, where fastnbt
+//!   accepts any string whose bytes happen to be valid UTF-8.
 //! - Values convert between tags only where fastnbt's serde visitors happen
 //!   to; this crate's rule is simpler and stricter, and `char` round trips
 //!   through bytes, which fastnbt's does not.

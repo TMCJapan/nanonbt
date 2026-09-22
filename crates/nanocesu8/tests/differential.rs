@@ -9,16 +9,14 @@ fn modified_utf8_matches_the_cesu8_crate() {
     // decoder's covers one byte, so this suite carries the crate.
     check_n("modified_utf8_matches_the_cesu8_crate", 4096, |rng| {
         let text = generate::string(rng, 12);
-        let encoded = nanocesu8::to_java_cesu8(&text);
-        ensure_eq!(&*encoded, &*cesu8::to_java_cesu8(&text), "encode {text:?}");
-
-        let bytes = generate::mutate(rng, &encoded);
+        let encoded = Cesu8::from_str(&text);
         ensure_eq!(
-            nanocesu8::from_java_cesu8(&bytes).ok(),
-            cesu8::from_java_cesu8(&bytes).ok(),
-            "decode {bytes:02x?}"
+            encoded.as_bytes(),
+            &*cesu8::to_java_cesu8(&text),
+            "encode {text:?}"
         );
 
+        let bytes = generate::mutate(rng, encoded.as_bytes());
         match Cesu8::new(&bytes) {
             Ok(valid) => {
                 let theirs = cesu8::from_java_cesu8(&bytes).expect("both accept");
@@ -36,10 +34,18 @@ fn modified_utf8_matches_the_cesu8_crate() {
                     "buffer {bytes:02x?}"
                 );
             }
-            Err(_) => ensure!(
-                cesu8::from_java_cesu8(&bytes).is_err(),
-                "both reject {bytes:02x?}"
-            ),
+            Err(_) => {
+                if cesu8::from_java_cesu8(&bytes).is_ok() {
+                    // The `cesu8` crate is strictly more permissive: it
+                    // takes plain UTF-8 with a raw NUL or four-byte lead.
+                    let plain = std::str::from_utf8(&bytes)
+                        .map_err(|_| format!("accepted only when UTF-8: {bytes:02x?}"))?;
+                    ensure!(
+                        plain.bytes().any(|b| b == 0 || b >= 0xf0),
+                        "UTF-8 without a NUL or four-byte lead is modified UTF-8: {bytes:02x?}"
+                    );
+                }
+            }
         }
         Ok(())
     });

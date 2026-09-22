@@ -3,13 +3,13 @@
 //! [`FromNBT`] implementations read a value's payload only;
 //! the tag has already been consumed by whoever owns the entry and is passed
 //! along as an argument, so that a type can dispatch on it. Strings decode
-//! from modified UTF-8, borrowing from the input when they are plain UTF-8;
-//! [`Read::read_cesu8`] borrows the raw bytes instead, so a string that is
-//! not UTF-8 borrows too.
+//! from Java's modified UTF-8, borrowing from the input when that spelling
+//! is also UTF-8; [`Read::read_cesu8`] borrows the raw bytes instead, so a
+//! string that is not UTF-8 borrows too.
 
 use alloc::{borrow::Cow, vec::Vec};
 
-use nanocesu8::{Cesu8, from_java_cesu8};
+use nanocesu8::Cesu8;
 
 use crate::{
     DeOpts,
@@ -217,7 +217,7 @@ impl<'de> Reader<'de> {
     }
 
     fn str(&mut self) -> Result<Cow<'de, str>> {
-        from_java_cesu8(self.take_str_bytes()?).map_err(|_| Error::nonunicode_string())
+        self.cesu8().map(Cesu8::decode)
     }
 
     fn cesu8(&mut self) -> Result<&'de Cesu8> {

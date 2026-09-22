@@ -7,7 +7,7 @@
 
 use alloc::vec::Vec;
 
-use nanocesu8::{Cesu8, to_java_cesu8};
+use nanocesu8::Cesu8;
 
 use crate::{
     error::{Error, Result},
@@ -40,8 +40,8 @@ pub trait Write {
 
     /// Writes a length-prefixed string as its exact modified UTF-8 bytes.
     ///
-    /// Unlike [`write_str`](Write::write_str), nothing is re-encoded: a raw
-    /// NUL or four-byte sequence is written as it is.
+    /// [`write_str`](Write::write_str) encodes to the same spelling, so the
+    /// two write the same bytes for the same text.
     fn write_cesu8(&mut self, v: &Cesu8) -> Result<()>;
 
     fn write_i8(&mut self, v: i8) -> Result<()>;
@@ -93,7 +93,7 @@ impl Write for Writer<'_> {
     }
 
     fn write_str(&mut self, v: &str) -> Result<()> {
-        self.write_prefixed(&to_java_cesu8(v))
+        self.write_prefixed(Cesu8::from_str(v).as_bytes())
     }
 
     fn write_cesu8(&mut self, v: &Cesu8) -> Result<()> {

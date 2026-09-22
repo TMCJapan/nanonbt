@@ -5,9 +5,10 @@
 //!
 //! # What is proven
 //!
-//! - `cesu8`: [`nanocesu8::from_java_cesu8`] agrees with the `cesu8` crate's
-//!   on every single byte: both accept it as the same text, or both refuse
-//!   it, and nanocesu8's does not panic on any.
+//! - `cesu8`: [`nanocesu8::Cesu8::new`] and its `decode` agree with the
+//!   `cesu8` crate's `from_java_cesu8` on every single byte: the same text
+//!   whenever both accept, and the only disagreement, a raw NUL, is the
+//!   `cesu8` crate's alone. nanocesu8's decoder does not panic on any.
 //! - `stubs`: the stand-ins that the harness runs with agree with the real
 //!   functions on every input: `core::slice::memchr::memchr` at each length
 //!   the harness gives it, and `core::str::from_utf8` up to 8 bytes.
