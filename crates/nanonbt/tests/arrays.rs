@@ -160,3 +160,54 @@ fn array_fields_are_read_with_one_allocation() {
     assert_eq!(ALLOCATIONS.with(Cell::get) - before, 1);
     assert_eq!(target.data.len(), 10_000);
 }
+
+/// A numeric list's payload is read in one go under the `simd` feature, so
+/// the `Vec` is built once instead of being grown element by element.
+#[test]
+#[cfg(feature = "simd")]
+fn numeric_lists_are_read_with_one_allocation() {
+    #[derive(ToNBT)]
+    struct Source {
+        data: Vec<i16>,
+    }
+
+    #[derive(FromNBT)]
+    struct Target {
+        data: Vec<i16>,
+    }
+
+    let bytes = nanonbt::to_bytes(&Source {
+        data: (0..10_000).map(|i| i16::try_from(i).unwrap()).collect(),
+    })
+    .unwrap();
+
+    let before = ALLOCATIONS.with(Cell::get);
+    let target = nanonbt::from_bytes::<Target>(&bytes).unwrap();
+    assert_eq!(ALLOCATIONS.with(Cell::get) - before, 1);
+    assert_eq!(target.data.len(), 10_000);
+}
+
+/// A numeric list's payload is swapped in a stack buffer, so writing one
+/// takes no allocation either.
+#[test]
+#[cfg(feature = "simd")]
+fn numeric_list_fields_are_written_without_allocating() {
+    #[derive(ToNBT)]
+    struct Holder {
+        data: Vec<u16>,
+    }
+
+    let holder = Holder {
+        data: vec![1; 10_000],
+    };
+    let mut out = Vec::with_capacity(100_000);
+    let mut writer = Writer::new(&mut out);
+
+    let before = ALLOCATIONS.with(Cell::get);
+    ToNBT::write(&holder, &mut writer).unwrap();
+    assert_eq!(ALLOCATIONS.with(Cell::get), before);
+
+    // The tag, the name, the element tag, the length, the elements, and the
+    // compound's End tag.
+    assert_eq!(out.len(), 1 + 2 + 4 + 1 + 4 + 10_000 * 2 + 1);
+}

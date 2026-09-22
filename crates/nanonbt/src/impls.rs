@@ -28,11 +28,26 @@ impl ToNBT for i8 {
     fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_i8(*self)
     }
+
+    #[cfg(feature = "simd")]
+    fn write_elements<W: Write>(elements: &[Self], writer: &mut W) -> Result<()> {
+        writer.write_bytes(crate::be::as_u8(elements))
+    }
 }
 impl<'de> FromNBT<'de> for i8 {
     fn read<R: Read<'de>>(tag: u8, reader: &mut R) -> Result<Self> {
         expect(tag, TAG_BYTE)?;
         reader.read_i8()
+    }
+
+    #[cfg(feature = "simd")]
+    fn read_elements<R: Read<'de>>(element: u8, len: usize, reader: &mut R) -> Result<Vec<Self>> {
+        expect(element, TAG_BYTE)?;
+        let bytes = reader.read_bytes(len)?;
+        if bytes.len() != len {
+            return Err(Error::unexpected_eof());
+        }
+        Ok(crate::be::as_i8(&bytes).to_vec())
     }
 }
 impl ToNBT for i16 {
@@ -40,11 +55,22 @@ impl ToNBT for i16 {
     fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_i16(*self)
     }
+
+    #[cfg(feature = "simd")]
+    fn write_elements<W: Write>(elements: &[Self], writer: &mut W) -> Result<()> {
+        crate::simd::write_be::<Self, 2, W>(elements, writer)
+    }
 }
 impl<'de> FromNBT<'de> for i16 {
     fn read<R: Read<'de>>(tag: u8, reader: &mut R) -> Result<Self> {
         expect(tag, TAG_SHORT)?;
         reader.read_i16()
+    }
+
+    #[cfg(feature = "simd")]
+    fn read_elements<R: Read<'de>>(element: u8, len: usize, reader: &mut R) -> Result<Vec<Self>> {
+        expect(element, TAG_SHORT)?;
+        crate::simd::read_be_elements::<Self, 2, R>(len, reader, <Self>::from_be_bytes)
     }
 }
 impl ToNBT for i32 {
@@ -52,11 +78,22 @@ impl ToNBT for i32 {
     fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_i32(*self)
     }
+
+    #[cfg(feature = "simd")]
+    fn write_elements<W: Write>(elements: &[Self], writer: &mut W) -> Result<()> {
+        crate::simd::write_be::<Self, 4, W>(elements, writer)
+    }
 }
 impl<'de> FromNBT<'de> for i32 {
     fn read<R: Read<'de>>(tag: u8, reader: &mut R) -> Result<Self> {
         expect(tag, TAG_INT)?;
         reader.read_i32()
+    }
+
+    #[cfg(feature = "simd")]
+    fn read_elements<R: Read<'de>>(element: u8, len: usize, reader: &mut R) -> Result<Vec<Self>> {
+        expect(element, TAG_INT)?;
+        crate::simd::read_be_elements::<Self, 4, R>(len, reader, <Self>::from_be_bytes)
     }
 }
 impl ToNBT for i64 {
@@ -64,11 +101,22 @@ impl ToNBT for i64 {
     fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_i64(*self)
     }
+
+    #[cfg(feature = "simd")]
+    fn write_elements<W: Write>(elements: &[Self], writer: &mut W) -> Result<()> {
+        crate::simd::write_be::<Self, 8, W>(elements, writer)
+    }
 }
 impl<'de> FromNBT<'de> for i64 {
     fn read<R: Read<'de>>(tag: u8, reader: &mut R) -> Result<Self> {
         expect(tag, TAG_LONG)?;
         reader.read_i64()
+    }
+
+    #[cfg(feature = "simd")]
+    fn read_elements<R: Read<'de>>(element: u8, len: usize, reader: &mut R) -> Result<Vec<Self>> {
+        expect(element, TAG_LONG)?;
+        crate::simd::read_be_elements::<Self, 8, R>(len, reader, <Self>::from_be_bytes)
     }
 }
 impl ToNBT for f32 {
@@ -76,11 +124,22 @@ impl ToNBT for f32 {
     fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_f32(*self)
     }
+
+    #[cfg(feature = "simd")]
+    fn write_elements<W: Write>(elements: &[Self], writer: &mut W) -> Result<()> {
+        crate::simd::write_be::<Self, 4, W>(elements, writer)
+    }
 }
 impl<'de> FromNBT<'de> for f32 {
     fn read<R: Read<'de>>(tag: u8, reader: &mut R) -> Result<Self> {
         expect(tag, TAG_FLOAT)?;
         reader.read_f32()
+    }
+
+    #[cfg(feature = "simd")]
+    fn read_elements<R: Read<'de>>(element: u8, len: usize, reader: &mut R) -> Result<Vec<Self>> {
+        expect(element, TAG_FLOAT)?;
+        crate::simd::read_be_elements::<Self, 4, R>(len, reader, <Self>::from_be_bytes)
     }
 }
 impl ToNBT for f64 {
@@ -88,11 +147,22 @@ impl ToNBT for f64 {
     fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_f64(*self)
     }
+
+    #[cfg(feature = "simd")]
+    fn write_elements<W: Write>(elements: &[Self], writer: &mut W) -> Result<()> {
+        crate::simd::write_be::<Self, 8, W>(elements, writer)
+    }
 }
 impl<'de> FromNBT<'de> for f64 {
     fn read<R: Read<'de>>(tag: u8, reader: &mut R) -> Result<Self> {
         expect(tag, TAG_DOUBLE)?;
         reader.read_f64()
+    }
+
+    #[cfg(feature = "simd")]
+    fn read_elements<R: Read<'de>>(element: u8, len: usize, reader: &mut R) -> Result<Vec<Self>> {
+        expect(element, TAG_DOUBLE)?;
+        crate::simd::read_be_elements::<Self, 8, R>(len, reader, <Self>::from_be_bytes)
     }
 }
 impl ToNBT for u8 {
@@ -101,11 +171,26 @@ impl ToNBT for u8 {
     fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_i8(self.cast_signed())
     }
+
+    #[cfg(feature = "simd")]
+    fn write_elements<W: Write>(elements: &[Self], writer: &mut W) -> Result<()> {
+        writer.write_bytes(elements)
+    }
 }
 impl<'de> FromNBT<'de> for u8 {
     fn read<R: Read<'de>>(tag: u8, reader: &mut R) -> Result<Self> {
         expect(tag, TAG_BYTE)?;
         reader.read_i8().map(<i8>::cast_unsigned)
+    }
+
+    #[cfg(feature = "simd")]
+    fn read_elements<R: Read<'de>>(element: u8, len: usize, reader: &mut R) -> Result<Vec<Self>> {
+        expect(element, TAG_BYTE)?;
+        let bytes = reader.read_bytes(len)?;
+        if bytes.len() != len {
+            return Err(Error::unexpected_eof());
+        }
+        Ok(bytes.into_owned())
     }
 }
 impl ToNBT for u16 {
@@ -113,11 +198,22 @@ impl ToNBT for u16 {
     fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_i16(self.cast_signed())
     }
+
+    #[cfg(feature = "simd")]
+    fn write_elements<W: Write>(elements: &[Self], writer: &mut W) -> Result<()> {
+        crate::simd::write_be::<Self, 2, W>(elements, writer)
+    }
 }
 impl<'de> FromNBT<'de> for u16 {
     fn read<R: Read<'de>>(tag: u8, reader: &mut R) -> Result<Self> {
         expect(tag, TAG_SHORT)?;
         reader.read_i16().map(<i16>::cast_unsigned)
+    }
+
+    #[cfg(feature = "simd")]
+    fn read_elements<R: Read<'de>>(element: u8, len: usize, reader: &mut R) -> Result<Vec<Self>> {
+        expect(element, TAG_SHORT)?;
+        crate::simd::read_be_elements::<Self, 2, R>(len, reader, <Self>::from_be_bytes)
     }
 }
 impl ToNBT for u32 {
@@ -125,11 +221,22 @@ impl ToNBT for u32 {
     fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_i32(self.cast_signed())
     }
+
+    #[cfg(feature = "simd")]
+    fn write_elements<W: Write>(elements: &[Self], writer: &mut W) -> Result<()> {
+        crate::simd::write_be::<Self, 4, W>(elements, writer)
+    }
 }
 impl<'de> FromNBT<'de> for u32 {
     fn read<R: Read<'de>>(tag: u8, reader: &mut R) -> Result<Self> {
         expect(tag, TAG_INT)?;
         reader.read_i32().map(<i32>::cast_unsigned)
+    }
+
+    #[cfg(feature = "simd")]
+    fn read_elements<R: Read<'de>>(element: u8, len: usize, reader: &mut R) -> Result<Vec<Self>> {
+        expect(element, TAG_INT)?;
+        crate::simd::read_be_elements::<Self, 4, R>(len, reader, <Self>::from_be_bytes)
     }
 }
 impl ToNBT for u64 {
@@ -137,11 +244,22 @@ impl ToNBT for u64 {
     fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_i64(self.cast_signed())
     }
+
+    #[cfg(feature = "simd")]
+    fn write_elements<W: Write>(elements: &[Self], writer: &mut W) -> Result<()> {
+        crate::simd::write_be::<Self, 8, W>(elements, writer)
+    }
 }
 impl<'de> FromNBT<'de> for u64 {
     fn read<R: Read<'de>>(tag: u8, reader: &mut R) -> Result<Self> {
         expect(tag, TAG_LONG)?;
         reader.read_i64().map(<i64>::cast_unsigned)
+    }
+
+    #[cfg(feature = "simd")]
+    fn read_elements<R: Read<'de>>(element: u8, len: usize, reader: &mut R) -> Result<Vec<Self>> {
+        expect(element, TAG_LONG)?;
+        crate::simd::read_be_elements::<Self, 8, R>(len, reader, <Self>::from_be_bytes)
     }
 }
 impl ToNBT for bool {
@@ -299,23 +417,20 @@ pub(crate) fn write_list<T: ToNBT, W: Write>(items: &[T], writer: &mut W) -> Res
     let element = items.first().map_or(TAG_END, |_| T::TAG);
     writer.write_tag(element)?;
     writer.write_len(items.len())?;
-    for item in items {
-        item.write(writer)?;
-    }
-    Ok(())
+    T::write_elements(items, writer)
 }
 pub(crate) fn read_list<'de, T: FromNBT<'de>, R: Read<'de>>(reader: &mut R) -> Result<Vec<T>> {
     let (element, len) = reader.read_list_header()?;
-    if element == TAG_END && len != 0 {
-        return Err(Error::list_of_end());
+    if element == TAG_END {
+        // Old chunks store empty lists as lists of End; a longer one would
+        // be a cheap way to allocate without bound.
+        return if len == 0 {
+            Ok(Vec::new())
+        } else {
+            Err(Error::list_of_end())
+        };
     }
-    reader.nest(|reader| {
-        let mut out = Vec::new();
-        for _ in 0..len {
-            out.push(T::read(element, reader)?);
-        }
-        Ok(out)
-    })
+    reader.nest(|reader| T::read_elements(element, len, reader))
 }
 impl<T: ToNBT> ToNBT for [T] {
     const TAG: u8 = TAG_LIST;

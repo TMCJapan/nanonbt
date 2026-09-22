@@ -158,6 +158,23 @@ pub trait ToNBT {
     /// Writes the payload, without the tag or the name.
     fn write<W: Write>(&self, writer: &mut W) -> Result<()>;
 
+    /// Writes a list's elements, the header already written.
+    ///
+    /// The default writes them one at a time. The numeric types override
+    /// this to write the whole payload in a few bulk writes, which settles
+    /// the byte order a vector at a time; an override must write exactly
+    /// `elements.len()` elements, each in the spelling its own
+    /// [`write`](ToNBT::write) uses.
+    fn write_elements<W: Write>(elements: &[Self], writer: &mut W) -> Result<()>
+    where
+        Self: Sized,
+    {
+        for element in elements {
+            element.write(writer)?;
+        }
+        Ok(())
+    }
+
     /// Writes a compound entry: the tag, the name, then the payload.
     fn write_entry<W: Write>(&self, name: &str, writer: &mut W) -> Result<()> {
         writer.write_tag(Self::TAG)?;
