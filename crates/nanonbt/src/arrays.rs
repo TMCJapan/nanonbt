@@ -154,7 +154,7 @@ pub trait ArrayOf<E>: Sized {
     }
 }
 /// Decodes `len` big-endian elements of `SIZE` bytes each.
-fn read_be<'de, T, const SIZE: usize, R: crate::Read<'de>>(
+fn read_be<'de, T: Copy, const SIZE: usize, R: crate::Read<'de>>(
     len: usize,
     reader: &mut R,
     decode: fn([u8; SIZE]) -> T,
@@ -163,12 +163,19 @@ fn read_be<'de, T, const SIZE: usize, R: crate::Read<'de>>(
         .checked_mul(SIZE)
         .ok_or_else(crate::Error::array_too_large)?;
     let bytes = reader.read_bytes(n)?;
-    Ok(bytes
-        .as_chunks::<SIZE>()
-        .0
-        .iter()
-        .map(|chunk| decode(*chunk))
-        .collect())
+    #[cfg(feature = "simd")]
+    {
+        Ok(crate::simd::decode_be::<T, SIZE>(&bytes, decode))
+    }
+    #[cfg(not(feature = "simd"))]
+    {
+        Ok(bytes
+            .as_chunks::<SIZE>()
+            .0
+            .iter()
+            .map(|chunk| decode(*chunk))
+            .collect())
+    }
 }
 /// How one spelling of an element is written and read as an array's payload.
 ///
@@ -202,10 +209,17 @@ impl Elements for u8 {
 impl Elements for i32 {
     fn write<W: crate::Write>(elements: &[Self], writer: &mut W) -> crate::Result<()> {
         writer.write_len(elements.len())?;
-        for element in elements {
-            writer.write_i32(*element)?;
+        #[cfg(feature = "simd")]
+        {
+            crate::simd::write_be::<Self, 4, W>(elements, writer)
         }
-        Ok(())
+        #[cfg(not(feature = "simd"))]
+        {
+            for element in elements {
+                writer.write_i32(*element)?;
+            }
+            Ok(())
+        }
     }
     fn read<'de, R: crate::Read<'de>>(len: usize, reader: &mut R) -> crate::Result<Vec<Self>> {
         read_be(len, reader, <Self>::from_be_bytes)
@@ -214,10 +228,17 @@ impl Elements for i32 {
 impl Elements for u32 {
     fn write<W: crate::Write>(elements: &[Self], writer: &mut W) -> crate::Result<()> {
         writer.write_len(elements.len())?;
-        for element in elements {
-            writer.write_i32((*element).cast_signed())?;
+        #[cfg(feature = "simd")]
+        {
+            crate::simd::write_be::<Self, 4, W>(elements, writer)
         }
-        Ok(())
+        #[cfg(not(feature = "simd"))]
+        {
+            for element in elements {
+                writer.write_i32((*element).cast_signed())?;
+            }
+            Ok(())
+        }
     }
     fn read<'de, R: crate::Read<'de>>(len: usize, reader: &mut R) -> crate::Result<Vec<Self>> {
         read_be(len, reader, <Self>::from_be_bytes)
@@ -226,10 +247,17 @@ impl Elements for u32 {
 impl Elements for i64 {
     fn write<W: crate::Write>(elements: &[Self], writer: &mut W) -> crate::Result<()> {
         writer.write_len(elements.len())?;
-        for element in elements {
-            writer.write_i64(*element)?;
+        #[cfg(feature = "simd")]
+        {
+            crate::simd::write_be::<Self, 8, W>(elements, writer)
         }
-        Ok(())
+        #[cfg(not(feature = "simd"))]
+        {
+            for element in elements {
+                writer.write_i64(*element)?;
+            }
+            Ok(())
+        }
     }
     fn read<'de, R: crate::Read<'de>>(len: usize, reader: &mut R) -> crate::Result<Vec<Self>> {
         read_be(len, reader, <Self>::from_be_bytes)
@@ -238,10 +266,17 @@ impl Elements for i64 {
 impl Elements for u64 {
     fn write<W: crate::Write>(elements: &[Self], writer: &mut W) -> crate::Result<()> {
         writer.write_len(elements.len())?;
-        for element in elements {
-            writer.write_i64((*element).cast_signed())?;
+        #[cfg(feature = "simd")]
+        {
+            crate::simd::write_be::<Self, 8, W>(elements, writer)
         }
-        Ok(())
+        #[cfg(not(feature = "simd"))]
+        {
+            for element in elements {
+                writer.write_i64((*element).cast_signed())?;
+            }
+            Ok(())
+        }
     }
     fn read<'de, R: crate::Read<'de>>(len: usize, reader: &mut R) -> crate::Result<Vec<Self>> {
         read_be(len, reader, <Self>::from_be_bytes)
@@ -410,24 +445,41 @@ impl IntArray {
     /// Reads big-endian elements, ignoring a trailing partial one.
     #[cfg(feature = "serde")]
     pub(crate) fn from_be_bytes(bytes: &[u8]) -> Self {
-        const SIZE: usize = size_of::<i32>();
-        let data = bytes
-            .as_chunks::<SIZE>()
-            .0
-            .iter()
-            .map(|chunk| <i32>::from_be_bytes(*chunk))
-            .collect();
-        Self { data }
+        #[cfg(feature = "simd")]
+        {
+            Self {
+                data: crate::simd::decode_be(bytes, <i32>::from_be_bytes),
+            }
+        }
+        #[cfg(not(feature = "simd"))]
+        {
+            const SIZE: usize = size_of::<i32>();
+            let data = bytes
+                .as_chunks::<SIZE>()
+                .0
+                .iter()
+                .map(|chunk| <i32>::from_be_bytes(*chunk))
+                .collect();
+            Self { data }
+        }
     }
     /// The elements as big-endian bytes, as NBT stores them.
     #[allow(dead_code)]
     pub(crate) fn to_be_bytes(&self) -> Vec<u8> {
-        const SIZE: usize = size_of::<i32>();
-        let mut bytes = Vec::with_capacity(self.data.len() * SIZE);
-        for element in &self.data {
-            bytes.extend_from_slice(&element.to_be_bytes());
+        #[cfg(feature = "simd")]
+        {
+            const SIZE: usize = size_of::<i32>();
+            crate::simd::to_be_vec::<i32, SIZE>(&self.data)
         }
-        bytes
+        #[cfg(not(feature = "simd"))]
+        {
+            const SIZE: usize = size_of::<i32>();
+            let mut bytes = Vec::with_capacity(self.data.len() * SIZE);
+            for element in &self.data {
+                bytes.extend_from_slice(&element.to_be_bytes());
+            }
+            bytes
+        }
     }
 }
 impl Deref for IntArray {
@@ -558,24 +610,41 @@ impl LongArray {
     /// Reads big-endian elements, ignoring a trailing partial one.
     #[cfg(feature = "serde")]
     pub(crate) fn from_be_bytes(bytes: &[u8]) -> Self {
-        const SIZE: usize = size_of::<i64>();
-        let data = bytes
-            .as_chunks::<SIZE>()
-            .0
-            .iter()
-            .map(|chunk| <i64>::from_be_bytes(*chunk))
-            .collect();
-        Self { data }
+        #[cfg(feature = "simd")]
+        {
+            Self {
+                data: crate::simd::decode_be(bytes, <i64>::from_be_bytes),
+            }
+        }
+        #[cfg(not(feature = "simd"))]
+        {
+            const SIZE: usize = size_of::<i64>();
+            let data = bytes
+                .as_chunks::<SIZE>()
+                .0
+                .iter()
+                .map(|chunk| <i64>::from_be_bytes(*chunk))
+                .collect();
+            Self { data }
+        }
     }
     /// The elements as big-endian bytes, as NBT stores them.
     #[allow(dead_code)]
     pub(crate) fn to_be_bytes(&self) -> Vec<u8> {
-        const SIZE: usize = size_of::<i64>();
-        let mut bytes = Vec::with_capacity(self.data.len() * SIZE);
-        for element in &self.data {
-            bytes.extend_from_slice(&element.to_be_bytes());
+        #[cfg(feature = "simd")]
+        {
+            const SIZE: usize = size_of::<i64>();
+            crate::simd::to_be_vec::<i64, SIZE>(&self.data)
         }
-        bytes
+        #[cfg(not(feature = "simd"))]
+        {
+            const SIZE: usize = size_of::<i64>();
+            let mut bytes = Vec::with_capacity(self.data.len() * SIZE);
+            for element in &self.data {
+                bytes.extend_from_slice(&element.to_be_bytes());
+            }
+            bytes
+        }
     }
 }
 impl Deref for LongArray {

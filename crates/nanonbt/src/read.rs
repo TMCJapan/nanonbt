@@ -7,7 +7,7 @@
 //! [`Read::read_cesu8`] borrows the raw bytes instead, so a string that is
 //! not UTF-8 borrows too.
 
-use alloc::borrow::Cow;
+use alloc::{borrow::Cow, vec::Vec};
 
 use nanocesu8::{Cesu8, from_java_cesu8};
 
@@ -84,6 +84,24 @@ pub trait Read<'de> {
 /// entry has already consumed, and reads the payload that follows.
 pub trait FromNBT<'de>: Sized {
     fn read<R: Read<'de>>(tag: u8, reader: &mut R) -> Result<Self>;
+
+    /// Reads `len` list elements of tag `element`, the header already read.
+    ///
+    /// The default reads them one at a time, growing the `Vec` as it goes.
+    /// The numeric types override this to read the whole payload at once,
+    /// which settles the byte order a vector at a time; an override must
+    /// read exactly `len` elements and refuse an element tag other than the
+    /// one its own [`read`](FromNBT::read) accepts.
+    ///
+    /// `element` is never [`TAG_END`](crate::TAG_END): the caller handles
+    /// the empty list of End before calling this.
+    fn read_elements<R: Read<'de>>(element: u8, len: usize, reader: &mut R) -> Result<Vec<Self>> {
+        let mut out = Vec::new();
+        for _ in 0..len {
+            out.push(Self::read(element, reader)?);
+        }
+        Ok(out)
+    }
 }
 
 /// A [`Read`] from a byte slice, borrowing from it where possible.

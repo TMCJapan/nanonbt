@@ -30,6 +30,8 @@ fastnbt = ["dep:fastnbt"]
 pumpkin-nbt = ["dep:pumpkin-nbt"]
 # Enable the simdnbt benchmarks.
 simdnbt = ["dep:simdnbt"]
+# Enable nanonbt's `simd` feature, to compare the vector decode.
+simd = ["nanonbt/simd"]
 
 [[bench]]
 name = "compare"

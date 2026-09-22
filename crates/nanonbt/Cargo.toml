@@ -12,7 +12,8 @@ default = ["derive"]
 derive = ["dep:nanonbt-derive"]
 # Keeps the `Serialize`/`Deserialize` implementations and `serde_compat`.
 serde = ["dep:serde"]
-# Vectorizes nanocesu8's string validation and encode fast-path scan.
+# Vectorizes nanocesu8's string validation and encode fast-path scan, and
+# settles array and numeric-list byte order a vector at a time.
 simd = ["nanocesu8/simd"]
 
 [dependencies]

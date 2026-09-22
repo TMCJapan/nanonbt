@@ -26,7 +26,9 @@
 //! The encoding is byte-for-byte the one [fastnbt](https://docs.rs/fastnbt)
 //! 2.6 produces for the same values, and the array types are fastnbt's. With
 //! the `serde` feature, the old `Serialize`/`Deserialize` implementations are
-//! kept as well, and `serde_compat` holds their entry points.
+//! kept as well, and `serde_compat` holds their entry points. The `simd`
+//! feature settles array and numeric-list byte order a vector at a time, on
+//! x86, aarch64 and wasm, and stays `no_std`.
 //!
 //! # The data model
 //!
@@ -104,6 +106,8 @@ mod impls;
 pub mod read;
 #[cfg(feature = "serde")]
 pub mod ser;
+#[cfg(feature = "simd")]
+mod simd;
 mod tag;
 pub mod write;
 
