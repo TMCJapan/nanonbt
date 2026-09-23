@@ -134,7 +134,7 @@ pub(crate) fn read_be_elements<'de, T: Copy, const SIZE: usize, R: Read<'de>>(
 
 /// Writes native-order `SIZE`-byte elements as big-endian, in as few writes
 /// as the writer takes them.
-pub(crate) fn write_be<T: Copy, const SIZE: usize, W: Write>(
+pub(crate) fn write_be<T: Copy, const SIZE: usize, W: Write + ?Sized>(
     elements: &[T],
     writer: &mut W,
 ) -> Result<()> {
@@ -149,15 +149,6 @@ pub(crate) fn write_be<T: Copy, const SIZE: usize, W: Write>(
         writer.write_bytes(staged)?;
     }
     Ok(())
-}
-
-/// The elements as big-endian bytes, in one `Vec`.
-pub(crate) fn to_be_vec<T: Copy, const SIZE: usize>(elements: &[T]) -> Vec<u8> {
-    const { assert!(SIZE == size_of::<T>()) };
-    let mut out = Vec::with_capacity(size_of_val(elements));
-    out.extend_from_slice(as_bytes(elements));
-    swap_bytes_in_place::<SIZE>(&mut out);
-    out
 }
 
 /// The bytes of a slice of scalar elements, as they lie in memory.

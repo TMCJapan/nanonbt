@@ -3,7 +3,7 @@
 
 use std::{borrow::Cow, collections::BTreeMap, vec, vec::Vec};
 
-use nanonbt::{ByteArray, FromNBT, IntArray, LongArray, ToNBT, from_bytes, to_bytes};
+use nanonbt::{Cesu8, FromNBT, I32Be, I64Be, ToNBT, U64Be, Write, Writer, from_bytes, to_bytes};
 
 #[derive(FromNBT, ToNBT, PartialEq, Debug)]
 struct Basic {
@@ -72,9 +72,12 @@ fn collections_round_trip() {
         array: [u16; 3],
         map: BTreeMap<String, i16>,
         empty_map: BTreeMap<String, i16>,
-        bytes: ByteArray,
-        ints: IntArray,
-        longs: LongArray,
+        #[nbt(array = "byte")]
+        bytes: Vec<i8>,
+        #[nbt(array = "int")]
+        ints: Vec<i32>,
+        #[nbt(array = "long")]
+        longs: Vec<i64>,
     }
 
     let value = Collections {
@@ -84,9 +87,9 @@ fn collections_round_trip() {
         array: [1, 2, 3],
         map: BTreeMap::from([("a".into(), 1), ("b".into(), -2)]),
         empty_map: BTreeMap::new(),
-        bytes: ByteArray::new(vec![-1, 0, 1]),
-        ints: IntArray::new(vec![i32::MIN, 0, i32::MAX]),
-        longs: LongArray::new(vec![i64::MIN, i64::MAX]),
+        bytes: vec![-1, 0, 1],
+        ints: vec![i32::MIN, 0, i32::MAX],
+        longs: vec![i64::MIN, i64::MAX],
     };
     let bytes = to_bytes(&value).unwrap();
     assert_eq!(from_bytes::<Collections>(&bytes).unwrap(), value);
@@ -286,19 +289,28 @@ fn array_fields_are_written_and_read_as_arrays() {
     };
     let bytes = to_bytes(&value).unwrap();
 
-    // The document the array types write for the same values.
-    #[derive(ToNBT)]
-    struct Native {
-        bytes: ByteArray,
-        ints: IntArray,
-        longs: LongArray,
-    }
-    let native = Native {
-        bytes: ByteArray::new(vec![0, 1, -1]),
-        ints: IntArray::new(vec![0, 1, -1]),
-        longs: LongArray::new(vec![i64::MIN, i64::MAX]),
-    };
-    assert_eq!(bytes, to_bytes(&native).unwrap());
+    // The document the Write array methods write for the same values.
+    let mut expected = Vec::new();
+    let mut writer = Writer::new(&mut expected);
+    let root = Cesu8::new(b"").unwrap();
+    let name = |name: &'static [u8]| Cesu8::new(name).unwrap();
+    writer.write_tag(nanonbt::TAG_COMPOUND).unwrap();
+    writer.write_name(root).unwrap();
+    writer.write_tag(nanonbt::TAG_BYTE_ARRAY).unwrap();
+    writer.write_name(name(b"bytes")).unwrap();
+    writer.write_byte_array([0_i8, 1, -1]).unwrap();
+    writer.write_tag(nanonbt::TAG_INT_ARRAY).unwrap();
+    writer.write_name(name(b"ints")).unwrap();
+    writer
+        .write_int_array([I32Be::new(0), I32Be::new(1), I32Be::new(-1)])
+        .unwrap();
+    writer.write_tag(nanonbt::TAG_LONG_ARRAY).unwrap();
+    writer.write_name(name(b"longs")).unwrap();
+    writer
+        .write_long_array([I64Be::new(i64::MIN), I64Be::new(i64::MAX)])
+        .unwrap();
+    writer.write_end().unwrap();
+    assert_eq!(bytes, expected);
 
     assert_eq!(from_bytes::<Arrays>(&bytes).unwrap(), value);
 }
@@ -317,6 +329,10 @@ fn array_fields_take_fixed_arrays_options_and_borrows() {
         present: Option<Vec<u8>>,
         #[nbt(array = "byte")]
         borrowed: &'a [i8],
+        #[nbt(array = "int")]
+        big: Vec<I32Be>,
+        #[nbt(array = "long")]
+        unsigned_big: [U64Be; 2],
     }
 
     let value = Arrays {
@@ -325,6 +341,8 @@ fn array_fields_take_fixed_arrays_options_and_borrows() {
         absent: None,
         present: Some(vec![5, 6]),
         borrowed: &[-1, 0],
+        big: vec![I32Be::new(-1), I32Be::new(2)],
+        unsigned_big: [U64Be::new(1), U64Be::new(u64::MAX)],
     };
     let bytes = to_bytes(&value).unwrap();
     assert_eq!(from_bytes::<Arrays<'_>>(&bytes).unwrap(), value);

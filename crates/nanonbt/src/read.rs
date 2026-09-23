@@ -15,6 +15,7 @@ use nanocesu8::Cesu8;
 
 use crate::{
     DeOpts,
+    be::{I32Be, I64Be, as_i8},
     error::{Error, Result},
     tag::{
         TAG_BYTE, TAG_BYTE_ARRAY, TAG_COMPOUND, TAG_DOUBLE, TAG_END, TAG_FLOAT, TAG_INT,
@@ -75,6 +76,52 @@ pub trait Read<'de> {
 
     /// Reads `len` raw payload bytes.
     fn read_bytes(&mut self, len: usize) -> Result<Cow<'de, [u8]>>;
+
+    /// Reads a byte array's payload, `len` elements, borrowing when it can.
+    ///
+    /// The default reads the bytes and reinterprets them, so a reader that
+    /// lends its input hands out a borrow and one that cannot owns the
+    /// elements. The `i32` length before them is the caller's to read.
+    fn read_byte_array(&mut self, len: usize) -> Result<Cow<'de, [i8]>> {
+        match self.read_bytes(len)? {
+            Cow::Borrowed(bytes) => Ok(Cow::Borrowed(as_i8(bytes))),
+            Cow::Owned(bytes) => Ok(Cow::Owned(as_i8(&bytes).to_vec())),
+        }
+    }
+
+    /// Reads an int array's payload, `len` elements, big-endian.
+    fn read_int_array(&mut self, len: usize) -> Result<Cow<'de, [I32Be]>> {
+        let n = len
+            .checked_mul(size_of::<I32Be>())
+            .ok_or_else(Error::array_too_large)?;
+        match self.read_bytes(n)? {
+            Cow::Borrowed(bytes) => I32Be::slice_from_bytes(bytes)
+                .map(Cow::Borrowed)
+                .ok_or_else(Error::unexpected_eof),
+            Cow::Owned(bytes) => Ok(Cow::Owned(
+                I32Be::slice_from_bytes(&bytes)
+                    .ok_or_else(Error::unexpected_eof)?
+                    .to_vec(),
+            )),
+        }
+    }
+
+    /// Reads a long array's payload, `len` elements, big-endian.
+    fn read_long_array(&mut self, len: usize) -> Result<Cow<'de, [I64Be]>> {
+        let n = len
+            .checked_mul(size_of::<I64Be>())
+            .ok_or_else(Error::array_too_large)?;
+        match self.read_bytes(n)? {
+            Cow::Borrowed(bytes) => I64Be::slice_from_bytes(bytes)
+                .map(Cow::Borrowed)
+                .ok_or_else(Error::unexpected_eof),
+            Cow::Owned(bytes) => Ok(Cow::Owned(
+                I64Be::slice_from_bytes(&bytes)
+                    .ok_or_else(Error::unexpected_eof)?
+                    .to_vec(),
+            )),
+        }
+    }
 
     /// Skips a value by its structure alone, decoding nothing.
     fn skip(&mut self, tag: u8) -> Result<()>;

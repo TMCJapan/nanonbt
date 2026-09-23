@@ -5,7 +5,7 @@
 //!
 //! # What is proven
 //!
-//! - `ser`: for each of 48 shapes, `nanonbt::to_bytes` and
+//! - `ser`: for each of 45 shapes, `nanonbt::to_bytes` and
 //!   `fastnbt::to_bytes` both succeed with the same bytes, or both fail, for
 //!   every value. A shape is a type deriving both `ToNBT` and `Serialize`
 //!   whose structure (fields, lengths, names) is fixed and whose values
@@ -14,10 +14,10 @@
 //!   shape passes by both crates refusing it. The shapes cover every
 //!   primitive, `Option` in and between entries, `Vec`s of 0 to 2 scalars,
 //!   fixed arrays, lists of lists, a struct in a struct, unit variants, and
-//!   the refusals: roots that are not compounds. Separately, for
-//!   `ByteArray`, `IntArray` and `LongArray` of 0 to 2 symbolic elements, in
-//!   an entry and at the root, nanonbt's type through nanonbt gives what
-//!   fastnbt's type through fastnbt gives.
+//!   the refusals: roots that are not compounds. Separately, for arrays of 0
+//!   to 2 symbolic elements in an entry, nanonbt's derived
+//!   `#[nbt(array = ...)]` field and fastnbt's array type write the same
+//!   bytes.
 //! - `de`: for each of 42 documents, written by hand with fixed tags,
 //!   names and lengths, and a payload symbolic only where the document is
 //!   read, `nanonbt::from_bytes` and `fastnbt::from_bytes` read the same
@@ -27,11 +27,11 @@
 //!   and fastnbt refuses when negative, readings fastnbt's visitors would
 //!   convert but this crate refuses (a `Short` as a `bool`, an `Int` as an
 //!   `i64`), lists of 0 to 2 Ints and the list of End that old chunks use
-//!   for an empty one, both crates' array types from arrays of 0 to 2
-//!   elements, read through both crates, and the same arrays into a `Vec`,
-//!   which both refuse, an int array of 4 as `i128` and `u128`, a compound
-//!   in a compound, network NBT, entries the struct has no field for, and
-//!   `Option` present and absent.
+//!   for an empty one, arrays of 0 to 2 elements read into nanonbt's derived
+//!   array fields and fastnbt's array types, and the same arrays into a
+//!   `Vec`, which both refuse, an int array of 4 as `i128` and `u128`, a
+//!   compound in a compound, network NBT, entries the struct has no field
+//!   for, and `Option` present and absent.
 //! - `value`: for scalars, `nanonbt::to_value` and `fastnbt::to_value` make
 //!   the same value, and `from_value` reads their own `Value` into the same
 //!   `T`: every scalar variant into the type of its own width, including
@@ -41,15 +41,15 @@
 //! - `stubs`: the stand-ins that all other harnesses run with agree with
 //!   the real functions on every input: `core::slice::memchr::memchr` at
 //!   each length the harnesses give it, `core::str::from_utf8` up to 8
-//!   bytes, past which it only sees the array tokens, valid `&'static str`s.
+//!   bytes, past which it only sees the short keys and names of the shapes.
 //!
 //! Error messages are never compared, which is what makes stubbing out
 //! `core::fmt` sound.
 //!
 //! Shapes that nanonbt's data model cannot express — units, tuple and
 //! struct variants, `serialize_bytes`, `Option` in a list, non-string map
-//! keys, the fastnbt array tokens — have no harness: the derive refuses
-//! them at compile time, so no runtime test can reach them.
+//! keys — have no harness: the derive refuses them at compile time, so no
+//! runtime test can reach them.
 //!
 //! # What is not, and why
 //!
@@ -79,7 +79,7 @@
 //!
 //! Kani 0.67.0 builds with rustc 1.93 and refuses the workspace's
 //! `rust-version`, so lower it first, in a scratch copy or a CI checkout.
-//! All 134 harnesses take about 19 minutes with four jobs:
+//! All 131 harnesses take about 19 minutes with four jobs:
 //!
 //! ```sh
 //! sed -i 's/^rust-version = .*/rust-version = "1.93"/' Cargo.toml

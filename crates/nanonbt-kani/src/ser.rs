@@ -194,40 +194,40 @@ proofs! {
     fn root_unit_variant() unwind 4 { check(&kani::any::<Unit>(), err) }
 }
 
-/// Array harnesses: `[len]` elements in a compound entry, or `root` for the
-/// array alone, which cannot be a root.
+/// Array harnesses: nanonbt writes the elements from a derived
+/// `#[nbt(array = "...")]` field and fastnbt from its own array type, and
+/// the two documents must agree.
 macro_rules! arrays {
-    ($($name:ident: $array:ident<$element:ty>[$len:literal] $($root:ident)?;)*) => {
+    ($($name:ident: $attribute:literal, $array:ident<$element:ty>[$len:literal];)*) => {
         proofs! {
             $(
                 fn $name() unwind 22 {
+                    #[derive(ToNBT)]
+                    struct Nano {
+                        #[nbt(array = $attribute)]
+                        v: Vec<$element>,
+                    }
+
                     let data = any_vec::<$element, $len>();
-                    let nano = nanonbt::$array::new(data.clone());
-                    let fast = fastnbt::$array::new(data);
-                    arrays!(@check nano fast $($root)?);
+                    check_arrays(
+                        &Nano { v: data.clone() },
+                        &One { v: fastnbt::$array::new(data) },
+                        true,
+                    );
                 }
             )*
         }
     };
-    (@check $nano:ident $fast:ident) => {
-        check_arrays(&One { v: $nano }, &One { v: $fast }, true)
-    };
-    (@check $nano:ident $fast:ident root) => {
-        check_arrays(&$nano, &$fast, false)
-    };
 }
 
 arrays! {
-    byte_array_0: ByteArray<i8>[0];
-    byte_array_1: ByteArray<i8>[1];
-    byte_array_2: ByteArray<i8>[2];
-    int_array_0: IntArray<i32>[0];
-    int_array_1: IntArray<i32>[1];
-    int_array_2: IntArray<i32>[2];
-    long_array_0: LongArray<i64>[0];
-    long_array_1: LongArray<i64>[1];
-    long_array_2: LongArray<i64>[2];
-    root_byte_array: ByteArray<i8>[1] root;
-    root_int_array: IntArray<i32>[1] root;
-    root_long_array: LongArray<i64>[1] root;
+    byte_array_0: "byte", ByteArray<i8>[0];
+    byte_array_1: "byte", ByteArray<i8>[1];
+    byte_array_2: "byte", ByteArray<i8>[2];
+    int_array_0: "int", IntArray<i32>[0];
+    int_array_1: "int", IntArray<i32>[1];
+    int_array_2: "int", IntArray<i32>[2];
+    long_array_0: "long", LongArray<i64>[0];
+    long_array_1: "long", LongArray<i64>[1];
+    long_array_2: "long", LongArray<i64>[2];
 }

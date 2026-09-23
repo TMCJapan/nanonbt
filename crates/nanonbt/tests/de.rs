@@ -177,9 +177,12 @@ fn arrays_are_interchangeable_with_fastnbt() {
 
     #[derive(FromNBT, PartialEq, Debug)]
     struct Nano {
-        bytes: nanonbt::ByteArray,
-        ints: nanonbt::IntArray,
-        longs: nanonbt::LongArray,
+        #[nbt(array = "byte")]
+        bytes: Vec<i8>,
+        #[nbt(array = "int")]
+        ints: Vec<i32>,
+        #[nbt(array = "long")]
+        longs: Vec<i64>,
     }
 
     #[derive(Deserialize, FromNBT, PartialEq, Debug)]
@@ -197,9 +200,9 @@ fn arrays_are_interchangeable_with_fastnbt() {
     assert_eq!(
         nanonbt::from_bytes::<Nano>(&bytes).unwrap(),
         Nano {
-            bytes: nanonbt::ByteArray::new(vec![1, -1]),
-            ints: nanonbt::IntArray::new(vec![i32::MIN, 2]),
-            longs: nanonbt::LongArray::new(vec![]),
+            bytes: vec![1, -1],
+            ints: vec![i32::MIN, 2],
+            longs: vec![],
         }
     );
 }
@@ -213,9 +216,24 @@ fn array_lengths_are_checked_like_fastnbt() {
     }
 
     #[derive(FromNBT)]
-    struct Nano<T> {
+    struct NanoBytes {
         #[allow(dead_code)]
-        a: T,
+        #[nbt(array = "byte")]
+        a: Vec<i8>,
+    }
+
+    #[derive(FromNBT)]
+    struct NanoInts {
+        #[allow(dead_code)]
+        #[nbt(array = "int")]
+        a: Vec<i32>,
+    }
+
+    #[derive(FromNBT)]
+    struct NanoLongs {
+        #[allow(dead_code)]
+        #[nbt(array = "long")]
+        a: Vec<i64>,
     }
 
     let array = |tag: u8, len: i32, payload: &[u8]| {
@@ -226,23 +244,50 @@ fn array_lengths_are_checked_like_fastnbt() {
         bytes
     };
     for tag in [7, 11, 12] {
-        assert_same_outcome::<Fast<fastnbt::ByteArray>, Nano<nanonbt::ByteArray>>(&array(
-            tag,
-            -1,
-            &[],
-        ));
-        assert_same_outcome::<Fast<fastnbt::IntArray>, Nano<nanonbt::IntArray>>(&array(
-            tag, 1, &[0; 3],
-        ));
-        assert_same_outcome::<Fast<fastnbt::LongArray>, Nano<nanonbt::LongArray>>(&array(
-            tag, 1, &[0; 8],
-        ));
-        assert_same_outcome::<Fast<fastnbt::IntArray>, Nano<nanonbt::IntArray>>(&array(
-            tag,
-            100_000_001,
-            &[],
-        ));
+        assert_same_outcome::<Fast<fastnbt::ByteArray>, NanoBytes>(&array(tag, -1, &[]));
+        assert_same_outcome::<Fast<fastnbt::IntArray>, NanoInts>(&array(tag, 1, &[0; 3]));
+        assert_same_outcome::<Fast<fastnbt::LongArray>, NanoLongs>(&array(tag, 1, &[0; 8]));
+        assert_same_outcome::<Fast<fastnbt::IntArray>, NanoInts>(&array(tag, 100_000_001, &[]));
     }
+}
+
+/// NBT arrays have no serde spelling of their own, so their payload reads as
+/// raw bytes, the length already stripped.
+#[cfg(feature = "serde")]
+#[test]
+fn serde_reads_arrays_as_raw_bytes() {
+    #[derive(Serialize)]
+    struct Source {
+        bytes: fastnbt::ByteArray,
+        ints: fastnbt::IntArray,
+        longs: fastnbt::LongArray,
+    }
+
+    #[derive(Deserialize, PartialEq, Debug)]
+    struct Raw {
+        bytes: serde_bytes::ByteBuf,
+        ints: serde_bytes::ByteBuf,
+        longs: serde_bytes::ByteBuf,
+    }
+
+    let bytes = encode(&Source {
+        bytes: fastnbt::ByteArray::new(vec![1, -1, i8::MIN]),
+        ints: fastnbt::IntArray::new(vec![i32::MIN, 0, i32::MAX]),
+        longs: fastnbt::LongArray::new(vec![i64::MIN, -1, i64::MAX]),
+    });
+    let raw: Raw = nanonbt::serde_compat::from_bytes(&bytes).unwrap();
+
+    assert_eq!(&raw.bytes[..], &[1, 255, 128]);
+    let mut expected = Vec::new();
+    for value in [i32::MIN, 0, i32::MAX] {
+        expected.extend_from_slice(&value.to_be_bytes());
+    }
+    assert_eq!(&raw.ints[..], &expected[..]);
+    expected.clear();
+    for value in [i64::MIN, -1, i64::MAX] {
+        expected.extend_from_slice(&value.to_be_bytes());
+    }
+    assert_eq!(&raw.longs[..], &expected[..]);
 }
 
 #[test]

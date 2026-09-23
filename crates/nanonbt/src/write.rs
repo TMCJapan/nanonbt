@@ -10,6 +10,7 @@ use alloc::vec::Vec;
 use nanocesu8::Cesu8;
 
 use crate::{
+    arrays::{ByteArray, IntArray, LongArray},
     error::{Error, Result},
     tag::TAG_END,
 };
@@ -61,6 +62,32 @@ pub trait Write {
 
     /// Writes raw payload bytes, as an array's elements already encoded.
     fn write_bytes(&mut self, bytes: &[u8]) -> Result<()>;
+
+    /// Writes a byte array's payload: the `i32` length, then the elements.
+    ///
+    /// Any element spelling [`ByteArray`] holds goes in — an `i8` or `u8`
+    /// slice, array or `Vec` — and bytes have no endianness to settle, so
+    /// they go out as they are. The tag and the name around them are the
+    /// caller's, as they are for any other payload.
+    fn write_byte_array<E, T: ByteArray<E>>(&mut self, array: T) -> Result<()> {
+        array.write_payload(self)
+    }
+
+    /// Writes an int array's payload: the `i32` length, then the elements.
+    ///
+    /// Any element spelling [`IntArray`] holds goes in: `i32`, `u32`,
+    /// [`I32Be`](crate::I32Be) or [`U32Be`](crate::U32Be).
+    fn write_int_array<E, T: IntArray<E>>(&mut self, array: T) -> Result<()> {
+        array.write_payload(self)
+    }
+
+    /// Writes a long array's payload: the `i32` length, then the elements.
+    ///
+    /// Any element spelling [`LongArray`] holds goes in: `i64`, `u64`,
+    /// [`I64Be`](crate::I64Be) or [`U64Be`](crate::U64Be).
+    fn write_long_array<E, T: LongArray<E>>(&mut self, array: T) -> Result<()> {
+        array.write_payload(self)
+    }
 }
 
 /// A [`Write`] into a byte vector.

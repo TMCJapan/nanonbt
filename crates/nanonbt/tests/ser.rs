@@ -179,39 +179,37 @@ fn unit_enums_are_strings() {
 fn non_compound_roots_are_refused() {
     assert!(nanonbt::to_bytes(&1i32).is_err());
     assert!(nanonbt::to_bytes(&vec![1i32]).is_err());
-    assert!(nanonbt::to_bytes(&nanonbt::ByteArray::new(vec![1])).is_err());
     assert!(fastnbt::to_bytes(&1i32).is_err());
 }
 
 #[test]
-fn array_types_are_interchangeable_with_fastnbt() {
+fn array_fields_are_interchangeable_with_fastnbt() {
     #[derive(Serialize)]
     struct Fast {
         bytes: fastnbt::ByteArray,
         ints: fastnbt::IntArray,
         longs: fastnbt::LongArray,
-        many: Vec<fastnbt::LongArray>,
     }
 
     #[derive(ToNBT)]
     struct Nano {
-        bytes: nanonbt::ByteArray,
-        ints: nanonbt::IntArray,
-        longs: nanonbt::LongArray,
-        many: Vec<nanonbt::LongArray>,
+        #[nbt(array = "byte")]
+        bytes: Vec<i8>,
+        #[nbt(array = "int")]
+        ints: Vec<i32>,
+        #[nbt(array = "long")]
+        longs: Vec<i64>,
     }
 
     let fast = Fast {
         bytes: fastnbt::ByteArray::new(vec![1, -1]),
         ints: fastnbt::IntArray::new(vec![]),
         longs: fastnbt::LongArray::new(vec![i64::MIN]),
-        many: vec![fastnbt::LongArray::new(vec![1, 2])],
     };
     let nano = Nano {
-        bytes: nanonbt::ByteArray::new(vec![1, -1]),
-        ints: nanonbt::IntArray::new(vec![]),
-        longs: nanonbt::LongArray::new(vec![i64::MIN]),
-        many: vec![nanonbt::LongArray::new(vec![1, 2])],
+        bytes: vec![1, -1],
+        ints: vec![],
+        longs: vec![i64::MIN],
     };
 
     let expected = fastnbt::to_bytes(&fast).unwrap();

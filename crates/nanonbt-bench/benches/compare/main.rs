@@ -39,11 +39,12 @@
 //! accessors. NBT has no short array, so 16-bit elements are lists, and
 //! `fastnbt` has no borrowed list to read them with.
 //!
-//! `nanonbt` has three entries: `nanonbt-serde` uses the `serde` feature,
-//! `nanonbt-derive` the owned `FromNBT`/`ToNBT` derive, and `nanonbt-borrow` a
-//! derived struct that borrows strings and arrays from the input. The borrowed
-//! struct writes those borrowed arrays as lists, one byte longer than the
-//! array tags it read, so its throughput is the length it produces.
+//! `nanonbt` has three entries: `nanonbt-serde` uses the `serde` feature on
+//! the array-free documents, `nanonbt-derive` the owned `FromNBT`/`ToNBT`
+//! derive, and `nanonbt-borrow` a derived struct that borrows strings and
+//! arrays from the input. The borrowed struct writes those borrowed arrays as
+//! lists, one byte longer than the array tags it read, so its throughput is
+//! the length it produces.
 //!
 //! This crate is outside the root workspace because `simdnbt` uses nightly
 //! features, and the rest of the repository pins a stable toolchain. Run it

@@ -80,11 +80,11 @@ pub fn memchr(x: u8, text: &[u8]) -> Option<usize> {
 /// The stubs against the real functions, on every input of each length.
 ///
 /// The lengths are those of the inputs the harnesses produce: keys and
-/// variant names of 1 to 3 bytes, array tokens of 19 and 20, the empty root
-/// name, and a byte for the decoder. `memchr` sees all of them. Core's
-/// `from_utf8` does not finish in 4 minutes on 16 symbolic bytes, even
-/// ASCII ones, so that stub is checked only up to 8; past that it sees only
-/// array tokens, `&'static str`s, for which both return `Ok` by definition.
+/// variant names of 1 to 3 bytes, the empty root name, and a byte for the
+/// decoder. `memchr` sees all of them. Core's `from_utf8` does not finish in
+/// 4 minutes on 16 symbolic bytes, even ASCII ones, so that stub is checked
+/// only up to 8; past that it sees only those short keys and names, for
+/// which both return `Ok` by definition.
 macro_rules! agreement {
     ($($name:ident: $check:ident($len:literal) unwind $unwind:tt;)*) => {
         $(

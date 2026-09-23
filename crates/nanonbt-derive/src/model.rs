@@ -161,8 +161,11 @@ fn array_of(kind: ArrayKind, ty: &Type) -> Result<Array> {
     })
 }
 
-/// The integer primitives, which name an NBT array's elements.
-const ARRAY_ELEMENTS: [&str; 6] = ["i8", "u8", "i32", "u32", "i64", "u64"];
+/// The integer primitives and big-endian wrappers that name an NBT array's
+/// elements.
+const ARRAY_ELEMENTS: [&str; 10] = [
+    "i8", "u8", "i32", "u32", "i64", "u64", "I32Be", "U32Be", "I64Be", "U64Be",
+];
 
 /// The other primitives, which no NBT array holds.
 const OTHER_PRIMITIVES: [&str; 9] = [
@@ -170,11 +173,11 @@ const OTHER_PRIMITIVES: [&str; 9] = [
 ];
 
 /// The element type names an NBT array can hold, by kind.
-const fn expected_elements(kind: ArrayKind) -> [&'static str; 2] {
+const fn expected_elements(kind: ArrayKind) -> &'static [&'static str] {
     match kind {
-        ArrayKind::Byte => ["i8", "u8"],
-        ArrayKind::Int => ["i32", "u32"],
-        ArrayKind::Long => ["i64", "u64"],
+        ArrayKind::Byte => &["i8", "u8"],
+        ArrayKind::Int => &["i32", "u32", "I32Be", "U32Be"],
+        ArrayKind::Long => &["i64", "u64", "I64Be", "U64Be"],
     }
 }
 
@@ -189,11 +192,11 @@ fn check_element(kind: ArrayKind, element: &Type) -> Result<()> {
         return Ok(());
     }
     if ARRAY_ELEMENTS.contains(&name.as_str()) || OTHER_PRIMITIVES.contains(&name.as_str()) {
-        let [signed, unsigned] = expected;
+        let expected = expected.join(", ");
         return Err(Error::new_spanned(
             element,
             format!(
-                "an `array = \"{}\"` field holds {signed} or {unsigned} elements, not `{name}`",
+                "an `array = \"{}\"` field holds {expected} elements, not `{name}`",
                 kind.name()
             ),
         ));

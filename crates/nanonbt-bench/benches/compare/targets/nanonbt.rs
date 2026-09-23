@@ -10,6 +10,11 @@
 //! Field names are the NBT keys, so neither `serde` nor the derive needs a
 //! rename attribute; the parser rejects unknown fields, not unknown attributes.
 //!
+//! NBT arrays have no serde spelling of their own, so the `nanonbt-serde`
+//! entry covers only the array-free shapes, `small` and the name pair. The
+//! array-carrying structs write their arrays through `#[nbt(array = ...)]`
+//! fields and only the derive entries read and write them.
+//!
 //! The skip model at the end writes what the `skip` group parses: a compound
 //! holding `kept`, the one field [`Sparse`] declares, and `skipped`, one huge
 //! entry of that shape. Everything past `kept` is passed over, the serde side
@@ -19,8 +24,7 @@ use std::borrow::Cow;
 
 use criterion::{BenchmarkGroup, measurement::WallTime};
 use nanonbt::{
-    ByteArray, F32Be, F64Be, FromNBT, I16Be, I32Be, I64Be, IntArray, LongArray, ToNBT, U16Be,
-    U32Be, U64Be, serde_compat,
+    F32Be, F64Be, FromNBT, I16Be, I32Be, I64Be, ToNBT, U16Be, U32Be, U64Be, serde_compat,
 };
 use random_names::random_names;
 use serde::{Deserialize, Serialize};
@@ -45,14 +49,15 @@ pub struct Small {
 }
 
 #[allow(non_snake_case)]
-#[derive(Serialize, Deserialize, FromNBT, ToNBT)]
+#[derive(FromNBT, ToNBT)]
 pub struct Player {
     pub DataVersion: i32,
     pub Health: f32,
     pub foodLevel: i32,
     pub XpLevel: i32,
     pub playerGameType: i32,
-    pub UUID: IntArray,
+    #[nbt(array = "int")]
+    pub UUID: Vec<i32>,
     pub Pos: Vec<f64>,
     pub Motion: Vec<f64>,
     pub Rotation: Vec<f32>,
@@ -65,7 +70,7 @@ pub struct Player {
 }
 
 #[allow(non_snake_case)]
-#[derive(Serialize, Deserialize, FromNBT, ToNBT)]
+#[derive(FromNBT, ToNBT)]
 pub struct InventoryItem {
     pub Slot: i8,
     pub id: String,
@@ -74,20 +79,20 @@ pub struct InventoryItem {
 }
 
 #[allow(non_snake_case)]
-#[derive(Serialize, Deserialize, FromNBT, ToNBT)]
+#[derive(FromNBT, ToNBT)]
 pub struct ItemTag {
     pub Damage: i32,
     pub display: Display,
 }
 
 #[allow(non_snake_case)]
-#[derive(Serialize, Deserialize, FromNBT, ToNBT)]
+#[derive(FromNBT, ToNBT)]
 pub struct Display {
     pub Name: String,
 }
 
 #[allow(non_snake_case)]
-#[derive(Serialize, Deserialize, FromNBT, ToNBT)]
+#[derive(FromNBT, ToNBT)]
 pub struct Attribute {
     pub Name: String,
     pub Base: f64,
@@ -95,13 +100,13 @@ pub struct Attribute {
 }
 
 #[allow(non_snake_case)]
-#[derive(Serialize, Deserialize, FromNBT, ToNBT)]
+#[derive(FromNBT, ToNBT)]
 pub struct Modifier {
     pub Amount: f64,
 }
 
 #[allow(non_snake_case)]
-#[derive(Serialize, Deserialize, FromNBT, ToNBT)]
+#[derive(FromNBT, ToNBT)]
 pub struct Abilities {
     pub flying: i8,
     pub mayfly: i8,
@@ -110,7 +115,7 @@ pub struct Abilities {
 }
 
 #[allow(non_snake_case)]
-#[derive(Serialize, Deserialize, FromNBT, ToNBT)]
+#[derive(FromNBT, ToNBT)]
 pub struct RecipeBook {
     pub isFilteringCraftable: i8,
     pub recipes: Vec<String>,
@@ -118,7 +123,7 @@ pub struct RecipeBook {
 }
 
 #[allow(non_snake_case)]
-#[derive(Serialize, Deserialize, FromNBT, ToNBT)]
+#[derive(FromNBT, ToNBT)]
 pub struct Chunk {
     pub DataVersion: i32,
     pub xPos: i32,
@@ -133,44 +138,50 @@ pub struct Chunk {
 }
 
 #[allow(non_snake_case)]
-#[derive(Serialize, Deserialize, FromNBT, ToNBT)]
+#[derive(FromNBT, ToNBT)]
 pub struct Section {
     pub Y: i8,
     pub block_states: BlockStates,
     pub biomes: Biomes,
-    pub BlockLight: ByteArray,
-    pub SkyLight: ByteArray,
+    #[nbt(array = "byte")]
+    pub BlockLight: Vec<i8>,
+    #[nbt(array = "byte")]
+    pub SkyLight: Vec<i8>,
 }
 
 #[allow(non_snake_case)]
-#[derive(Serialize, Deserialize, FromNBT, ToNBT)]
+#[derive(FromNBT, ToNBT)]
 pub struct BlockStates {
     pub palette: Vec<PaletteEntry>,
-    pub data: LongArray,
+    #[nbt(array = "long")]
+    pub data: Vec<i64>,
 }
 
 #[allow(non_snake_case)]
-#[derive(Serialize, Deserialize, FromNBT, ToNBT)]
+#[derive(FromNBT, ToNBT)]
 pub struct PaletteEntry {
     pub Name: String,
 }
 
 #[allow(non_snake_case)]
-#[derive(Serialize, Deserialize, FromNBT, ToNBT)]
+#[derive(FromNBT, ToNBT)]
 pub struct Biomes {
     pub palette: Vec<String>,
-    pub data: LongArray,
+    #[nbt(array = "long")]
+    pub data: Vec<i64>,
 }
 
 #[allow(non_snake_case)]
-#[derive(Serialize, Deserialize, FromNBT, ToNBT)]
+#[derive(FromNBT, ToNBT)]
 pub struct Heightmaps {
-    pub MOTION_BLOCKING: LongArray,
-    pub WORLD_SURFACE: LongArray,
+    #[nbt(array = "long")]
+    pub MOTION_BLOCKING: Vec<i64>,
+    #[nbt(array = "long")]
+    pub WORLD_SURFACE: Vec<i64>,
 }
 
 #[allow(non_snake_case)]
-#[derive(Serialize, Deserialize, FromNBT, ToNBT)]
+#[derive(FromNBT, ToNBT)]
 pub struct BlockEntity {
     pub id: String,
     pub x: i32,
@@ -228,7 +239,7 @@ pub fn sample_player() -> Player {
         foodLevel: 20,
         XpLevel: 30,
         playerGameType: 1,
-        UUID: IntArray::new(vec![1_234_567, -2_345_678, 345_678_901, -456_789_012]),
+        UUID: vec![1_234_567, -2_345_678, 345_678_901, -456_789_012],
         Pos: vec![12.5, 64.0, -8.25],
         Motion: vec![0.0; 3],
         Rotation: vec![90.0, 0.0],
@@ -290,14 +301,14 @@ pub fn sample_chunk(sections: usize) -> Chunk {
                             Name: format!("minecraft:block_{block}"),
                         })
                         .collect(),
-                    data: LongArray::new(vec![i64::from(section); 256]),
+                    data: vec![i64::from(section); 256],
                 },
                 biomes: Biomes {
                     palette: vec!["minecraft:plains".to_owned()],
-                    data: LongArray::new(vec![0; 64]),
+                    data: vec![0; 64],
                 },
-                BlockLight: ByteArray::new(vec![0; 2048]),
-                SkyLight: ByteArray::new(vec![-1; 2048]),
+                BlockLight: vec![0; 2048],
+                SkyLight: vec![-1; 2048],
             })
             .collect(),
         block_entities: (0i8..4)
@@ -310,8 +321,8 @@ pub fn sample_chunk(sections: usize) -> Chunk {
             })
             .collect(),
         Heightmaps: Heightmaps {
-            MOTION_BLOCKING: LongArray::new(vec![0; 37]),
-            WORLD_SURFACE: LongArray::new(vec![-1; 37]),
+            MOTION_BLOCKING: vec![0; 37],
+            WORLD_SURFACE: vec![-1; 37],
         },
         PostProcessing: (0..24).map(|_| vec![0; 16]).collect(),
     }
@@ -763,9 +774,6 @@ pub fn parse(group: &mut BenchmarkGroup<'_, WallTime>, input: BenchInput) {
                 });
             }
             Doc::Player => {
-                bench_parse(group, "nanonbt-serde", doc.name(), bytes, |b: &[u8]| {
-                    serde_compat::from_bytes::<Player>(b).expect("document parses")
-                });
                 bench_parse(group, "nanonbt-derive", doc.name(), bytes, |b: &[u8]| {
                     nanonbt::from_bytes::<Player>(b).expect("document parses")
                 });
@@ -774,9 +782,6 @@ pub fn parse(group: &mut BenchmarkGroup<'_, WallTime>, input: BenchInput) {
                 });
             }
             Doc::Chunk => {
-                bench_parse(group, "nanonbt-serde", doc.name(), bytes, |b: &[u8]| {
-                    serde_compat::from_bytes::<Chunk>(b).expect("document parses")
-                });
                 bench_parse(group, "nanonbt-derive", doc.name(), bytes, |b: &[u8]| {
                     nanonbt::from_bytes::<Chunk>(b).expect("document parses")
                 });
@@ -842,14 +847,6 @@ pub fn write(group: &mut BenchmarkGroup<'_, WallTime>, input: BenchInput) {
             Doc::Player => {
                 bench_write(
                     group,
-                    "nanonbt-serde",
-                    doc.name(),
-                    bytes,
-                    |b: &[u8]| serde_compat::from_bytes::<Player>(b).expect("document parses"),
-                    |v: &Player| serde_compat::to_bytes(v).expect("struct writes"),
-                );
-                bench_write(
-                    group,
                     "nanonbt-derive",
                     doc.name(),
                     bytes,
@@ -866,14 +863,6 @@ pub fn write(group: &mut BenchmarkGroup<'_, WallTime>, input: BenchInput) {
                 );
             }
             Doc::Chunk => {
-                bench_write(
-                    group,
-                    "nanonbt-serde",
-                    doc.name(),
-                    bytes,
-                    |b: &[u8]| serde_compat::from_bytes::<Chunk>(b).expect("document parses"),
-                    |v: &Chunk| serde_compat::to_bytes(v).expect("struct writes"),
-                );
                 bench_write(
                     group,
                     "nanonbt-derive",

@@ -342,13 +342,20 @@ proofs! {
     }
 }
 
-/// Harnesses reading an array of `$len` symbolic elements into nanonbt's and
-/// fastnbt's own array types, and into a `Vec`, which both refuse.
+/// Harnesses reading an array of `$len` symbolic elements into nanonbt's
+/// derived array field and fastnbt's own array type, and into a `Vec`, which
+/// both refuse.
 macro_rules! arrays {
-    ($($name:ident: $tag:ident $array:ident<$element:ty>[$len:literal];)*) => {
+    ($($name:ident: $tag:ident $attribute:literal, $array:ident<$element:ty>[$len:literal];)*) => {
         proofs! {
             $(
                 fn $name() unwind 22 {
+                    #[derive(FromNBT)]
+                    struct Nano {
+                        #[nbt(array = $attribute)]
+                        v: Vec<$element>,
+                    }
+
                     let elements: [$element; $len] = kani::any();
                     let mut nbt = Nbt::root().entry($tag, b'v').header(None, $len);
                     for element in elements {
@@ -357,10 +364,10 @@ macro_rules! arrays {
                     let nbt = nbt.end();
                     let bytes = nbt.bytes();
                     let expected = Some(&elements[..]);
-                    let read = nanonbt::from_bytes::<One<nanonbt::$array>>(bytes).ok();
-                    assert!(read.as_ref().map(|a| &a.v[..]).same(&expected), "nanonbt into its type");
+                    let read = nanonbt::from_bytes::<Nano>(bytes).ok();
+                    assert!(read.as_ref().map(|a| &a.v[..]).same(&expected), "nanonbt into a derived field");
                     let read = fastnbt::from_bytes::<One<fastnbt::$array>>(bytes).ok();
-                    assert!(read.as_ref().map(|a| &a.v[..]).same(&expected), "fastnbt into its type");
+                    assert!(read.as_ref().map(|a| &a.v[..]).same(&expected), "fastnbt into its array type");
                     assert!(nanonbt::from_bytes::<One<Vec<$element>>>(bytes).is_err(), "nanonbt into a Vec");
                     assert!(fastnbt::from_bytes::<One<Vec<$element>>>(bytes).is_err(), "fastnbt into a Vec");
                 }
@@ -370,13 +377,13 @@ macro_rules! arrays {
 }
 
 arrays! {
-    byte_array_0: BYTE_ARRAY ByteArray<i8>[0];
-    byte_array_1: BYTE_ARRAY ByteArray<i8>[1];
-    byte_array_2: BYTE_ARRAY ByteArray<i8>[2];
-    int_array_0: INT_ARRAY IntArray<i32>[0];
-    int_array_1: INT_ARRAY IntArray<i32>[1];
-    int_array_2: INT_ARRAY IntArray<i32>[2];
-    long_array_0: LONG_ARRAY LongArray<i64>[0];
-    long_array_1: LONG_ARRAY LongArray<i64>[1];
-    long_array_2: LONG_ARRAY LongArray<i64>[2];
+    byte_array_0: BYTE_ARRAY "byte", ByteArray<i8>[0];
+    byte_array_1: BYTE_ARRAY "byte", ByteArray<i8>[1];
+    byte_array_2: BYTE_ARRAY "byte", ByteArray<i8>[2];
+    int_array_0: INT_ARRAY "int", IntArray<i32>[0];
+    int_array_1: INT_ARRAY "int", IntArray<i32>[1];
+    int_array_2: INT_ARRAY "int", IntArray<i32>[2];
+    long_array_0: LONG_ARRAY "long", LongArray<i64>[0];
+    long_array_1: LONG_ARRAY "long", LongArray<i64>[1];
+    long_array_2: LONG_ARRAY "long", LongArray<i64>[2];
 }

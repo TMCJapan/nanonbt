@@ -4,25 +4,15 @@
 //! the type once the value itself is serialized. So the name, or a list's
 //! length, is held back as a header until then.
 use crate::{
-    arrays::{BYTE_ARRAY_TOKEN, INT_ARRAY_TOKEN, LONG_ARRAY_TOKEN},
     error::{Error, Result},
     tag::{
-        TAG_BYTE, TAG_BYTE_ARRAY, TAG_COMPOUND, TAG_DOUBLE, TAG_END, TAG_FLOAT, TAG_INT,
-        TAG_INT_ARRAY, TAG_LIST, TAG_LONG, TAG_LONG_ARRAY, TAG_SHORT, TAG_STRING,
+        TAG_BYTE, TAG_COMPOUND, TAG_DOUBLE, TAG_END, TAG_FLOAT, TAG_INT, TAG_INT_ARRAY, TAG_LIST,
+        TAG_LONG, TAG_SHORT, TAG_STRING,
     },
 };
 use alloc::{string::String, vec::Vec};
 use nanocesu8::Cesu8;
 use serde::ser::{self, Impossible, Serialize};
-/// The array tag a compound key stands for, if it is an array token.
-fn array_tag(name: &[u8]) -> Option<u8> {
-    match name {
-        n if n == BYTE_ARRAY_TOKEN.as_bytes() => Some(TAG_BYTE_ARRAY),
-        n if n == INT_ARRAY_TOKEN.as_bytes() => Some(TAG_INT_ARRAY),
-        n if n == LONG_ARRAY_TOKEN.as_bytes() => Some(TAG_LONG_ARRAY),
-        _ => None,
-    }
-}
 /// What precedes a value, written once the value's tag is known.
 enum Header {
     /// The root compound, which must be a compound, and its name if any.
@@ -213,16 +203,11 @@ impl<'a> ser::Serializer for &'a mut Serializer<'_> {
     }
 }
 /// The entries of a compound being serialized.
-///
-/// An entry keyed by an array token turns the whole compound into that
-/// array instead, the way fastnbt's array types expect.
 pub struct Compound<'a> {
     out: &'a mut Vec<u8>,
     /// The compound's own header, until its first entry reveals the tag.
     header: Option<Header>,
     key: Option<Vec<u8>>,
-    /// Whether an End tag closes this, which an array does not have.
-    closed_by_end: bool,
 }
 impl<'a> Compound<'a> {
     const fn new(out: &'a mut Vec<u8>, header: Option<Header>) -> Self {
@@ -230,7 +215,6 @@ impl<'a> Compound<'a> {
             out,
             header,
             key: None,
-            closed_by_end: true,
         }
     }
 }
@@ -245,29 +229,20 @@ impl ser::SerializeMap for Compound<'_> {
     }
     fn serialize_value<T: Serialize + ?Sized>(&mut self, value: &T) -> Result<()> {
         let name = self.key.take().ok_or_else(Error::value_before_key)?;
-        let array = array_tag(&name);
         if let Some(header) = self.header.take() {
-            write_header(self.out, header, array.unwrap_or(TAG_COMPOUND))?;
+            write_header(self.out, header, TAG_COMPOUND)?;
         }
-        match array {
-            Some(tag) => {
-                self.closed_by_end = false;
-                value.serialize(ArraySerializer { out: self.out, tag })
-            }
-            None => value.serialize(Delayed {
-                out: self.out,
-                header: Some(Header::Entry(name)),
-                in_list: false,
-            }),
-        }
+        value.serialize(Delayed {
+            out: self.out,
+            header: Some(Header::Entry(name)),
+            in_list: false,
+        })
     }
     fn end(self) -> Result<()> {
-        if self.closed_by_end {
-            if let Some(header) = self.header {
-                write_header(self.out, header, TAG_COMPOUND)?;
-            }
-            self.out.push(TAG_END);
+        if let Some(header) = self.header {
+            write_header(self.out, header, TAG_COMPOUND)?;
         }
+        self.out.push(TAG_END);
         Ok(())
     }
 }
@@ -514,146 +489,6 @@ impl ser::SerializeTupleVariant for List<'_> {
     }
     fn end(self) -> Result<()> {
         Ok(())
-    }
-}
-/// Writes the payload of an NBT array, which must arrive as bytes.
-struct ArraySerializer<'a> {
-    out: &'a mut Vec<u8>,
-    tag: u8,
-}
-impl ser::Serializer for ArraySerializer<'_> {
-    type Ok = ();
-    type Error = Error;
-    type SerializeSeq = Impossible<(), Error>;
-    type SerializeTuple = Impossible<(), Error>;
-    type SerializeTupleStruct = Impossible<(), Error>;
-    type SerializeTupleVariant = Impossible<(), Error>;
-    type SerializeMap = Impossible<(), Error>;
-    type SerializeStruct = Impossible<(), Error>;
-    type SerializeStructVariant = Impossible<(), Error>;
-    /// The element count, then the bytes as they are, even a partial element.
-    fn serialize_bytes(self, v: &[u8]) -> Result<()> {
-        let stride = match self.tag {
-            TAG_INT_ARRAY => 4,
-            TAG_LONG_ARRAY => 8,
-            _ => 1,
-        };
-        write_len(self.out, v.len() / stride)?;
-        self.out.extend_from_slice(v);
-        Ok(())
-    }
-    fn serialize_bool(self, _: bool) -> Result<()> {
-        Err(Error::array_not_bytes())
-    }
-    fn serialize_i8(self, _: i8) -> Result<()> {
-        Err(Error::array_not_bytes())
-    }
-    fn serialize_i16(self, _: i16) -> Result<()> {
-        Err(Error::array_not_bytes())
-    }
-    fn serialize_i32(self, _: i32) -> Result<()> {
-        Err(Error::array_not_bytes())
-    }
-    fn serialize_i64(self, _: i64) -> Result<()> {
-        Err(Error::array_not_bytes())
-    }
-    fn serialize_i128(self, _: i128) -> Result<()> {
-        Err(Error::array_not_bytes())
-    }
-    fn serialize_u8(self, _: u8) -> Result<()> {
-        Err(Error::array_not_bytes())
-    }
-    fn serialize_u16(self, _: u16) -> Result<()> {
-        Err(Error::array_not_bytes())
-    }
-    fn serialize_u32(self, _: u32) -> Result<()> {
-        Err(Error::array_not_bytes())
-    }
-    fn serialize_u64(self, _: u64) -> Result<()> {
-        Err(Error::array_not_bytes())
-    }
-    fn serialize_u128(self, _: u128) -> Result<()> {
-        Err(Error::array_not_bytes())
-    }
-    fn serialize_f32(self, _: f32) -> Result<()> {
-        Err(Error::array_not_bytes())
-    }
-    fn serialize_f64(self, _: f64) -> Result<()> {
-        Err(Error::array_not_bytes())
-    }
-    fn serialize_char(self, _: char) -> Result<()> {
-        Err(Error::array_not_bytes())
-    }
-    fn serialize_str(self, _: &str) -> Result<()> {
-        Err(Error::array_not_bytes())
-    }
-    fn serialize_none(self) -> Result<()> {
-        Err(Error::array_not_bytes())
-    }
-    fn serialize_unit(self) -> Result<()> {
-        Err(Error::array_not_bytes())
-    }
-    fn serialize_unit_struct(self, _: &'static str) -> Result<()> {
-        Err(Error::array_not_bytes())
-    }
-    fn serialize_unit_variant(self, _: &'static str, _: u32, _: &'static str) -> Result<()> {
-        Err(Error::array_not_bytes())
-    }
-    fn serialize_seq(self, _: Option<usize>) -> Result<Self::SerializeSeq> {
-        Err(Error::array_not_bytes())
-    }
-    fn serialize_tuple(self, _: usize) -> Result<Self::SerializeTuple> {
-        Err(Error::array_not_bytes())
-    }
-    fn serialize_tuple_struct(
-        self,
-        _: &'static str,
-        _: usize,
-    ) -> Result<Self::SerializeTupleStruct> {
-        Err(Error::array_not_bytes())
-    }
-    fn serialize_tuple_variant(
-        self,
-        _: &'static str,
-        _: u32,
-        _: &'static str,
-        _: usize,
-    ) -> Result<Self::SerializeTupleVariant> {
-        Err(Error::array_not_bytes())
-    }
-    fn serialize_map(self, _: Option<usize>) -> Result<Self::SerializeMap> {
-        Err(Error::array_not_bytes())
-    }
-    fn serialize_struct(self, _: &'static str, _: usize) -> Result<Self::SerializeStruct> {
-        Err(Error::array_not_bytes())
-    }
-    fn serialize_struct_variant(
-        self,
-        _: &'static str,
-        _: u32,
-        _: &'static str,
-        _: usize,
-    ) -> Result<Self::SerializeStructVariant> {
-        Err(Error::array_not_bytes())
-    }
-    fn serialize_some<T: Serialize + ?Sized>(self, _value: &T) -> Result<()> {
-        Err(Error::array_not_bytes())
-    }
-    fn serialize_newtype_struct<T: Serialize + ?Sized>(
-        self,
-        _name: &'static str,
-        _value: &T,
-    ) -> Result<()> {
-        Err(Error::array_not_bytes())
-    }
-    fn serialize_newtype_variant<T: Serialize + ?Sized>(
-        self,
-        _name: &'static str,
-        _variant_index: u32,
-        _variant: &'static str,
-        _value: &T,
-    ) -> Result<()> {
-        Err(Error::array_not_bytes())
     }
 }
 /// Encodes a compound key, which must be string-like.
