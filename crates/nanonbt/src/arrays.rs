@@ -23,6 +23,7 @@ use alloc::vec::Vec;
 #[cfg(feature = "serde")]
 use core::fmt;
 use core::ops::{Deref, DerefMut};
+use nanocesu8::Cesu8;
 #[cfg(feature = "serde")]
 use serde::{
     de::{self, Deserialize, Deserializer, MapAccess, SeqAccess, Visitor},
@@ -120,11 +121,12 @@ fn serialize_array<S: Serializer>(
 /// elements to write them.
 ///
 /// ```
-/// use nanonbt::{ArrayOf, LongArray, TAG_LONG_ARRAY, Writer};
+/// use nanonbt::{ArrayOf, Cesu8, LongArray, TAG_LONG_ARRAY, Writer};
 ///
 /// let mut out = Vec::new();
 /// let mut writer = Writer::new(&mut out);
-/// <LongArray as ArrayOf<u64>>::write_entry(&[1, u64::MAX], "data", &mut writer).unwrap();
+/// let name = Cesu8::new(b"data").unwrap();
+/// <LongArray as ArrayOf<u64>>::write_entry(&[1, u64::MAX], name, &mut writer).unwrap();
 /// assert_eq!(out[0], TAG_LONG_ARRAY);
 /// ```
 pub trait ArrayOf<E>: Sized {
@@ -135,9 +137,13 @@ pub trait ArrayOf<E>: Sized {
     /// Reads the payload, `len` elements, big-endian.
     fn read_payload<'de, R: crate::Read<'de>>(len: usize, reader: &mut R) -> crate::Result<Vec<E>>;
     /// Writes a compound entry: the tag, the name, then the payload.
+    ///
+    /// The name is taken as its exact modified UTF-8 bytes, which is what
+    /// the derive macros encode a field's name to while they expand; nothing
+    /// is converted here.
     fn write_entry<W: crate::Write>(
         elements: &[E],
-        name: &str,
+        name: &Cesu8,
         writer: &mut W,
     ) -> crate::Result<()> {
         writer.write_tag(Self::TAG)?;

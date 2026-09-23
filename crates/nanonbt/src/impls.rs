@@ -468,7 +468,7 @@ impl<K: AsRef<str> + Ord, V: ToNBT> ToNBT for BTreeMap<K, V> {
     const TAG: u8 = crate::tag::TAG_COMPOUND;
     fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
         for (key, value) in self {
-            value.write_entry(key.as_ref(), writer)?;
+            value.write_entry(&Cesu8::from_str(key.as_ref()), writer)?;
         }
         writer.write_end()
     }
@@ -484,7 +484,7 @@ impl<'de, V: FromNBT<'de>> FromNBT<'de> for BTreeMap<String, V> {
                     return Ok(());
                 }
                 let name = reader.read_name()?;
-                map.insert(name.into_owned(), V::read(tag, reader)?);
+                map.insert(name.decode().into_owned(), V::read(tag, reader)?);
             }
         })?;
         Ok(map)

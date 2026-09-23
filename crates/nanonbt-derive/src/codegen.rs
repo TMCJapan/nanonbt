@@ -1,8 +1,16 @@
 //! The generated implementations.
+//!
+//! Names, both `rename`d and default, are encoded as Java's modified UTF-8
+//! while the macro runs: writing borrows the static bytes and reading
+//! compares the raw bytes, so a name with a NUL or a non-BMP character needs
+//! no conversion and allocates nothing at run time.
 
+use nanocesu8::Cesu8;
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
-use syn::{GenericParam, Generics, Lifetime, LifetimeParam, Path, WherePredicate, parse_quote};
+use syn::{
+    GenericParam, Generics, Lifetime, LifetimeParam, LitByteStr, Path, WherePredicate, parse_quote,
+};
 
 use crate::model::{Array, ArrayContainer, Field, Model, Shape, Variant, option_inner};
 
@@ -50,6 +58,23 @@ fn array_type(krate: &Path, array: &Array) -> TokenStream {
     quote!(#krate::#name)
 }
 
+/// `name` as the exact modified UTF-8 bytes NBT stores.
+///
+/// The encoding happens while the macro runs, so the generated code never
+/// has to turn a `str` into modified UTF-8. [`encoded_name`] borrows the
+/// bytes, which are valid by construction.
+fn name_bytes(name: &str) -> LitByteStr {
+    LitByteStr::new(Cesu8::from_str(name).as_bytes(), Span::call_site())
+}
+
+/// The borrowed, already validated `Cesu8` a generated write uses.
+fn encoded_name(krate: &Path, name: &str) -> TokenStream {
+    let bytes = name_bytes(name);
+    // SAFETY: `name_bytes` encodes with `Cesu8::from_str`, so the bytes are
+    // modified UTF-8.
+    quote!(unsafe { #krate::Cesu8::from_bytes_unchecked(#bytes) })
+}
+
 fn struct_to_nbt(model: &Model, fields: &[Field]) -> TokenStream {
     let krate = &model.krate;
     let ident = &model.ident;
@@ -75,7 +100,7 @@ fn struct_to_nbt(model: &Model, fields: &[Field]) -> TokenStream {
 
     let writes = fields.iter().filter(|field| !field.ignore).map(|field| {
         let field_ident = &field.ident;
-        let name = &field.name;
+        let name = encoded_name(krate, &field.name);
         let option = option_inner(&field.ty).is_some();
         let write = match &field.array {
             Some(array) => {
@@ -148,9 +173,9 @@ fn enum_to_nbt(model: &Model, variants: &[Variant]) -> TokenStream {
     let (impl_generics, ty_generics, where_clause) = model.generics.split_for_impl();
     let arms = variants.iter().map(|variant| {
         let variant_ident = &variant.ident;
-        let name = &variant.name;
+        let name = encoded_name(krate, &variant.name);
         quote! {
-            Self::#variant_ident => #krate::Write::write_str(writer, #name),
+            Self::#variant_ident => #krate::Write::write_cesu8(writer, #name),
         }
     });
 
@@ -209,7 +234,7 @@ fn struct_from_nbt(model: &Model, fields: &[Field]) -> TokenStream {
     });
     let arms = fields.iter().filter(|field| !field.ignore).map(|field| {
         let acc = format_ident!("__nbt_{}", field.ident);
-        let name = &field.name;
+        let name = name_bytes(&field.name);
         let read = field.array.as_ref().map_or_else(
             || {
                 let ty = bounded_type(field);
@@ -280,7 +305,7 @@ fn struct_from_nbt(model: &Model, fields: &[Field]) -> TokenStream {
                             break;
                         }
                         let name = #krate::Read::read_name(reader)?;
-                        match name.as_ref() {
+                        match name.as_bytes() {
                             #(#arms)*
                             _ => #krate::Read::skip(reader, tag)?,
                         }
@@ -330,7 +355,7 @@ fn enum_from_nbt(model: &Model, variants: &[Variant]) -> TokenStream {
     let (_, ty_generics, _) = model.generics.split_for_impl();
     let arms = variants.iter().map(|variant| {
         let variant_ident = &variant.ident;
-        let name = &variant.name;
+        let name = name_bytes(&variant.name);
         quote! {
             #name => ::core::result::Result::Ok(Self::#variant_ident),
         }
@@ -345,8 +370,8 @@ fn enum_from_nbt(model: &Model, variants: &[Variant]) -> TokenStream {
                 if tag != #krate::TAG_STRING {
                     return ::core::result::Result::Err(#krate::Error::invalid_tag(tag));
                 }
-                let name = #krate::Read::read_str(reader)?;
-                match name.as_ref() {
+                let name = #krate::Read::read_cesu8(reader)?;
+                match name.as_bytes() {
                     #(#arms)*
                     _ => ::core::result::Result::Err(#krate::Error::unknown_variant()),
                 }

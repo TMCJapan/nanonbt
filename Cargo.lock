@@ -335,6 +335,7 @@ dependencies = [
 name = "nanonbt-derive"
 version = "0.1.0"
 dependencies = [
+ "nanocesu8",
  "proc-macro2",
  "quote",
  "syn 3.0.6",

@@ -31,8 +31,8 @@ pub trait Write {
     }
 
     /// Writes a compound entry's name, which is encoded like a string.
-    fn write_name(&mut self, name: &str) -> Result<()> {
-        self.write_str(name)
+    fn write_name(&mut self, name: &Cesu8) -> Result<()> {
+        self.write_cesu8(name)
     }
 
     /// Writes a length-prefixed modified UTF-8 string.
@@ -176,7 +176,11 @@ pub trait ToNBT {
     }
 
     /// Writes a compound entry: the tag, the name, then the payload.
-    fn write_entry<W: Write>(&self, name: &str, writer: &mut W) -> Result<()> {
+    ///
+    /// The name is taken as its exact modified UTF-8 bytes, which is what
+    /// the derive macros encode a field's name to while they expand; nothing
+    /// is converted here.
+    fn write_entry<W: Write>(&self, name: &Cesu8, writer: &mut W) -> Result<()> {
         writer.write_tag(Self::TAG)?;
         writer.write_name(name)?;
         self.write(writer)

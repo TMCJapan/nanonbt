@@ -17,6 +17,9 @@
 //! Field attributes:
 //! * `ignore`: leave the field out; it reads as `Default::default()`.
 //! * `rename = "name"`: the compound entry's name (default: the field name).
+//!   The name is encoded as modified UTF-8 when the macro runs, so writing
+//!   and reading it converts nothing at run time, even when the name holds a
+//!   NUL or a non-BMP character, whose modified spelling is not its UTF-8.
 //! * `array = "byte" | "int" | "long"`: write a `Vec<T>`, `[T; N]` or `&[T]`
 //!   field as an NBT array of that kind, and read it back as one, instead of
 //!   the list a sequence writes by default. `T` is `i8` or `u8` for `"byte"`,
