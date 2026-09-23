@@ -3,46 +3,56 @@
 use alloc::borrow::{Cow, ToOwned};
 use core::{fmt, hash::Hash, iter::FusedIterator, str};
 
-use crate::{DecodeError, modified, owned::Cesu8Buf, utf8};
+use crate::{DecodeError, from_java_cesu8, modified, owned::Cesu8Buf, to_java_cesu8, utf8};
 
 /// Modified UTF-8 bytes, validated once and borrowed from their owner.
 ///
-/// `Cesu8` is to modified UTF-8 what [`str`] is to UTF-8: an unsized view
+/// `Cesu8` is to modified UTF-8 what [`str`](prim@str) is to UTF-8: an unsized view
 /// that is held behind a pointer, usually `&Cesu8`. It never copies or
 /// allocates, so a string that is not UTF-8 — a NUL as `C0 80`, a non-BMP
 /// character as a surrogate pair — still borrows from the input.
-/// [`chars`](Cesu8::chars) decodes it in place and
-/// [`decode`](Cesu8::decode) yields the text.
+/// [`chars`](Cesu8::chars) decodes it in place,
+/// [`decode`](Cesu8::decode) yields the text, and
+/// [`from_str`](Cesu8::from_str) goes the other way.
 ///
-/// # Equality
-///
-/// Modified UTF-8 is not canonical: `00` and `C0 80` are different bytes
-/// that decode to the same text. [`PartialEq`] compares the bytes as
-/// written, so those two are *not* equal; compare
-/// [`decode`](Cesu8::decode) for text equality.
+/// Java's spelling is the only one accepted: a raw NUL, a four-byte
+/// sequence, an overlong form or a lone surrogate is refused. Bytes always
+/// decode to text and encode back to the same bytes, so [`PartialEq`] can
+/// compare them as written.
 #[repr(transparent)]
 pub struct Cesu8([u8]);
 
 impl Cesu8 {
     /// Validates `bytes` as modified UTF-8 and borrows them.
     ///
-    /// Plain UTF-8 is accepted as is, raw NUL and four-byte sequences
-    /// included. Anything else must be modified UTF-8 throughout.
+    /// Java's spelling is the only one accepted; plain UTF-8 passes only
+    /// when it is already spelled the modified way.
     pub fn new(bytes: &[u8]) -> Result<&Self, DecodeError> {
-        if utf8::to_str(bytes).is_none() {
+        if utf8::to_str(bytes).is_none() || modified::needs_encoding(bytes) {
             modified::validate(bytes)?;
         }
-        // SAFETY: `utf8::to_str` or `modified::validate` just accepted the
-        // bytes, and UTF-8 is a subset of modified UTF-8.
+        // SAFETY: either the bytes are UTF-8 without a NUL or a four-byte
+        // lead — which is modified UTF-8 as it is — or
+        // `modified::validate` just accepted them.
         Ok(unsafe { Self::from_bytes_unchecked(bytes) })
     }
 
-    /// Borrows the bytes of `text` without copying.
+    /// Encodes `text` as modified UTF-8, borrowing it when it is already
+    /// spelled that way.
     ///
-    /// UTF-8 is a subset of modified UTF-8, so this cannot fail.
-    pub const fn from_str(text: &str) -> &Self {
-        // SAFETY: UTF-8 is a subset of modified UTF-8.
-        unsafe { Self::from_bytes_unchecked(text.as_bytes()) }
+    /// A NUL or a non-BMP character has no spelling in common with UTF-8,
+    /// so the result is owned then; anything else borrows.
+    #[expect(
+        clippy::should_implement_trait,
+        reason = "a NUL or a non-BMP character forces an owned buffer, which `FromStr` cannot express"
+    )]
+    pub fn from_str(text: &str) -> Cow<'_, Self> {
+        match to_java_cesu8(text) {
+            // SAFETY: `encode` lends the text's bytes only when they are
+            // already modified UTF-8.
+            Cow::Borrowed(bytes) => Cow::Borrowed(unsafe { Self::from_bytes_unchecked(bytes) }),
+            Cow::Owned(bytes) => Cow::Owned(Cesu8Buf::from_validated(bytes)),
+        }
     }
 
     /// Borrows `bytes` without checking that they are modified UTF-8.
@@ -86,7 +96,7 @@ impl Cesu8 {
 
     /// Decodes into UTF-8, borrowing when the bytes already are UTF-8.
     pub fn decode(&self) -> Cow<'_, str> {
-        utf8::to_str(&self.0).map_or_else(|| Cow::Owned(modified::decode(&self.0)), Cow::Borrowed)
+        from_java_cesu8(&self.0)
     }
 }
 
@@ -143,12 +153,6 @@ impl PartialEq<Cesu8> for [u8] {
 impl AsRef<[u8]> for Cesu8 {
     fn as_ref(&self) -> &[u8] {
         &self.0
-    }
-}
-
-impl<'a> From<&'a str> for &'a Cesu8 {
-    fn from(text: &'a str) -> Self {
-        Cesu8::from_str(text)
     }
 }
 

@@ -147,17 +147,23 @@ pub(crate) fn encode(text: &str) -> Cow<'_, [u8]> {
 
 /// Whether a `str`'s UTF-8 bytes are not already modified UTF-8: only a NUL,
 /// which must become `C0 80`, or a four-byte sequence, which must become a
-/// surrogate pair, force a copy.
+/// surrogate pair, force a copy. [`Cesu8::new`] must not accept such bytes
+/// as they are; `encode` rewrites them instead.
+///
+/// [`Cesu8::new`]: crate::Cesu8::new
 #[cfg(feature = "simd")]
-fn needs_encoding(bytes: &[u8]) -> bool {
+pub(crate) fn needs_encoding(bytes: &[u8]) -> bool {
     crate::simd::contains_null_or_utf8_4_byte_char_header(bytes)
 }
 
 /// Whether a `str`'s UTF-8 bytes are not already modified UTF-8: only a NUL,
 /// which must become `C0 80`, or a four-byte sequence, which must become a
-/// surrogate pair, force a copy.
+/// surrogate pair, force a copy. [`Cesu8::new`] must not accept such bytes
+/// as they are; `encode` rewrites them instead.
+///
+/// [`Cesu8::new`]: crate::Cesu8::new
 #[cfg(not(feature = "simd"))]
-fn needs_encoding(bytes: &[u8]) -> bool {
+pub(crate) fn needs_encoding(bytes: &[u8]) -> bool {
     bytes.iter().any(|&byte| byte == 0 || byte >= 0xf0)
 }
 

@@ -7,7 +7,7 @@ use serde::de::{
     value::{BorrowedBytesDeserializer, BorrowedStrDeserializer},
 };
 
-use nanocesu8::from_java_cesu8;
+use nanocesu8::Cesu8;
 
 use crate::{
     DeOpts,
@@ -149,7 +149,9 @@ impl<'de> Deserializer<'de> {
     fn str(&mut self) -> Result<Cow<'de, str>> {
         let len = u16::from_be_bytes(self.take_array()?);
         let bytes = self.take(usize::from(len))?;
-        from_java_cesu8(bytes).map_err(|_| Error::nonunicode_string())
+        Cesu8::new(bytes)
+            .map(Cesu8::decode)
+            .map_err(|_| Error::nonunicode_string())
     }
 }
 

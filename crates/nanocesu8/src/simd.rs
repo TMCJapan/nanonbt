@@ -1,10 +1,11 @@
 //! The vectorized encode scan behind the `simd` feature.
 //!
-//! [`contains_null_or_utf8_4_byte_char_header`] decides whether encoding a
-//! `str` can borrow its UTF-8 bytes, 32 bytes at a time instead of one byte
-//! at a time, following the design of the `simd_cesu8` crate. UTF-8
-//! validation is delegated to the `simdutf8` crate instead, through the
-//! `utf8` module.
+//! [`contains_null_or_utf8_4_byte_char_header`] decides whether UTF-8 bytes
+//! are modified UTF-8 as they are written — which lets `Cesu8::new` accept
+//! them after the UTF-8 check alone — and whether encoding a `str` can
+//! borrow its bytes, 32 bytes at a time instead of one byte at a time,
+//! following the design of the `simd_cesu8` crate. UTF-8 validation is
+//! delegated to the `simdutf8` crate instead, through the `utf8` module.
 //!
 //! The Kani proofs cover the scalar paths only; the differential tests are
 //! what pin this down.

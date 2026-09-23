@@ -12,7 +12,7 @@ use crate::{
     },
 };
 use alloc::{string::String, vec::Vec};
-use nanocesu8::to_java_cesu8;
+use nanocesu8::Cesu8;
 use serde::ser::{self, Impossible, Serialize};
 /// The array tag a compound key stands for, if it is an array token.
 fn array_tag(name: &[u8]) -> Option<u8> {
@@ -62,7 +62,7 @@ fn write_len(out: &mut Vec<u8>, len: usize) -> Result<()> {
 }
 /// Writes a length-prefixed modified UTF-8 string.
 fn write_str(out: &mut Vec<u8>, text: &str) -> Result<()> {
-    write_prefixed(out, &to_java_cesu8(text))
+    write_prefixed(out, Cesu8::from_str(text).as_bytes())
 }
 /// Writes bytes after their `u16` length.
 ///
@@ -671,7 +671,7 @@ impl ser::Serializer for NameSerializer<'_> {
     type SerializeStruct = Impossible<(), Error>;
     type SerializeStructVariant = Impossible<(), Error>;
     fn serialize_str(self, v: &str) -> Result<()> {
-        self.name.extend_from_slice(&to_java_cesu8(v));
+        self.name.extend_from_slice(Cesu8::from_str(v).as_bytes());
         Ok(())
     }
     fn serialize_char(self, v: char) -> Result<()> {

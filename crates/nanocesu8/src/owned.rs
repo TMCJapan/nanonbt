@@ -1,16 +1,17 @@
 //! The owned, growable counterpart of [`Cesu8`].
 
-use alloc::{string::String, vec::Vec};
+use alloc::{borrow::Cow, string::String, vec::Vec};
 use core::{borrow::Borrow, fmt, ops::Deref};
 
-use crate::{Cesu8, DecodeError, modified, utf8};
+use crate::{Cesu8, DecodeError, to_java_cesu8};
 
-/// Owned modified UTF-8 bytes, the [`String`] to [`Cesu8`]'s [`str`].
+/// Owned modified UTF-8 bytes, the [`String`] to [`Cesu8`]'s [`str`](prim@str).
 ///
 /// The bytes are always accepted by [`Cesu8::new`]. Unlike [`String`] they
 /// need not be UTF-8: they may spell NUL as `C0 80` or a non-BMP character
 /// as a surrogate pair, which is how a document's string is kept exactly as
-/// it was read.
+/// it was read. [`From<&str>`](Self::from) and [`push_str`](Self::push_str)
+/// encode the modified spelling.
 ///
 /// Equality is byte equality, as for [`Cesu8`].
 #[derive(Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -32,19 +33,9 @@ impl Cesu8Buf {
         Ok(Self(bytes))
     }
 
-    /// Appends `text`, keeping the bytes valid.
-    ///
-    /// A buffer that is valid UTF-8 takes `text`'s UTF-8 bytes as they are.
-    /// Any other buffer holds modified UTF-8, which is not closed under
-    /// concatenation with raw UTF-8 — `00` and `C0 80` are each valid, their
-    /// concatenation is not — so `text` is encoded first. The check costs a
-    /// scan of the buffer.
+    /// Appends `text`, encoding it as modified UTF-8.
     pub fn push_str(&mut self, text: &str) {
-        if utf8::to_str(&self.0).is_some() {
-            self.0.extend_from_slice(text.as_bytes());
-        } else {
-            self.0.extend_from_slice(&modified::encode(text));
-        }
+        self.0.extend_from_slice(&to_java_cesu8(text));
     }
 
     /// The bytes as written, without decoding them.
@@ -97,16 +88,20 @@ impl AsRef<[u8]> for Cesu8Buf {
 }
 
 impl From<&str> for Cesu8Buf {
-    /// Keeps `text`'s UTF-8 bytes as they are, without re-encoding them.
+    /// Encodes `text` as modified UTF-8.
     fn from(text: &str) -> Self {
-        Self::from_validated(text.as_bytes().to_vec())
+        Self::from_validated(to_java_cesu8(text).into_owned())
     }
 }
 
 impl From<String> for Cesu8Buf {
-    /// Keeps `text`'s UTF-8 bytes as they are, without re-encoding them.
+    /// Encodes `text` as modified UTF-8, keeping its bytes when they are
+    /// already spelled that way.
     fn from(text: String) -> Self {
-        Self::from_validated(text.into_bytes())
+        match to_java_cesu8(&text) {
+            Cow::Borrowed(_) => Self::from_validated(text.into_bytes()),
+            Cow::Owned(bytes) => Self::from_validated(bytes),
+        }
     }
 }
 
