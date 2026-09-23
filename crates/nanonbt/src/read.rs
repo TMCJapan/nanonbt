@@ -5,7 +5,9 @@
 //! along as an argument, so that a type can dispatch on it. Strings decode
 //! from Java's modified UTF-8, borrowing from the input when that spelling
 //! is also UTF-8; [`Read::read_cesu8`] borrows the raw bytes instead, so a
-//! string that is not UTF-8 borrows too.
+//! string that is not UTF-8 borrows too. A name does the same:
+//! [`Read::read_name`] borrows its bytes without decoding them, which is how
+//! the derives compare a `rename`d name as it was written.
 
 use alloc::{borrow::Cow, vec::Vec};
 
@@ -25,12 +27,16 @@ pub trait Read<'de> {
     /// Reads one tag byte, refusing bytes that name no type.
     fn read_tag(&mut self) -> Result<u8>;
 
-    /// Reads a compound entry's name, which is encoded like a string.
-    fn read_name(&mut self) -> Result<Cow<'de, str>> {
-        self.read_str()
+    /// Reads a compound entry's name without decoding it.
+    ///
+    /// Like [`read_cesu8`](Read::read_cesu8), the bytes borrow from the input
+    /// whenever the reader can, so a name that is not UTF-8 — a NUL or a
+    /// non-BMP character — is compared as it was written.
+    fn read_name(&mut self) -> Result<Cow<'de, Cesu8>> {
+        self.read_cesu8()
     }
 
-    /// Skips a compound entry's name without decoding it.
+    /// Skips a compound entry's name.
     ///
     /// The root compound's name is skipped this way, so a document whose
     /// root name is not valid modified UTF-8 is still accepted.

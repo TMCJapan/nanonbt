@@ -149,7 +149,7 @@ pub fn to_bytes_with_opts<T: ToNBT + ?Sized>(value: &T, opts: SerOpts) -> Result
     let mut writer = Writer::new(&mut out);
     writer.write_tag(TAG_COMPOUND)?;
     if serialize_root_name {
-        writer.write_name(&root_name)?;
+        writer.write_name(&Cesu8::from_str(&root_name))?;
     }
     value.write(&mut writer)?;
     Ok(out)

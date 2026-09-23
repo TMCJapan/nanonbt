@@ -4,8 +4,8 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 
 use nanonbt::{
-    ArrayOf, ByteArray, DeOpts, FromNBT, IntArray, LongArray, Read, Reader, TAG_INT_ARRAY, ToNBT,
-    Writer,
+    ArrayOf, ByteArray, Cesu8, DeOpts, FromNBT, IntArray, LongArray, Read, Reader, TAG_INT_ARRAY,
+    ToNBT, Writer,
 };
 
 /// Counts the allocations each thread makes, so that a test can assert an
@@ -90,12 +90,13 @@ fn fixed_arrays_check_their_length() {
 fn array_of_writes_and_reads_either_spelling() {
     let mut out = Vec::new();
     let mut writer = Writer::new(&mut out);
-    <LongArray as ArrayOf<u64>>::write_entry(&[1, u64::MAX], "data", &mut writer).unwrap();
+    let name = Cesu8::new(b"data").unwrap();
+    <LongArray as ArrayOf<u64>>::write_entry(&[1, u64::MAX], name, &mut writer).unwrap();
 
     // The same document the array type writes for the same values.
     let mut expected = Vec::new();
     let mut writer = Writer::new(&mut expected);
-    ToNBT::write_entry(&LongArray::new(vec![1, -1]), "data", &mut writer).unwrap();
+    ToNBT::write_entry(&LongArray::new(vec![1, -1]), name, &mut writer).unwrap();
     assert_eq!(out, expected);
 
     let mut reader = Reader::new(&out, DeOpts::default());
