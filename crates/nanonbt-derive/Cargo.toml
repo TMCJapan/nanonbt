@@ -9,6 +9,12 @@ rust-version.workspace = true
 [lib]
 proc-macro = true
 
+[features]
+# Emits `hashify::fnc_map!` dispatch for the names a read sees instead of a
+# plain `match`. Enabled through `nanonbt/hashify`, whose re-export of
+# hashify is where the generated code finds the macro.
+hashify = []
+
 [dependencies]
 nanocesu8.workspace = true
 proc-macro2.workspace = true

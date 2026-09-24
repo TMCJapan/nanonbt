@@ -76,6 +76,28 @@ fn encoded_name(krate: &Path, name: &str) -> TokenStream {
     quote!(unsafe { #krate::Cesu8::from_bytes_unchecked(#bytes) })
 }
 
+/// The lookup that finds the arm for the name a read sees.
+///
+/// Plainly the names are match arms whose patterns are their bytes. With the
+/// `hashify` feature they become the keys of a perfect hash lookup instead,
+/// reached through `nanonbt`'s re-export so the user's crate needs no
+/// dependency of its own. Either way the arms and the default stay
+/// expressions in the function that reads, so an arm can `?` its error.
+fn name_dispatch(krate: &Path, arms: &[TokenStream], default: &TokenStream) -> TokenStream {
+    if cfg!(feature = "hashify") {
+        quote! {
+            #krate::__private::hashify::fnc_map!(name.as_bytes(), #(#arms)* _ => #default)
+        }
+    } else {
+        quote! {
+            match name.as_bytes() {
+                #(#arms)*
+                _ => #default,
+            }
+        }
+    }
+}
+
 fn struct_to_nbt(model: &Model, fields: &[Field]) -> TokenStream {
     let krate = &model.krate;
     let ident = &model.ident;
@@ -233,40 +255,45 @@ fn struct_from_nbt(model: &Model, fields: &[Field]) -> TokenStream {
             let mut #acc: ::core::option::Option<#ty> = ::core::option::Option::None;
         }
     });
-    let arms = fields.iter().filter(|field| !field.ignore).map(|field| {
-        let acc = format_ident!("__nbt_{}", field.ident);
-        let name = name_bytes(&field.name);
-        let read = field.array.as_ref().map_or_else(
-            || {
-                let ty = bounded_type(field);
-                quote!(<#ty as #krate::FromNBT<#de>>::read(tag, reader)?)
-            },
-            |array| {
-                let array_trait = array_trait(krate, array);
-                let element = &array.element;
-                let read = quote!(<[#element] as #array_trait>::read(tag, reader)?);
-                match array.container {
-                    // A borrow keeps the input, so it reads through its own
-                    // implementation, byte arrays having one and wider
-                    // integers not, since their bytes are big-endian.
-                    ArrayContainer::Borrowed => {
-                        let ty = bounded_type(field);
-                        quote!(<#ty as #krate::FromNBT<#de>>::read(tag, reader)?)
+    let arms = fields
+        .iter()
+        .filter(|field| !field.ignore)
+        .map(|field| {
+            let acc = format_ident!("__nbt_{}", field.ident);
+            let name = name_bytes(&field.name);
+            let read = field.array.as_ref().map_or_else(
+                || {
+                    let ty = bounded_type(field);
+                    quote!(<#ty as #krate::FromNBT<#de>>::read(tag, reader)?)
+                },
+                |array| {
+                    let array_trait = array_trait(krate, array);
+                    let element = &array.element;
+                    let read = quote!(<[#element] as #array_trait>::read(tag, reader)?);
+                    match array.container {
+                        // A borrow keeps the input, so it reads through its own
+                        // implementation, byte arrays having one and wider
+                        // integers not, since their bytes are big-endian.
+                        ArrayContainer::Borrowed => {
+                            let ty = bounded_type(field);
+                            quote!(<#ty as #krate::FromNBT<#de>>::read(tag, reader)?)
+                        }
+                        ArrayContainer::Vec => read,
+                        ArrayContainer::Fixed => quote!(
+                            ::core::convert::TryInto::try_into(#read)
+                                .map_err(|_| #krate::Error::wrong_len())?
+                        ),
                     }
-                    ArrayContainer::Vec => read,
-                    ArrayContainer::Fixed => quote!(
-                        ::core::convert::TryInto::try_into(#read)
-                            .map_err(|_| #krate::Error::wrong_len())?
-                    ),
-                }
-            },
-        );
-        quote! {
-            #name => {
-                #acc = ::core::option::Option::Some(#read);
+                },
+            );
+            quote! {
+                #name => {
+                    #acc = ::core::option::Option::Some(#read);
+                },
             }
-        }
-    });
+        })
+        .collect::<Vec<_>>();
+    let dispatch = name_dispatch(krate, &arms, &quote!(#krate::Read::skip(reader, tag)?));
     let assigned = fields.iter().map(|field| {
         let field_ident = &field.ident;
         if field.ignore {
@@ -306,10 +333,7 @@ fn struct_from_nbt(model: &Model, fields: &[Field]) -> TokenStream {
                             break;
                         }
                         let name = #krate::Read::read_name(reader)?;
-                        match name.as_bytes() {
-                            #(#arms)*
-                            _ => #krate::Read::skip(reader, tag)?,
-                        }
+                        #dispatch
                     }
                     ::core::result::Result::Ok(())
                 })?;
@@ -354,13 +378,21 @@ fn enum_from_nbt(model: &Model, variants: &[Variant]) -> TokenStream {
     let de = add_de(&mut generics);
     let (impl_generics, _, where_clause) = generics.split_for_impl();
     let (_, ty_generics, _) = model.generics.split_for_impl();
-    let arms = variants.iter().map(|variant| {
-        let variant_ident = &variant.ident;
-        let name = name_bytes(&variant.name);
-        quote! {
-            #name => ::core::result::Result::Ok(Self::#variant_ident),
-        }
-    });
+    let arms = variants
+        .iter()
+        .map(|variant| {
+            let variant_ident = &variant.ident;
+            let name = name_bytes(&variant.name);
+            quote! {
+                #name => ::core::result::Result::Ok(Self::#variant_ident),
+            }
+        })
+        .collect::<Vec<_>>();
+    let dispatch = name_dispatch(
+        krate,
+        &arms,
+        &quote!(::core::result::Result::Err(#krate::Error::unknown_variant())),
+    );
 
     quote! {
         impl #impl_generics #krate::FromNBT<#de> for #ident #ty_generics #where_clause {
@@ -372,11 +404,30 @@ fn enum_from_nbt(model: &Model, variants: &[Variant]) -> TokenStream {
                     return ::core::result::Result::Err(#krate::Error::invalid_tag(tag));
                 }
                 let name = #krate::Read::read_cesu8(reader)?;
-                match name.as_bytes() {
-                    #(#arms)*
-                    _ => ::core::result::Result::Err(#krate::Error::unknown_variant()),
-                }
+                #dispatch
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The feature must change the tokens, not just compile: a plain `match`
+    /// would pass every round trip just as well.
+    #[test]
+    fn dispatch_is_hashified_exactly_when_asked() {
+        let dispatch = name_dispatch(
+            &parse_quote!(::nanonbt),
+            &[quote!(b"one" => (),)],
+            &quote!(()),
+        );
+        let text = dispatch.to_string();
+        assert_eq!(
+            text.contains("fnc_map"),
+            cfg!(feature = "hashify"),
+            "{text}"
+        );
     }
 }

@@ -15,6 +15,7 @@ rust-version = "1.93"
 nanocesu8 = { path = "crates/nanocesu8" }
 nanonbt = { path = "crates/nanonbt" }
 nanonbt-derive = { path = "crates/nanonbt-derive" }
+hashify = "0.3"
 proc-macro2 = "1"
 quote = "1"
 syn = { version = "3", features = ["full"] }

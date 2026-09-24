@@ -10,6 +10,9 @@ rust-version.workspace = true
 default = ["derive"]
 # Re-exports `#[derive(FromNBT, ToNBT)]` as `nanonbt::{FromNBT, ToNBT}`.
 derive = ["dep:nanonbt-derive"]
+# Dispatches the names a derived read sees through hashify's perfect hash
+# lookups instead of a `match`.
+hashify = ["derive", "nanonbt-derive/hashify", "dep:hashify"]
 # Keeps the `Serialize`/`Deserialize` implementations and `serde_compat`.
 serde = ["dep:serde"]
 # Vectorizes nanocesu8's string validation and encode fast-path scan, and
@@ -17,6 +20,7 @@ serde = ["dep:serde"]
 simd = ["nanocesu8/simd"]
 
 [dependencies]
+hashify = { workspace = true, optional = true }
 nanocesu8.workspace = true
 nanonbt-derive = { workspace = true, optional = true }
 serde = { version = "1", default-features = false, features = [
