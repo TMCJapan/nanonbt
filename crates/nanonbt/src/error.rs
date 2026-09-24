@@ -77,11 +77,6 @@ impl Error {
         Self(Kind::Static("invalid nbt string: nonunicode"))
     }
 
-    #[cfg(feature = "serde")]
-    pub(crate) const fn array_token_as_key() -> Self {
-        Self(Kind::Static("compound using special fastnbt array tokens"))
-    }
-
     pub(crate) const fn list_of_end() -> Self {
         Self(Kind::Static(
             "unexpected list of type 'end', which is not supported",
@@ -110,20 +105,20 @@ impl Error {
     }
 
     #[cfg(feature = "serde")]
-    pub(crate) const fn array_as_seq() -> Self {
-        Self(Kind::Static(
-            "expected NBT Array, found seq: use ByteArray, IntArray or LongArray types",
-        ))
-    }
-
-    #[cfg(feature = "serde")]
     pub(crate) const fn not_bytes() -> Self {
         Self(Kind::Static("cannot convert to bytes"))
     }
 
+    /// The value of a `#[serde(with = ...)]` array field was serialized as
+    /// something other than the array's bytes.
+    #[cfg(feature = "serde")]
+    pub(crate) const fn array_payload() -> Self {
+        Self(Kind::Static("NBT array must serialize as bytes"))
+    }
+
     pub(crate) const fn expected_int_array() -> Self {
         Self(Kind::Static(
-            "deserialize i128: expected IntArray of length 4",
+            "deserialize i128: expected int array of length 4",
         ))
     }
 
@@ -159,13 +154,6 @@ impl Error {
     #[cfg(feature = "serde")]
     pub(crate) const fn variant() -> Self {
         Self(Kind::Static("cannot serialize newtype or struct variant"))
-    }
-
-    #[cfg(feature = "serde")]
-    pub(crate) const fn array_not_bytes() -> Self {
-        Self(Kind::Static(
-            "expected NBT Array: use ByteArray, IntArray or LongArray types",
-        ))
     }
 
     pub(crate) const fn string_too_long() -> Self {

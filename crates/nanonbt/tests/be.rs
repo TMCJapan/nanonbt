@@ -2,8 +2,7 @@
 //! Zero-copy big-endian numbers and byte arrays.
 
 use nanonbt::{
-    ByteArray, F32Be, F64Be, FromNBT, I16Be, I32Be, I64Be, IntArray, LongArray, ToNBT, U16Be,
-    U32Be, U64Be, from_bytes, to_bytes,
+    F32Be, F64Be, FromNBT, I16Be, I32Be, I64Be, ToNBT, U16Be, U32Be, U64Be, from_bytes, to_bytes,
 };
 use serde::{Deserialize, Serialize};
 
@@ -109,17 +108,21 @@ fn arrays_borrow_from_the_input() {
 
     #[derive(ToNBT)]
     struct Source {
-        bytes: ByteArray,
-        signed: ByteArray,
-        ints: IntArray,
-        longs: LongArray,
+        #[nbt(array = "byte")]
+        bytes: Vec<u8>,
+        #[nbt(array = "byte")]
+        signed: Vec<i8>,
+        #[nbt(array = "int")]
+        ints: Vec<u32>,
+        #[nbt(array = "long")]
+        longs: Vec<u64>,
     }
 
     let bytes = to_bytes(&Source {
-        bytes: ByteArray::new(vec![1, -1]),
-        signed: ByteArray::new(vec![1, -1]),
-        ints: IntArray::new(vec![1, -2]),
-        longs: LongArray::new(vec![1, i64::MIN]),
+        bytes: vec![1, 255],
+        signed: vec![1, -1],
+        ints: vec![1, u32::MAX - 1],
+        longs: vec![1, 1 << 63],
     })
     .unwrap();
     let holder = from_bytes::<Holder<'_>>(&bytes).unwrap();

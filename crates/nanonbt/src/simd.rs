@@ -17,9 +17,9 @@
 //! hold the two against each other.
 
 use alloc::vec::Vec;
-use core::mem::size_of_val;
 
 use crate::{
+    be::as_bytes,
     error::{Error, Result},
     read::Read,
     write::Write,
@@ -134,7 +134,7 @@ pub(crate) fn read_be_elements<'de, T: Copy, const SIZE: usize, R: Read<'de>>(
 
 /// Writes native-order `SIZE`-byte elements as big-endian, in as few writes
 /// as the writer takes them.
-pub(crate) fn write_be<T: Copy, const SIZE: usize, W: Write>(
+pub(crate) fn write_be<T: Copy, const SIZE: usize, W: Write + ?Sized>(
     elements: &[T],
     writer: &mut W,
 ) -> Result<()> {
@@ -149,25 +149,6 @@ pub(crate) fn write_be<T: Copy, const SIZE: usize, W: Write>(
         writer.write_bytes(staged)?;
     }
     Ok(())
-}
-
-/// The elements as big-endian bytes, in one `Vec`.
-pub(crate) fn to_be_vec<T: Copy, const SIZE: usize>(elements: &[T]) -> Vec<u8> {
-    const { assert!(SIZE == size_of::<T>()) };
-    let mut out = Vec::with_capacity(size_of_val(elements));
-    out.extend_from_slice(as_bytes(elements));
-    swap_bytes_in_place::<SIZE>(&mut out);
-    out
-}
-
-/// The bytes of a slice of scalar elements, as they lie in memory.
-///
-/// Every bit pattern of the scalar types this is called with is a valid
-/// byte, and `T: Copy` has no drop glue, so the reinterpretation is sound.
-const fn as_bytes<T: Copy>(elements: &[T]) -> &[u8] {
-    // SAFETY: the slice is contiguous, `size_of_val` is the length of the
-    // bytes it covers, and every one of them is initialized.
-    unsafe { core::slice::from_raw_parts(elements.as_ptr().cast::<u8>(), size_of_val(elements)) }
 }
 
 /// Swaps `n` bytes, a vector block at a time, on targets that have one.

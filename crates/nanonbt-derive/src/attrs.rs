@@ -31,7 +31,7 @@ pub enum ArrayKind {
 }
 
 impl ArrayKind {
-    /// The array type that reads and writes this kind.
+    /// The array trait that reads and writes this kind.
     pub const fn type_name(self) -> &'static str {
         match self {
             Self::Byte => "ByteArray",

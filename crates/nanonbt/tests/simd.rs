@@ -87,9 +87,10 @@ list_shapes! {
     double_list: f64 = |i: usize| i as f64 * 1.5 - 7.25,
 }
 
-/// One array kind: the two crates' types for it, and the element they hold.
+/// One array kind: nanonbt writes the array from a derived field, and
+/// fastnbt's array type is what it must be interchangeable with.
 macro_rules! array_shapes {
-    ($($module:ident: $fast:ty, $nano:ty, $ty:ty = $sample:expr),* $(,)?) => {$(
+    ($($module:ident: $attribute:literal, $fast:ty, $ty:ty = $sample:expr),* $(,)?) => {$(
         mod $module {
             use nanonbt::{FromNBT, ToNBT};
             use serde::{Deserialize, Serialize};
@@ -97,53 +98,6 @@ macro_rules! array_shapes {
             use super::LENGTHS;
 
             #[derive(Serialize, Deserialize)]
-            struct Fast {
-                data: $fast,
-            }
-
-            #[derive(ToNBT, FromNBT, PartialEq, Debug)]
-            struct Nano {
-                data: $nano,
-            }
-
-            #[test]
-            fn arrays_round_trip_around_the_block_boundaries() {
-                for len in LENGTHS {
-                    let items: Vec<$ty> = (0..len).map($sample).collect();
-                    let fast = fastnbt::to_bytes(&Fast {
-                        data: <$fast>::new(items.clone()),
-                    })
-                    .unwrap();
-                    let nano = nanonbt::to_bytes(&Nano {
-                        data: <$nano>::new(items.clone()),
-                    })
-                    .unwrap();
-                    assert_eq!(nano, fast, "the two crates write different bytes at {len}");
-                    assert_eq!(&nanonbt::from_bytes::<Nano>(&fast).unwrap().data[..], &items[..]);
-                    assert_eq!(&fastnbt::from_bytes::<Fast>(&nano).unwrap().data[..], &items[..]);
-                }
-            }
-        }
-    )*};
-}
-
-array_shapes! {
-    byte_array: fastnbt::ByteArray, nanonbt::ByteArray, i8 = |i: usize| (i as i8).wrapping_mul(7),
-    int_array: fastnbt::IntArray, nanonbt::IntArray, i32 = |i: usize| (i as i32).wrapping_mul(2_654_435_761u32 as i32),
-    long_array: fastnbt::LongArray, nanonbt::LongArray, i64 = |i: usize| (i as i64).wrapping_mul(6_364_136_223_846_793_005),
-}
-
-/// One derived `#[nbt(array = ...)]` field: nanonbt writes the array, and
-/// fastnbt's array type is what it must be interchangeable with.
-macro_rules! derived_array_shapes {
-    ($($module:ident: $attribute:literal, $fast:ty, $ty:ty = $sample:expr),* $(,)?) => {$(
-        mod $module {
-            use nanonbt::{FromNBT, ToNBT};
-            use serde::Serialize;
-
-            use super::LENGTHS;
-
-            #[derive(Serialize)]
             struct Fast {
                 data: $fast,
             }
@@ -168,16 +122,17 @@ macro_rules! derived_array_shapes {
                     .unwrap();
                     assert_eq!(nano, fast, "the two crates write different bytes at {len}");
                     assert_eq!(nanonbt::from_bytes::<Nano>(&fast).unwrap().data, items);
+                    assert_eq!(&fastnbt::from_bytes::<Fast>(&nano).unwrap().data[..], &items[..]);
                 }
             }
         }
     )*};
 }
 
-derived_array_shapes! {
-    derived_byte_array: "byte", fastnbt::ByteArray, i8 = |i: usize| (i as i8).wrapping_mul(7),
-    derived_int_array: "int", fastnbt::IntArray, i32 = |i: usize| (i as i32).wrapping_mul(2_654_435_761u32 as i32),
-    derived_long_array: "long", fastnbt::LongArray, i64 = |i: usize| (i as i64).wrapping_mul(6_364_136_223_846_793_005),
+array_shapes! {
+    byte_array: "byte", fastnbt::ByteArray, i8 = |i: usize| (i as i8).wrapping_mul(7),
+    int_array: "int", fastnbt::IntArray, i32 = |i: usize| (i as i32).wrapping_mul(2_654_435_761u32 as i32),
+    long_array: "long", fastnbt::LongArray, i64 = |i: usize| (i as i64).wrapping_mul(6_364_136_223_846_793_005),
 }
 
 /// The unsigned spelling of a derived array field reads the same bytes by
@@ -205,42 +160,6 @@ fn unsigned_derived_array_fields_read_by_bits() {
                 .map(<i64>::cast_unsigned)
                 .collect::<Vec<_>>()
         );
-    }
-}
-
-/// The array types' `Serialize`/`Deserialize` go through the same bulk
-/// decode, through the map wrapper fastnbt uses.
-#[cfg(feature = "serde")]
-#[test]
-fn serde_arrays_round_trip_around_the_block_boundaries() {
-    use nanonbt::serde_compat;
-
-    #[derive(Serialize, serde::Deserialize)]
-    struct Holder {
-        bytes: nanonbt::ByteArray,
-        ints: nanonbt::IntArray,
-        longs: nanonbt::LongArray,
-    }
-
-    for len in LENGTHS {
-        let value = Holder {
-            bytes: nanonbt::ByteArray::new((0..len).map(|i| (i as i8).wrapping_mul(7)).collect()),
-            ints: nanonbt::IntArray::new(
-                (0..len)
-                    .map(|i| (i as i32).wrapping_mul(2_654_435_761u32 as i32))
-                    .collect(),
-            ),
-            longs: nanonbt::LongArray::new(
-                (0..len)
-                    .map(|i| (i as i64).wrapping_mul(6_364_136_223_846_793_005))
-                    .collect(),
-            ),
-        };
-        let bytes = serde_compat::to_bytes(&value).unwrap();
-        let back: Holder = serde_compat::from_bytes(&bytes).unwrap();
-        assert_eq!(back.bytes, value.bytes, "bytes at {len}");
-        assert_eq!(back.ints, value.ints, "ints at {len}");
-        assert_eq!(back.longs, value.longs, "longs at {len}");
     }
 }
 

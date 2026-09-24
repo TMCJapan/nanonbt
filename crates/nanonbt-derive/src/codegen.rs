@@ -52,10 +52,11 @@ fn bounded_type(field: &Field) -> &syn::Type {
     option_inner(&field.ty).unwrap_or(&field.ty)
 }
 
-/// The array type that writes and reads an `array` field.
-fn array_type(krate: &Path, array: &Array) -> TokenStream {
+/// The array trait that writes and reads an `array` field, with its element.
+fn array_trait(krate: &Path, array: &Array) -> TokenStream {
     let name = format_ident!("{}", array.kind.type_name());
-    quote!(#krate::#name)
+    let element = &array.element;
+    quote!(#krate::#name<#element>)
 }
 
 /// `name` as the exact modified UTF-8 bytes NBT stores.
@@ -83,11 +84,11 @@ fn struct_to_nbt(model: &Model, fields: &[Field]) -> TokenStream {
         let where_clause = generics.make_where_clause();
         for field in fields.iter().filter(|field| !field.ignore) {
             if let Some(array) = &field.array {
-                let array_ty = array_type(krate, array);
+                let array_trait = array_trait(krate, array);
                 let element = &array.element;
                 where_clause
                     .predicates
-                    .push(parse_quote!(#array_ty: #krate::ArrayOf<#element>));
+                    .push(parse_quote!([#element]: #array_trait));
             } else {
                 let ty = bounded_type(field);
                 where_clause
@@ -104,7 +105,7 @@ fn struct_to_nbt(model: &Model, fields: &[Field]) -> TokenStream {
         let option = option_inner(&field.ty).is_some();
         let write = match &field.array {
             Some(array) => {
-                let array_ty = array_type(krate, array);
+                let array_trait = array_trait(krate, array);
                 let element = &array.element;
                 let slice = if option {
                     quote!(&value[..])
@@ -112,7 +113,7 @@ fn struct_to_nbt(model: &Model, fields: &[Field]) -> TokenStream {
                     quote!(&self.#field_ident[..])
                 };
                 quote! {
-                    <#array_ty as #krate::ArrayOf<#element>>::write_entry(#slice, #name, writer)?;
+                    <[#element] as #array_trait>::write_entry(#slice, #name, writer)?;
                 }
             }
             None if option => quote! {
@@ -204,7 +205,7 @@ fn struct_from_nbt(model: &Model, fields: &[Field]) -> TokenStream {
                 let ty = &field.ty;
                 parse_quote!(#ty: ::core::default::Default)
             } else if let Some(array) = &field.array {
-                let array_ty = array_type(krate, array);
+                let array_trait = array_trait(krate, array);
                 let element = &array.element;
                 match array.container {
                     ArrayContainer::Borrowed => {
@@ -212,7 +213,7 @@ fn struct_from_nbt(model: &Model, fields: &[Field]) -> TokenStream {
                         parse_quote!(#ty: #krate::FromNBT<#de>)
                     }
                     ArrayContainer::Vec | ArrayContainer::Fixed => {
-                        parse_quote!(#array_ty: #krate::ArrayOf<#element>)
+                        parse_quote!([#element]: #array_trait)
                     }
                 }
             } else {
@@ -241,9 +242,9 @@ fn struct_from_nbt(model: &Model, fields: &[Field]) -> TokenStream {
                 quote!(<#ty as #krate::FromNBT<#de>>::read(tag, reader)?)
             },
             |array| {
-                let array_ty = array_type(krate, array);
+                let array_trait = array_trait(krate, array);
                 let element = &array.element;
-                let read = quote!(<#array_ty as #krate::ArrayOf<#element>>::read(tag, reader)?);
+                let read = quote!(<[#element] as #array_trait>::read(tag, reader)?);
                 match array.container {
                     // A borrow keeps the input, so it reads through its own
                     // implementation, byte arrays having one and wider

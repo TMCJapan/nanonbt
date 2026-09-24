@@ -24,11 +24,14 @@
 //! ```
 //!
 //! The encoding is byte-for-byte the one [fastnbt](https://docs.rs/fastnbt)
-//! 2.6 produces for the same values, and the array types are fastnbt's. With
-//! the `serde` feature, the old `Serialize`/`Deserialize` implementations are
-//! kept as well, and `serde_compat` holds their entry points. The `simd`
-//! feature settles array and numeric-list byte order a vector at a time, on
-//! x86, aarch64 and wasm, and stays `no_std`.
+//! 2.6 produces for the same values, arrays included. With the `serde`
+//! feature, the old `Serialize`/`Deserialize` implementations are kept as
+//! well, and `serde_compat` holds their entry points. NBT arrays have no
+//! serde type of their own — a plain `Vec` field is a list and an array
+//! reads as its raw bytes — so `serde_compat` has a `#[serde(with = ...)]`
+//! module per array kind for fields that hold elements. The `simd` feature
+//! settles array and numeric-list byte order a vector at a time, on x86,
+//! aarch64 and wasm, and stays `no_std`.
 //!
 //! # The data model
 //!
@@ -46,12 +49,14 @@
 //!
 //! A field with `#[nbt(array = "byte")]`, `"int"` or `"long"` writes a
 //! `Vec<T>`, `[T; N]` or `&[T]` as the NBT array of that kind instead of a
-//! list, and reads one back; `T` is `i8` or `u8`, `i32` or `u32`, `i64` or
-//! `u64` to match the kind. The elements go straight to and from the
-//! document — [`ArrayOf`] is the trait behind it — so nothing is copied into
-//! an array type first. A borrowed `&[T]` reads through its own
-//! [`FromNBT`], which byte slices have and wider integers do not, their
-//! bytes being big-endian: use `Vec<T>` or `[T; N]` to read those.
+//! list, and reads one back; `T` is `i8` or `u8`, `i32`, `u32`, [`I32Be`] or
+//! [`U32Be`], or `i64`, `u64`, [`I64Be`] or [`U64Be`] to match the kind.
+//! The elements go straight to and from the document — [`ByteArray`],
+//! [`IntArray`] and [`LongArray`] are the traits behind it — so nothing is
+//! copied into an array type first. A borrowed `&[T]` reads through its own
+//! [`FromNBT`], which byte slices and the big-endian wrappers have and the
+//! plain wider integers do not, their bytes being big-endian: use `Vec<T>` or
+//! `[T; N]` to read those.
 //!
 //! Strings borrow: [`FromNBT`] is implemented for `&'de str`,
 //! `Cow<'de, str>`, `&'de Cesu8`, [`Cesu8Buf`] and `Cow<'de, Cesu8>`. A
@@ -72,10 +77,10 @@
 //!
 //! A borrowed slice reads an array's tag or a list of the same element, so a
 //! `&'de [U64Be]` reads a `TAG_Long_Array` or a `TAG_List` of `TAG_Long`.
-//! Writing one writes a list, not an array: [`LongArray`], [`IntArray`] and
-//! [`ByteArray`] write arrays, and so does a field with `#[nbt(array = ...)]`.
-//! `from_value` cannot lend bytes, so borrowed numbers and byte arrays are
-//! errors there, as a `&'de str` is for a string that needs decoding.
+//! Writing one writes a list, not an array: an array is written by
+//! [`Write::write_byte_array`], [`Write::write_int_array`] and
+//! [`Write::write_long_array`], or by a derived field with
+//! `#[nbt(array = ...)]`.
 //!
 //! # Where fastnbt is not followed
 //!
@@ -93,9 +98,9 @@
 //!   to; this crate's rule is simpler and stricter, and `char` round trips
 //!   through bytes, which fastnbt's does not.
 //! - A borrowed slice such as `&'de [U64Be]` writes as a list, where
-//!   fastnbt's `borrow::LongArray` writes a long array. [`LongArray`], the
-//!   other array types, and derived fields with `#[nbt(array = ...)]` are the
-//!   ones that write arrays.
+//!   fastnbt's `borrow::LongArray` writes a long array. The [`Write`] array
+//!   methods and derived fields with `#[nbt(array = ...)]` are the ones that
+//!   write arrays.
 //! - There is no `from_reader` or `to_writer`, as there is no `std::io`.
 
 #![no_std]
@@ -111,6 +116,8 @@ mod impls;
 pub mod read;
 #[cfg(feature = "serde")]
 pub mod ser;
+#[cfg(feature = "serde")]
+mod serde_arrays;
 #[cfg(feature = "simd")]
 mod simd;
 mod tag;
@@ -118,7 +125,7 @@ pub mod write;
 
 use alloc::{string::String, vec::Vec};
 
-pub use arrays::{ArrayOf, ByteArray, IntArray, LongArray};
+pub use arrays::{ByteArray, IntArray, LongArray};
 pub use be::{F32Be, F64Be, I16Be, I32Be, I64Be, U16Be, U32Be, U64Be};
 pub use error::{Error, Result};
 pub use nanocesu8::{Cesu8, Cesu8Buf};
@@ -283,6 +290,25 @@ pub fn from_bytes_with_opts<'de, T: FromNBT<'de>>(input: &'de [u8], opts: DeOpts
 ///
 /// Available only with the `serde` feature, alongside the trait
 /// implementations the old versions of this crate provided.
+///
+/// NBT arrays have no serde type of their own: a plain `Vec` field is a
+/// list, and a document's array is read as its raw bytes. The
+/// [`crate::serde_compat::byte_array`],
+/// [`crate::serde_compat::int_array`] and
+/// [`crate::serde_compat::long_array`] modules are the explicit spelling,
+/// for a field annotated with `#[serde(with = ...)]`:
+///
+/// ```
+/// use serde::{Deserialize, Serialize};
+///
+/// #[derive(Serialize, Deserialize)]
+/// struct Chunk {
+///     #[serde(with = "nanonbt::serde_compat::long_array")]
+///     heightmap: Vec<i64>,
+///     #[serde(with = "nanonbt::serde_compat::byte_array")]
+///     light: Vec<i8>,
+/// }
+/// ```
 #[cfg(feature = "serde")]
 pub mod serde_compat {
     use alloc::vec::Vec;
@@ -290,6 +316,8 @@ pub mod serde_compat {
     use serde::{Deserialize, Serialize};
 
     use crate::{DeOpts, Result, SerOpts, de, ser};
+
+    pub use crate::serde_arrays::{byte_array, int_array, long_array};
 
     /// Serializes `value` as the root compound, with an empty name.
     pub fn to_bytes<T: Serialize + ?Sized>(value: &T) -> Result<Vec<u8>> {

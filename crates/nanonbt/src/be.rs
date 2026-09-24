@@ -13,16 +13,16 @@
 //! Reading accepts an array's tag and a list of the same element, so a
 //! `&'de [U64Be]` reads a `TAG_Long_Array` or a `TAG_List` of `TAG_Long`.
 //! Writing a borrowed slice goes through the sequence implementations, which
-//! write a list rather than an array; [`LongArray`](crate::LongArray),
-//! [`IntArray`](crate::IntArray) and [`ByteArray`](crate::ByteArray) are the
-//! types that write arrays.
+//! write a list rather than an array; the [`Write`](crate::Write) array
+//! methods and derived fields with `#[nbt(array = ...)]` write arrays.
 //!
 //! ```
-//! use nanonbt::{FromNBT, LongArray, ToNBT, U64Be};
+//! use nanonbt::{FromNBT, ToNBT, U64Be};
 //!
 //! #[derive(ToNBT)]
 //! struct Source {
-//!     data: LongArray,
+//!     #[nbt(array = "long")]
+//!     data: Vec<u64>,
 //! }
 //!
 //! #[derive(FromNBT)]
@@ -30,10 +30,7 @@
 //!     data: &'a [U64Be],
 //! }
 //!
-//! let bytes = nanonbt::to_bytes(&Source {
-//!     data: LongArray::new(vec![1, 2]),
-//! })
-//! .unwrap();
+//! let bytes = nanonbt::to_bytes(&Source { data: vec![1, 2] }).unwrap();
 //! let borrowed = nanonbt::from_bytes::<Borrowed<'_>>(&bytes).unwrap();
 //! assert_eq!(borrowed.data[0].get(), 1);
 //! assert_eq!(borrowed.data[1].get(), 2);
@@ -131,7 +128,52 @@ pub(crate) const fn as_i8(bytes: &[u8]) -> &[i8] {
 
 /// Reinterprets signed bytes as the bytes they are.
 pub(crate) const fn as_u8(bytes: &[i8]) -> &[u8] {
-    unsafe { core::slice::from_raw_parts(bytes.as_ptr().cast(), bytes.len()) }
+    as_bytes(bytes)
+}
+
+/// The bytes of a slice of scalar elements, as they lie in memory.
+///
+/// `T` must be a scalar whose every byte is initialized; a slice of any bit
+/// pattern is all the bytes of its elements and nothing else.
+pub(crate) const fn as_bytes<T: Copy>(elements: &[T]) -> &[u8] {
+    // SAFETY: the slice is contiguous, `size_of_val` is the length of the
+    // bytes it covers, and every one of them is initialized.
+    unsafe {
+        core::slice::from_raw_parts(
+            elements.as_ptr().cast::<u8>(),
+            core::mem::size_of_val(elements),
+        )
+    }
+}
+
+/// The bytes of big-endian ints, as NBT stores them.
+pub(crate) const fn i32be_as_bytes(values: &[I32Be]) -> &[u8] {
+    unsafe { core::slice::from_raw_parts(values.as_ptr().cast(), core::mem::size_of_val(values)) }
+}
+
+/// The bytes of big-endian longs, as NBT stores them.
+pub(crate) const fn i64be_as_bytes(values: &[I64Be]) -> &[u8] {
+    unsafe { core::slice::from_raw_parts(values.as_ptr().cast(), core::mem::size_of_val(values)) }
+}
+
+/// Reinterprets unsigned big-endian ints as the signed spelling.
+pub(crate) const fn as_i32be(values: &[U32Be]) -> &[I32Be] {
+    unsafe { core::slice::from_raw_parts(values.as_ptr().cast(), values.len()) }
+}
+
+/// Reinterprets signed big-endian ints as the unsigned spelling.
+pub(crate) const fn as_u32be(values: &[I32Be]) -> &[U32Be] {
+    unsafe { core::slice::from_raw_parts(values.as_ptr().cast(), values.len()) }
+}
+
+/// Reinterprets unsigned big-endian longs as the signed spelling.
+pub(crate) const fn as_i64be(values: &[U64Be]) -> &[I64Be] {
+    unsafe { core::slice::from_raw_parts(values.as_ptr().cast(), values.len()) }
+}
+
+/// Reinterprets signed big-endian longs as the unsigned spelling.
+pub(crate) const fn as_u64be(values: &[I64Be]) -> &[U64Be] {
+    unsafe { core::slice::from_raw_parts(values.as_ptr().cast(), values.len()) }
 }
 /// A `TAG_Short` kept as the two big-endian bytes NBT stores.
 ///

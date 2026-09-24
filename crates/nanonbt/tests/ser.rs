@@ -179,43 +179,106 @@ fn unit_enums_are_strings() {
 fn non_compound_roots_are_refused() {
     assert!(nanonbt::to_bytes(&1i32).is_err());
     assert!(nanonbt::to_bytes(&vec![1i32]).is_err());
-    assert!(nanonbt::to_bytes(&nanonbt::ByteArray::new(vec![1])).is_err());
     assert!(fastnbt::to_bytes(&1i32).is_err());
 }
 
 #[test]
-fn array_types_are_interchangeable_with_fastnbt() {
+fn array_fields_are_interchangeable_with_fastnbt() {
     #[derive(Serialize)]
     struct Fast {
         bytes: fastnbt::ByteArray,
         ints: fastnbt::IntArray,
         longs: fastnbt::LongArray,
-        many: Vec<fastnbt::LongArray>,
     }
 
     #[derive(ToNBT)]
     struct Nano {
-        bytes: nanonbt::ByteArray,
-        ints: nanonbt::IntArray,
-        longs: nanonbt::LongArray,
-        many: Vec<nanonbt::LongArray>,
+        #[nbt(array = "byte")]
+        bytes: Vec<i8>,
+        #[nbt(array = "int")]
+        ints: Vec<i32>,
+        #[nbt(array = "long")]
+        longs: Vec<i64>,
     }
 
     let fast = Fast {
         bytes: fastnbt::ByteArray::new(vec![1, -1]),
         ints: fastnbt::IntArray::new(vec![]),
         longs: fastnbt::LongArray::new(vec![i64::MIN]),
-        many: vec![fastnbt::LongArray::new(vec![1, 2])],
     };
     let nano = Nano {
-        bytes: nanonbt::ByteArray::new(vec![1, -1]),
-        ints: nanonbt::IntArray::new(vec![]),
-        longs: nanonbt::LongArray::new(vec![i64::MIN]),
-        many: vec![nanonbt::LongArray::new(vec![1, 2])],
+        bytes: vec![1, -1],
+        ints: vec![],
+        longs: vec![i64::MIN],
     };
 
     let expected = fastnbt::to_bytes(&fast).unwrap();
     assert_eq!(nanonbt::to_bytes(&nano).unwrap(), expected);
+}
+
+/// The `#[serde(with = ...)]` modules write the array tags, where a plain
+/// `Vec` field is a list.
+#[cfg(feature = "serde")]
+#[test]
+fn serde_array_fields_are_interchangeable_with_fastnbt() {
+    #[derive(Serialize)]
+    struct Fast {
+        bytes: fastnbt::ByteArray,
+        ints: fastnbt::IntArray,
+        longs: fastnbt::LongArray,
+        empty: fastnbt::LongArray,
+    }
+
+    #[derive(Serialize)]
+    struct Nano {
+        #[serde(with = "nanonbt::serde_compat::byte_array")]
+        bytes: Vec<i8>,
+        #[serde(with = "nanonbt::serde_compat::int_array")]
+        ints: Vec<i32>,
+        #[serde(with = "nanonbt::serde_compat::long_array")]
+        longs: Vec<i64>,
+        #[serde(with = "nanonbt::serde_compat::long_array")]
+        empty: Vec<i64>,
+    }
+
+    /// The unsigned spelling writes the same bits.
+    #[derive(Serialize)]
+    struct NanoUnsigned {
+        #[serde(with = "nanonbt::serde_compat::byte_array")]
+        bytes: Vec<u8>,
+        #[serde(with = "nanonbt::serde_compat::int_array")]
+        ints: Vec<u32>,
+        #[serde(with = "nanonbt::serde_compat::long_array")]
+        longs: Vec<u64>,
+        #[serde(with = "nanonbt::serde_compat::long_array")]
+        empty: Vec<u64>,
+    }
+
+    let fast = Fast {
+        bytes: fastnbt::ByteArray::new(vec![1, -1, i8::MIN]),
+        ints: fastnbt::IntArray::new(vec![i32::MIN, 0, i32::MAX]),
+        longs: fastnbt::LongArray::new(vec![i64::MIN, -1, i64::MAX]),
+        empty: fastnbt::LongArray::new(vec![]),
+    };
+    let expected = fastnbt::to_bytes(&fast).unwrap();
+
+    let signed = Nano {
+        bytes: vec![1, -1, i8::MIN],
+        ints: vec![i32::MIN, 0, i32::MAX],
+        longs: vec![i64::MIN, -1, i64::MAX],
+        empty: vec![],
+    };
+    let unsigned = NanoUnsigned {
+        bytes: vec![1, 0xff, 0x80],
+        ints: vec![0x8000_0000, 0, 0x7fff_ffff],
+        longs: vec![0x8000_0000_0000_0000, u64::MAX, 0x7fff_ffff_ffff_ffff],
+        empty: vec![],
+    };
+    assert_eq!(nanonbt::serde_compat::to_bytes(&signed).unwrap(), expected);
+    assert_eq!(
+        nanonbt::serde_compat::to_bytes(&unsigned).unwrap(),
+        expected
+    );
 }
 
 /// fastnbt truncates the `u16` length and writes corrupt NBT instead.

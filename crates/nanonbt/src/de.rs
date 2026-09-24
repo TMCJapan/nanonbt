@@ -2,17 +2,14 @@
 
 use alloc::borrow::Cow;
 
-use serde::de::{
-    self, Visitor,
-    value::{BorrowedBytesDeserializer, BorrowedStrDeserializer},
-};
+use serde::de::{self, Visitor};
 
 use nanocesu8::Cesu8;
 
 use crate::{
     DeOpts,
-    arrays::{BYTE_ARRAY_TOKEN, INT_ARRAY_TOKEN, LONG_ARRAY_TOKEN},
     error::{Error, Result},
+    serde_arrays::ArrayKind,
     tag::{
         TAG_BYTE, TAG_BYTE_ARRAY, TAG_COMPOUND, TAG_DOUBLE, TAG_END, TAG_FLOAT, TAG_INT,
         TAG_INT_ARRAY, TAG_LIST, TAG_LONG, TAG_LONG_ARRAY, TAG_MAX, TAG_SHORT, TAG_STRING,
@@ -213,22 +210,13 @@ struct Key<'a, 'de> {
     de: &'a mut Deserializer<'de>,
 }
 
-/// Names that would be mistaken for fastnbt's array wrappers are refused.
-fn check_not_token(name: &str) -> Result<&str> {
-    if [BYTE_ARRAY_TOKEN, INT_ARRAY_TOKEN, LONG_ARRAY_TOKEN].contains(&name) {
-        Err(Error::array_token_as_key())
-    } else {
-        Ok(name)
-    }
-}
-
 impl<'de> de::Deserializer<'de> for Key<'_, 'de> {
     type Error = Error;
 
     fn deserialize_any<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value> {
         match self.de.str()? {
-            Cow::Borrowed(name) => visitor.visit_borrowed_str(check_not_token(name)?),
-            Cow::Owned(name) => visitor.visit_str(check_not_token(&name)?),
+            Cow::Borrowed(name) => visitor.visit_borrowed_str(name),
+            Cow::Owned(name) => visitor.visit_str(&name),
         }
     }
 
@@ -243,35 +231,11 @@ impl<'de> de::Deserializer<'de> for Key<'_, 'de> {
 struct Payload<'a, 'de> {
     de: &'a mut Deserializer<'de>,
     tag: u8,
-    /// Whether a sequence was asked for, which an NBT array must not become.
-    seq_hint: bool,
 }
 
 impl<'a, 'de> Payload<'a, 'de> {
     const fn new(de: &'a mut Deserializer<'de>, tag: u8) -> Self {
-        Self {
-            de,
-            tag,
-            seq_hint: false,
-        }
-    }
-
-    fn array<V: Visitor<'de>>(
-        self,
-        visitor: V,
-        token: &'static str,
-        size: usize,
-    ) -> Result<V::Value> {
-        if self.seq_hint {
-            return Err(Error::array_as_seq());
-        }
-        let len = self.de.array_len()?;
-        let size = len.checked_mul(size).ok_or_else(Error::array_too_large)?;
-        visitor.visit_map(ArrayWrapper {
-            de: self.de,
-            token: Some(token),
-            size,
-        })
+        Self { de, tag }
     }
 }
 
@@ -307,9 +271,15 @@ impl<'de> de::Deserializer<'de> for Payload<'_, 'de> {
                 de.nested(|de| visitor.visit_seq(List { de, tag, remaining }))
             }
             TAG_COMPOUND => de.nested(|de| visitor.visit_map(Compound { de, tag: TAG_END })),
-            TAG_BYTE_ARRAY => Payload { de, ..self }.array(visitor, BYTE_ARRAY_TOKEN, 1),
-            TAG_INT_ARRAY => Payload { de, ..self }.array(visitor, INT_ARRAY_TOKEN, 4),
-            TAG_LONG_ARRAY => Payload { de, ..self }.array(visitor, LONG_ARRAY_TOKEN, 8),
+            TAG_BYTE_ARRAY | TAG_INT_ARRAY | TAG_LONG_ARRAY => {
+                let size = match self.tag {
+                    TAG_INT_ARRAY => 4,
+                    TAG_LONG_ARRAY => 8,
+                    _ => 1,
+                };
+                let len = de.array_len()?;
+                visitor.visit_borrowed_bytes(de.take_elements(len, size)?)
+            }
             _ => Err(Error::expected_value()),
         }
     }
@@ -336,12 +306,21 @@ impl<'de> de::Deserializer<'de> for Payload<'_, 'de> {
         self.deserialize_unit(visitor)
     }
 
+    /// A `#[serde(with = ...)]` array module hands its visitor the array's
+    /// payload; every other newtype struct deserializes as its inner value.
     fn deserialize_newtype_struct<V: Visitor<'de>>(
         self,
-        _name: &'static str,
+        name: &'static str,
         visitor: V,
     ) -> Result<V::Value> {
-        visitor.visit_newtype_struct(self)
+        let Some(kind) = ArrayKind::from_token(name) else {
+            return visitor.visit_newtype_struct(self);
+        };
+        if self.tag != kind.tag() {
+            return Err(Error::invalid_tag(self.tag));
+        }
+        let len = self.de.array_len()?;
+        visitor.visit_borrowed_bytes(self.de.take_elements(len, kind.size())?)
     }
 
     /// Only unit variants, named by the value.
@@ -358,11 +337,7 @@ impl<'de> de::Deserializer<'de> for Payload<'_, 'de> {
     }
 
     fn deserialize_seq<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value> {
-        Payload {
-            seq_hint: true,
-            ..self
-        }
-        .deserialize_any(visitor)
+        self.deserialize_any(visitor)
     }
 
     fn deserialize_tuple_struct<V: Visitor<'de>>(
@@ -397,6 +372,10 @@ impl<'de> de::Deserializer<'de> for Payload<'_, 'de> {
             TAG_BYTE_ARRAY => {
                 let len = de.array_len()?;
                 de.take_elements(len, 1)?
+            }
+            TAG_INT_ARRAY => {
+                let len = de.array_len()?;
+                de.take_elements(len, 4)?
             }
             TAG_LONG_ARRAY => {
                 let len = de.array_len()?;
@@ -497,29 +476,6 @@ impl Payload<'_, '_> {
         let bytes = self.de.take_elements(len, 4)?;
         let bytes = bytes.try_into().map_err(|_| Error::expected_int_array())?;
         Ok(i128::from_be_bytes(bytes))
-    }
-}
-
-/// An NBT array, presented as the single-entry map its wrapper type expects.
-struct ArrayWrapper<'a, 'de> {
-    de: &'a mut Deserializer<'de>,
-    token: Option<&'static str>,
-    size: usize,
-}
-
-impl<'de> de::MapAccess<'de> for ArrayWrapper<'_, 'de> {
-    type Error = Error;
-
-    fn next_key_seed<K: de::DeserializeSeed<'de>>(&mut self, seed: K) -> Result<Option<K::Value>> {
-        self.token.take().map_or(Ok(None), |token| {
-            seed.deserialize(BorrowedStrDeserializer::new(token))
-                .map(Some)
-        })
-    }
-
-    fn next_value_seed<V: de::DeserializeSeed<'de>>(&mut self, seed: V) -> Result<V::Value> {
-        let bytes = self.de.take(self.size)?;
-        seed.deserialize(BorrowedBytesDeserializer::new(bytes))
     }
 }
 
