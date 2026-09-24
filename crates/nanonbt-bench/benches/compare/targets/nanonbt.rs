@@ -9,6 +9,11 @@
 //!
 //! Field names are the NBT keys, so neither `serde` nor the derive needs a
 //! rename attribute; the parser rejects unknown fields, not unknown attributes.
+//!
+//! The skip model at the end writes what the `skip` group parses: a compound
+//! holding `kept`, the one field [`Sparse`] declares, and `skipped`, one huge
+//! entry of that shape. Everything past `kept` is passed over, the serde side
+//! through `IgnoredAny` and the derive through `Read::skip`.
 
 use std::borrow::Cow;
 
@@ -20,7 +25,7 @@ use nanonbt::{
 use random_names::random_names;
 use serde::{Deserialize, Serialize};
 
-use crate::documents::{Array, BenchInput, Doc};
+use crate::documents::{Array, BenchInput, Doc, Skip};
 use crate::{bench_parse, bench_write};
 
 // ---------------------------------------------------------------------------
@@ -594,6 +599,152 @@ pub fn array_document(kind: Array, len: usize) -> Vec<u8> {
 }
 
 // ---------------------------------------------------------------------------
+// The skip model, one compound per skipped shape.
+// ---------------------------------------------------------------------------
+
+/// The six lists whose elements all take the same number of bytes, one
+/// module per element type.
+///
+/// A structural skip can pass over these without walking them, so their
+/// documents are what the `skip` group measures against targets that walk
+/// every element.
+macro_rules! skip_lists {
+    ($($module:ident, $ty:ty;)*) => {
+        $(
+            pub mod $module {
+                use super::*;
+
+                /// The document: a compound holding `kept` and the skipped
+                /// list.
+                #[derive(ToNBT)]
+                pub struct Source {
+                    pub kept: i32,
+                    pub skipped: Vec<$ty>,
+                }
+
+                /// A document of `len` skipped elements.
+                pub fn document(len: usize) -> Vec<u8> {
+                    let value = Source {
+                        kept: 1,
+                        skipped: (0..len).map(|i| i as $ty).collect(),
+                    };
+                    ::nanonbt::to_bytes(&value).expect("the document writes")
+                }
+            }
+        )*
+    };
+}
+
+skip_lists! {
+    byte_list, i8;
+    short_list, i16;
+    int_list, i32;
+    long_list, i64;
+    float_list, f32;
+    double_list, f64;
+}
+
+/// The three arrays, one module per kind.
+macro_rules! skip_arrays {
+    ($($module:ident, $kind:literal, $ty:ty;)*) => {
+        $(
+            pub mod $module {
+                use super::*;
+
+                /// The document: a compound holding `kept` and the skipped
+                /// array.
+                #[derive(ToNBT)]
+                pub struct Source {
+                    pub kept: i32,
+                    #[nbt(array = $kind)]
+                    pub skipped: Vec<$ty>,
+                }
+
+                /// A document of `len` skipped elements.
+                pub fn document(len: usize) -> Vec<u8> {
+                    let value = Source {
+                        kept: 1,
+                        skipped: (0..len).map(|i| i as $ty).collect(),
+                    };
+                    ::nanonbt::to_bytes(&value).expect("the document writes")
+                }
+            }
+        )*
+    };
+}
+
+skip_arrays! {
+    byte_array, "byte", i8;
+    int_array, "int", i32;
+    long_array, "long", i64;
+}
+
+/// The skipped list of strings.
+pub mod string_list {
+    use super::*;
+
+    /// The document: a compound holding `kept` and the skipped list.
+    #[derive(ToNBT)]
+    pub struct Source {
+        pub kept: i32,
+        pub skipped: Vec<String>,
+    }
+
+    /// A document of `len` skipped elements.
+    pub fn document(len: usize) -> Vec<u8> {
+        let value = Source {
+            kept: 1,
+            skipped: (0..len).map(|i| format!("minecraft:string_{i}")).collect(),
+        };
+        ::nanonbt::to_bytes(&value).expect("the document writes")
+    }
+}
+
+/// The skipped list of compounds.
+pub mod compound_list {
+    use super::*;
+
+    /// One element of the skipped list.
+    #[derive(ToNBT)]
+    pub struct Leaf {
+        pub value: i64,
+    }
+
+    /// The document: a compound holding `kept` and the skipped list.
+    #[derive(ToNBT)]
+    pub struct Source {
+        pub kept: i32,
+        pub skipped: Vec<Leaf>,
+    }
+
+    /// A document of `len` skipped elements.
+    pub fn document(len: usize) -> Vec<u8> {
+        let value = Source {
+            kept: 1,
+            skipped: (0..len).map(|i| Leaf { value: i as i64 }).collect(),
+        };
+        ::nanonbt::to_bytes(&value).expect("the document writes")
+    }
+}
+
+/// The document bytes of one skip shape.
+pub fn skip_document(kind: Skip, len: usize) -> Vec<u8> {
+    match kind {
+        Skip::ByteList => byte_list::document(len),
+        Skip::ShortList => short_list::document(len),
+        Skip::IntList => int_list::document(len),
+        Skip::LongList => long_list::document(len),
+        Skip::FloatList => float_list::document(len),
+        Skip::DoubleList => double_list::document(len),
+        Skip::ByteArray => byte_array::document(len),
+        Skip::IntArray => int_array::document(len),
+        Skip::LongArray => long_array::document(len),
+        Skip::StringList => string_list::document(len),
+        Skip::CompoundList => compound_list::document(len),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // The entries.
 // ---------------------------------------------------------------------------
 
@@ -784,4 +935,24 @@ pub fn write(group: &mut BenchmarkGroup<'_, WallTime>, input: BenchInput) {
             Array::Long => long::write(group, kind, bytes),
         },
     }
+}
+
+/// The skip target: it declares `kept` alone, so the big `skipped` entry is
+/// passed over, the serde side through `IgnoredAny` and the derive through
+/// `Read::skip`.
+#[derive(Deserialize, FromNBT)]
+pub struct Sparse {
+    /// Only the parse result matters; no entry reads this back.
+    #[allow(dead_code)]
+    pub kept: i32,
+}
+
+/// The skip entries of one shape.
+pub fn skip(group: &mut BenchmarkGroup<'_, WallTime>, kind: Skip, bytes: &[u8]) {
+    bench_parse(group, "nanonbt-serde", kind.name(), bytes, |b: &[u8]| {
+        serde_compat::from_bytes::<Sparse>(b).expect("the document parses")
+    });
+    bench_parse(group, "nanonbt-derive", kind.name(), bytes, |b: &[u8]| {
+        nanonbt::from_bytes::<Sparse>(b).expect("the document parses")
+    });
 }

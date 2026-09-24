@@ -1,6 +1,9 @@
 //! The `pumpkin-nbt` entry: one plain struct per document, filled through
 //! `NbtCompound` accessors and written back with `put_*`.
 //!
+//! It has no skip either, so the skip entry at the end reads a whole skip
+//! document and only then looks up `kept`.
+//!
 //! pumpkin-nbt has no serde support, so the mapping is hand-written; that is
 //! also how its users read typed data.
 
@@ -10,7 +13,7 @@ use criterion::{BenchmarkGroup, measurement::WallTime};
 use pumpkin_nbt::{Nbt, NbtCompound, deserializer::NbtReadHelperJava, tag::NbtTag};
 use random_names::random_names;
 
-use crate::documents::{Array, BenchInput, Doc};
+use crate::documents::{Array, BenchInput, Doc, Skip};
 use crate::{bench_parse, bench_write};
 
 /// Extracts each tag of a list of compounds.
@@ -897,4 +900,17 @@ pub fn write(group: &mut BenchmarkGroup<'_, WallTime>, input: BenchInput) {
             ),
         },
     }
+}
+
+/// The skip entry of one shape.
+///
+/// `pumpkin-nbt` reads a whole tree before any accessor, so this reads the
+/// document and only then looks up `kept`; the entry records what not
+/// skipping costs.
+pub fn skip(group: &mut BenchmarkGroup<'_, WallTime>, kind: Skip, bytes: &[u8]) {
+    bench_parse(group, "pumpkin", kind.name(), bytes, |b: &[u8]| {
+        let mut reader = NbtReadHelperJava::new(Cursor::new(std::hint::black_box(b)));
+        let root = Nbt::read(&mut reader).expect("document parses").root_tag;
+        std::hint::black_box(root.get_int("kept").expect("kept"));
+    });
 }
