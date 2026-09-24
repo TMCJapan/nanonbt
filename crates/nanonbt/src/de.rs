@@ -9,6 +9,7 @@ use nanocesu8::Cesu8;
 use crate::{
     DeOpts,
     error::{Error, Result},
+    serde_arrays::ArrayKind,
     tag::{
         TAG_BYTE, TAG_BYTE_ARRAY, TAG_COMPOUND, TAG_DOUBLE, TAG_END, TAG_FLOAT, TAG_INT,
         TAG_INT_ARRAY, TAG_LIST, TAG_LONG, TAG_LONG_ARRAY, TAG_MAX, TAG_SHORT, TAG_STRING,
@@ -305,12 +306,21 @@ impl<'de> de::Deserializer<'de> for Payload<'_, 'de> {
         self.deserialize_unit(visitor)
     }
 
+    /// A `#[serde(with = ...)]` array module hands its visitor the array's
+    /// payload; every other newtype struct deserializes as its inner value.
     fn deserialize_newtype_struct<V: Visitor<'de>>(
         self,
-        _name: &'static str,
+        name: &'static str,
         visitor: V,
     ) -> Result<V::Value> {
-        visitor.visit_newtype_struct(self)
+        let Some(kind) = ArrayKind::from_token(name) else {
+            return visitor.visit_newtype_struct(self);
+        };
+        if self.tag != kind.tag() {
+            return Err(Error::invalid_tag(self.tag));
+        }
+        let len = self.de.array_len()?;
+        visitor.visit_borrowed_bytes(self.de.take_elements(len, kind.size())?)
     }
 
     /// Only unit variants, named by the value.

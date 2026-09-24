@@ -128,7 +128,22 @@ pub(crate) const fn as_i8(bytes: &[u8]) -> &[i8] {
 
 /// Reinterprets signed bytes as the bytes they are.
 pub(crate) const fn as_u8(bytes: &[i8]) -> &[u8] {
-    unsafe { core::slice::from_raw_parts(bytes.as_ptr().cast(), bytes.len()) }
+    as_bytes(bytes)
+}
+
+/// The bytes of a slice of scalar elements, as they lie in memory.
+///
+/// `T` must be a scalar whose every byte is initialized; a slice of any bit
+/// pattern is all the bytes of its elements and nothing else.
+pub(crate) const fn as_bytes<T: Copy>(elements: &[T]) -> &[u8] {
+    // SAFETY: the slice is contiguous, `size_of_val` is the length of the
+    // bytes it covers, and every one of them is initialized.
+    unsafe {
+        core::slice::from_raw_parts(
+            elements.as_ptr().cast::<u8>(),
+            core::mem::size_of_val(elements),
+        )
+    }
 }
 
 /// The bytes of big-endian ints, as NBT stores them.

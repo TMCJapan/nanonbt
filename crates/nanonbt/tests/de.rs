@@ -290,6 +290,161 @@ fn serde_reads_arrays_as_raw_bytes() {
     assert_eq!(&raw.longs[..], &expected[..]);
 }
 
+/// The `#[serde(with = ...)]` modules read an array into its elements, where
+/// a plain `Vec` field reads a list.
+#[cfg(feature = "serde")]
+#[test]
+fn serde_with_reads_array_fields() {
+    #[derive(Serialize)]
+    struct Source {
+        bytes: fastnbt::ByteArray,
+        ints: fastnbt::IntArray,
+        longs: fastnbt::LongArray,
+        empty: fastnbt::LongArray,
+    }
+
+    #[derive(Deserialize, PartialEq, Debug)]
+    struct Nano {
+        #[serde(with = "nanonbt::serde_compat::byte_array")]
+        bytes: Vec<i8>,
+        #[serde(with = "nanonbt::serde_compat::int_array")]
+        ints: Vec<i32>,
+        #[serde(with = "nanonbt::serde_compat::long_array")]
+        longs: Vec<i64>,
+        #[serde(with = "nanonbt::serde_compat::long_array")]
+        empty: Vec<i64>,
+    }
+
+    /// The unsigned spelling reads the same bits.
+    #[derive(Deserialize, PartialEq, Debug)]
+    struct NanoUnsigned {
+        #[serde(with = "nanonbt::serde_compat::byte_array")]
+        bytes: Vec<u8>,
+        #[serde(with = "nanonbt::serde_compat::int_array")]
+        ints: Vec<u32>,
+        #[serde(with = "nanonbt::serde_compat::long_array")]
+        longs: Vec<u64>,
+        #[serde(with = "nanonbt::serde_compat::long_array")]
+        empty: Vec<u64>,
+    }
+
+    let bytes = encode(&Source {
+        bytes: fastnbt::ByteArray::new(vec![1, -1, i8::MIN]),
+        ints: fastnbt::IntArray::new(vec![i32::MIN, 0, i32::MAX]),
+        longs: fastnbt::LongArray::new(vec![i64::MIN, -1, i64::MAX]),
+        empty: fastnbt::LongArray::new(vec![]),
+    });
+    assert_eq!(
+        nanonbt::serde_compat::from_bytes::<Nano>(&bytes).unwrap(),
+        Nano {
+            bytes: vec![1, -1, i8::MIN],
+            ints: vec![i32::MIN, 0, i32::MAX],
+            longs: vec![i64::MIN, -1, i64::MAX],
+            empty: vec![],
+        }
+    );
+    assert_eq!(
+        nanonbt::serde_compat::from_bytes::<NanoUnsigned>(&bytes).unwrap(),
+        NanoUnsigned {
+            bytes: vec![1, 0xff, 0x80],
+            ints: vec![0x8000_0000, 0, 0x7fff_ffff],
+            longs: vec![0x8000_0000_0000_0000, u64::MAX, 0x7fff_ffff_ffff_ffff],
+            empty: vec![],
+        }
+    );
+}
+
+/// A `#[serde(with = ...)]` field takes the array tag only, refusing another
+/// kind of array or a list, as a derived `#[nbt(array = ...)]` field does.
+#[cfg(feature = "serde")]
+#[test]
+fn serde_with_refuses_other_tags() {
+    #[derive(Serialize)]
+    struct Longs {
+        data: fastnbt::LongArray,
+    }
+
+    #[derive(Serialize)]
+    struct List {
+        data: Vec<i32>,
+    }
+
+    #[derive(Deserialize)]
+    struct AsInts {
+        #[allow(dead_code)]
+        #[serde(with = "nanonbt::serde_compat::int_array")]
+        data: Vec<i32>,
+    }
+
+    let longs = encode(&Longs {
+        data: fastnbt::LongArray::new(vec![1]),
+    });
+    assert!(nanonbt::serde_compat::from_bytes::<AsInts>(&longs).is_err());
+
+    let list = encode(&List { data: vec![1] });
+    assert!(nanonbt::serde_compat::from_bytes::<AsInts>(&list).is_err());
+}
+
+/// Arrays inside a list of compounds — the chunk benchmark's shape — read
+/// and write the same bytes through the `#[serde(with = ...)]` modules.
+#[cfg(feature = "serde")]
+#[test]
+fn serde_with_round_trips_nested_array_fields() {
+    #[derive(Serialize)]
+    struct Inner {
+        light: fastnbt::ByteArray,
+        data: fastnbt::LongArray,
+    }
+
+    #[derive(Serialize)]
+    struct Outer {
+        sections: Vec<Inner>,
+    }
+
+    #[derive(Serialize, Deserialize, PartialEq, Debug)]
+    struct InnerNano {
+        #[serde(with = "nanonbt::serde_compat::byte_array")]
+        light: Vec<i8>,
+        #[serde(with = "nanonbt::serde_compat::long_array")]
+        data: Vec<i64>,
+    }
+
+    #[derive(Serialize, Deserialize, PartialEq, Debug)]
+    struct OuterNano {
+        sections: Vec<InnerNano>,
+    }
+
+    let bytes = encode(&Outer {
+        sections: vec![
+            Inner {
+                light: fastnbt::ByteArray::new(vec![0, -1]),
+                data: fastnbt::LongArray::new(vec![1, -2]),
+            },
+            Inner {
+                light: fastnbt::ByteArray::new(vec![]),
+                data: fastnbt::LongArray::new(vec![i64::MIN]),
+            },
+        ],
+    });
+    let parsed: OuterNano = nanonbt::serde_compat::from_bytes(&bytes).unwrap();
+    assert_eq!(
+        parsed,
+        OuterNano {
+            sections: vec![
+                InnerNano {
+                    light: vec![0, -1],
+                    data: vec![1, -2],
+                },
+                InnerNano {
+                    light: vec![],
+                    data: vec![i64::MIN],
+                },
+            ],
+        }
+    );
+    assert_eq!(nanonbt::serde_compat::to_bytes(&parsed).unwrap(), bytes);
+}
+
 #[test]
 fn wide_integers_follow_fastnbt() {
     #[derive(Serialize)]

@@ -17,9 +17,9 @@
 //! hold the two against each other.
 
 use alloc::vec::Vec;
-use core::mem::size_of_val;
 
 use crate::{
+    be::as_bytes,
     error::{Error, Result},
     read::Read,
     write::Write,
@@ -149,16 +149,6 @@ pub(crate) fn write_be<T: Copy, const SIZE: usize, W: Write + ?Sized>(
         writer.write_bytes(staged)?;
     }
     Ok(())
-}
-
-/// The bytes of a slice of scalar elements, as they lie in memory.
-///
-/// Every bit pattern of the scalar types this is called with is a valid
-/// byte, and `T: Copy` has no drop glue, so the reinterpretation is sound.
-const fn as_bytes<T: Copy>(elements: &[T]) -> &[u8] {
-    // SAFETY: the slice is contiguous, `size_of_val` is the length of the
-    // bytes it covers, and every one of them is initialized.
-    unsafe { core::slice::from_raw_parts(elements.as_ptr().cast::<u8>(), size_of_val(elements)) }
 }
 
 /// Swaps `n` bytes, a vector block at a time, on targets that have one.

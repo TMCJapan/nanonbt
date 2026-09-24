@@ -26,10 +26,12 @@
 //! The encoding is byte-for-byte the one [fastnbt](https://docs.rs/fastnbt)
 //! 2.6 produces for the same values, arrays included. With the `serde`
 //! feature, the old `Serialize`/`Deserialize` implementations are kept as
-//! well, and `serde_compat` holds their entry points; NBT arrays have no
-//! serde type of their own and are read as their raw bytes. The `simd`
-//! feature settles array and numeric-list byte order a vector at a time, on
-//! x86, aarch64 and wasm, and stays `no_std`.
+//! well, and `serde_compat` holds their entry points. NBT arrays have no
+//! serde type of their own — a plain `Vec` field is a list and an array
+//! reads as its raw bytes — so `serde_compat` has a `#[serde(with = ...)]`
+//! module per array kind for fields that hold elements. The `simd` feature
+//! settles array and numeric-list byte order a vector at a time, on x86,
+//! aarch64 and wasm, and stays `no_std`.
 //!
 //! # The data model
 //!
@@ -114,6 +116,8 @@ mod impls;
 pub mod read;
 #[cfg(feature = "serde")]
 pub mod ser;
+#[cfg(feature = "serde")]
+mod serde_arrays;
 #[cfg(feature = "simd")]
 mod simd;
 mod tag;
@@ -286,6 +290,25 @@ pub fn from_bytes_with_opts<'de, T: FromNBT<'de>>(input: &'de [u8], opts: DeOpts
 ///
 /// Available only with the `serde` feature, alongside the trait
 /// implementations the old versions of this crate provided.
+///
+/// NBT arrays have no serde type of their own: a plain `Vec` field is a
+/// list, and a document's array is read as its raw bytes. The
+/// [`crate::serde_compat::byte_array`],
+/// [`crate::serde_compat::int_array`] and
+/// [`crate::serde_compat::long_array`] modules are the explicit spelling,
+/// for a field annotated with `#[serde(with = ...)]`:
+///
+/// ```
+/// use serde::{Deserialize, Serialize};
+///
+/// #[derive(Serialize, Deserialize)]
+/// struct Chunk {
+///     #[serde(with = "nanonbt::serde_compat::long_array")]
+///     heightmap: Vec<i64>,
+///     #[serde(with = "nanonbt::serde_compat::byte_array")]
+///     light: Vec<i8>,
+/// }
+/// ```
 #[cfg(feature = "serde")]
 pub mod serde_compat {
     use alloc::vec::Vec;
@@ -293,6 +316,8 @@ pub mod serde_compat {
     use serde::{Deserialize, Serialize};
 
     use crate::{DeOpts, Result, SerOpts, de, ser};
+
+    pub use crate::serde_arrays::{byte_array, int_array, long_array};
 
     /// Serializes `value` as the root compound, with an empty name.
     pub fn to_bytes<T: Serialize + ?Sized>(value: &T) -> Result<Vec<u8>> {

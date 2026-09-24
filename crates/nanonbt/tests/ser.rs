@@ -216,6 +216,71 @@ fn array_fields_are_interchangeable_with_fastnbt() {
     assert_eq!(nanonbt::to_bytes(&nano).unwrap(), expected);
 }
 
+/// The `#[serde(with = ...)]` modules write the array tags, where a plain
+/// `Vec` field is a list.
+#[cfg(feature = "serde")]
+#[test]
+fn serde_array_fields_are_interchangeable_with_fastnbt() {
+    #[derive(Serialize)]
+    struct Fast {
+        bytes: fastnbt::ByteArray,
+        ints: fastnbt::IntArray,
+        longs: fastnbt::LongArray,
+        empty: fastnbt::LongArray,
+    }
+
+    #[derive(Serialize)]
+    struct Nano {
+        #[serde(with = "nanonbt::serde_compat::byte_array")]
+        bytes: Vec<i8>,
+        #[serde(with = "nanonbt::serde_compat::int_array")]
+        ints: Vec<i32>,
+        #[serde(with = "nanonbt::serde_compat::long_array")]
+        longs: Vec<i64>,
+        #[serde(with = "nanonbt::serde_compat::long_array")]
+        empty: Vec<i64>,
+    }
+
+    /// The unsigned spelling writes the same bits.
+    #[derive(Serialize)]
+    struct NanoUnsigned {
+        #[serde(with = "nanonbt::serde_compat::byte_array")]
+        bytes: Vec<u8>,
+        #[serde(with = "nanonbt::serde_compat::int_array")]
+        ints: Vec<u32>,
+        #[serde(with = "nanonbt::serde_compat::long_array")]
+        longs: Vec<u64>,
+        #[serde(with = "nanonbt::serde_compat::long_array")]
+        empty: Vec<u64>,
+    }
+
+    let fast = Fast {
+        bytes: fastnbt::ByteArray::new(vec![1, -1, i8::MIN]),
+        ints: fastnbt::IntArray::new(vec![i32::MIN, 0, i32::MAX]),
+        longs: fastnbt::LongArray::new(vec![i64::MIN, -1, i64::MAX]),
+        empty: fastnbt::LongArray::new(vec![]),
+    };
+    let expected = fastnbt::to_bytes(&fast).unwrap();
+
+    let signed = Nano {
+        bytes: vec![1, -1, i8::MIN],
+        ints: vec![i32::MIN, 0, i32::MAX],
+        longs: vec![i64::MIN, -1, i64::MAX],
+        empty: vec![],
+    };
+    let unsigned = NanoUnsigned {
+        bytes: vec![1, 0xff, 0x80],
+        ints: vec![0x8000_0000, 0, 0x7fff_ffff],
+        longs: vec![0x8000_0000_0000_0000, u64::MAX, 0x7fff_ffff_ffff_ffff],
+        empty: vec![],
+    };
+    assert_eq!(nanonbt::serde_compat::to_bytes(&signed).unwrap(), expected);
+    assert_eq!(
+        nanonbt::serde_compat::to_bytes(&unsigned).unwrap(),
+        expected
+    );
+}
+
 /// fastnbt truncates the `u16` length and writes corrupt NBT instead.
 #[test]
 fn strings_longer_than_a_u16_length_are_refused() {

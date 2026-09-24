@@ -5,6 +5,7 @@
 //! length, is held back as a header until then.
 use crate::{
     error::{Error, Result},
+    serde_arrays::ArrayKind,
     tag::{
         TAG_BYTE, TAG_COMPOUND, TAG_DOUBLE, TAG_END, TAG_FLOAT, TAG_INT, TAG_INT_ARRAY, TAG_LIST,
         TAG_LONG, TAG_SHORT, TAG_STRING,
@@ -411,9 +412,16 @@ impl<'a> ser::Serializer for Delayed<'a> {
     }
     fn serialize_newtype_struct<T: Serialize + ?Sized>(
         self,
-        _name: &'static str,
+        name: &'static str,
         value: &T,
     ) -> Result<()> {
+        if let Some(kind) = ArrayKind::from_token(name) {
+            return value.serialize(ArrayWriter {
+                out: self.out,
+                header: self.header,
+                kind,
+            });
+        }
         value.serialize(self)
     }
     fn serialize_newtype_variant<T: Serialize + ?Sized>(
@@ -435,6 +443,182 @@ impl<'a> ser::Serializer for Delayed<'a> {
         Err(Error::variant())
     }
 }
+
+/// Writes an NBT array from the bytes a `#[serde(with = ...)]` module
+/// offers, in NBT's big-endian order.
+///
+/// The module wraps its value in a newtype struct named by the array kind,
+/// and the value offers itself through [`Serialize::serialize_bytes`]. Every
+/// other method is unreachable — only this crate's array modules know a
+/// token — and refuses.
+struct ArrayWriter<'a> {
+    out: &'a mut Vec<u8>,
+    header: Option<Header>,
+    kind: ArrayKind,
+}
+
+/// Reorders a payload of native-endian elements to big-endian.
+fn swap_elements(kind: ArrayKind, bytes: &mut [u8]) {
+    if cfg!(target_endian = "big") || kind == ArrayKind::Byte {
+        return;
+    }
+    #[cfg(feature = "simd")]
+    match kind {
+        ArrayKind::Int => crate::simd::swap_bytes_in_place::<4>(bytes),
+        ArrayKind::Long => crate::simd::swap_bytes_in_place::<8>(bytes),
+        ArrayKind::Byte => {}
+    }
+    #[cfg(not(feature = "simd"))]
+    for element in bytes.chunks_mut(kind.size()) {
+        element.reverse();
+    }
+}
+
+impl ser::Serializer for ArrayWriter<'_> {
+    type Ok = ();
+    type Error = Error;
+    type SerializeSeq = Impossible<(), Error>;
+    type SerializeTuple = Impossible<(), Error>;
+    type SerializeTupleStruct = Impossible<(), Error>;
+    type SerializeTupleVariant = Impossible<(), Error>;
+    type SerializeMap = Impossible<(), Error>;
+    type SerializeStruct = Impossible<(), Error>;
+    type SerializeStructVariant = Impossible<(), Error>;
+    /// The array's payload, as the elements lie in memory.
+    fn serialize_bytes(mut self, v: &[u8]) -> Result<()> {
+        let size = self.kind.size();
+        if !v.len().is_multiple_of(size) {
+            return Err(Error::array_payload());
+        }
+        if let Some(header) = self.header.take() {
+            write_header(self.out, header, self.kind.tag())?;
+        }
+        write_len(self.out, v.len() / size)?;
+        let start = self.out.len();
+        self.out.extend_from_slice(v);
+        swap_elements(self.kind, &mut self.out[start..]);
+        Ok(())
+    }
+    fn serialize_bool(self, _: bool) -> Result<()> {
+        Err(Error::array_payload())
+    }
+    fn serialize_i8(self, _: i8) -> Result<()> {
+        Err(Error::array_payload())
+    }
+    fn serialize_i16(self, _: i16) -> Result<()> {
+        Err(Error::array_payload())
+    }
+    fn serialize_i32(self, _: i32) -> Result<()> {
+        Err(Error::array_payload())
+    }
+    fn serialize_i64(self, _: i64) -> Result<()> {
+        Err(Error::array_payload())
+    }
+    fn serialize_i128(self, _: i128) -> Result<()> {
+        Err(Error::array_payload())
+    }
+    fn serialize_u8(self, _: u8) -> Result<()> {
+        Err(Error::array_payload())
+    }
+    fn serialize_u16(self, _: u16) -> Result<()> {
+        Err(Error::array_payload())
+    }
+    fn serialize_u32(self, _: u32) -> Result<()> {
+        Err(Error::array_payload())
+    }
+    fn serialize_u64(self, _: u64) -> Result<()> {
+        Err(Error::array_payload())
+    }
+    fn serialize_u128(self, _: u128) -> Result<()> {
+        Err(Error::array_payload())
+    }
+    fn serialize_f32(self, _: f32) -> Result<()> {
+        Err(Error::array_payload())
+    }
+    fn serialize_f64(self, _: f64) -> Result<()> {
+        Err(Error::array_payload())
+    }
+    fn serialize_char(self, _: char) -> Result<()> {
+        Err(Error::array_payload())
+    }
+    fn serialize_str(self, _: &str) -> Result<()> {
+        Err(Error::array_payload())
+    }
+    fn serialize_none(self) -> Result<()> {
+        Err(Error::array_payload())
+    }
+    fn serialize_some<T: Serialize + ?Sized>(self, _value: &T) -> Result<()> {
+        Err(Error::array_payload())
+    }
+    fn serialize_unit(self) -> Result<()> {
+        Err(Error::array_payload())
+    }
+    fn serialize_unit_struct(self, _name: &'static str) -> Result<()> {
+        Err(Error::array_payload())
+    }
+    fn serialize_unit_variant(
+        self,
+        _name: &'static str,
+        _variant_index: u32,
+        _variant: &'static str,
+    ) -> Result<()> {
+        Err(Error::array_payload())
+    }
+    fn serialize_newtype_struct<T: Serialize + ?Sized>(
+        self,
+        _name: &'static str,
+        _value: &T,
+    ) -> Result<()> {
+        Err(Error::array_payload())
+    }
+    fn serialize_newtype_variant<T: Serialize + ?Sized>(
+        self,
+        _name: &'static str,
+        _variant_index: u32,
+        _variant: &'static str,
+        _value: &T,
+    ) -> Result<()> {
+        Err(Error::array_payload())
+    }
+    fn serialize_seq(self, _len: Option<usize>) -> Result<Self::SerializeSeq> {
+        Err(Error::array_payload())
+    }
+    fn serialize_tuple(self, _len: usize) -> Result<Self::SerializeTuple> {
+        Err(Error::array_payload())
+    }
+    fn serialize_tuple_struct(
+        self,
+        _name: &'static str,
+        _len: usize,
+    ) -> Result<Self::SerializeTupleStruct> {
+        Err(Error::array_payload())
+    }
+    fn serialize_tuple_variant(
+        self,
+        _name: &'static str,
+        _variant_index: u32,
+        _variant: &'static str,
+        _len: usize,
+    ) -> Result<Self::SerializeTupleVariant> {
+        Err(Error::array_payload())
+    }
+    fn serialize_map(self, _len: Option<usize>) -> Result<Self::SerializeMap> {
+        Err(Error::array_payload())
+    }
+    fn serialize_struct(self, _name: &'static str, _len: usize) -> Result<Self::SerializeStruct> {
+        Err(Error::array_payload())
+    }
+    fn serialize_struct_variant(
+        self,
+        _name: &'static str,
+        _variant_index: u32,
+        _variant: &'static str,
+        _len: usize,
+    ) -> Result<Self::SerializeStructVariant> {
+        Err(Error::array_payload())
+    }
+}
+
 /// The elements of a list being serialized.
 ///
 /// Only the first element writes the list header, so a list whose elements

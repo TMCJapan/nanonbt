@@ -109,6 +109,13 @@ impl Error {
         Self(Kind::Static("cannot convert to bytes"))
     }
 
+    /// The value of a `#[serde(with = ...)]` array field was serialized as
+    /// something other than the array's bytes.
+    #[cfg(feature = "serde")]
+    pub(crate) const fn array_payload() -> Self {
+        Self(Kind::Static("NBT array must serialize as bytes"))
+    }
+
     pub(crate) const fn expected_int_array() -> Self {
         Self(Kind::Static(
             "deserialize i128: expected int array of length 4",
