@@ -52,9 +52,12 @@
 //! take most of the wall time. A single entry or document can be selected, as
 //! in `cargo +nightly bench -- nanonbt-borrow` or
 //! `cargo +nightly bench -- player`. Add `--features nanonbt/simd` to run the
-//! `nanonbt` entries on the vectorized paths. All three of
-//! `fastnbt`, `pumpkin-nbt`, and `simdnbt` are enabled by default;
-//! `pumpkin-nbt` is always listed last in the report.
+//! `nanonbt` entries on the vectorized paths. The derived entries send their
+//! names through `hashify`, which is on by default so the name pair measures
+//! the lookup; `--no-default-features --features fastnbt,pumpkin-nbt,simdnbt`
+//! turns it back into a plain `match`. All three of `fastnbt`, `pumpkin-nbt`,
+//! and `simdnbt` are enabled by default; `pumpkin-nbt` is always listed last
+//! in the report.
 //!
 //! Three entries need a note. `nanonbt-borrow` (above) changes the encoding of
 //! borrowed arrays. `simdnbt-borrow` keeps a tape over the input and decodes
