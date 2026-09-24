@@ -126,10 +126,10 @@ impl<'de> Deserializer<'de> {
                 }
             }),
             TAG_LIST => match self.tag()? {
-                TAG_BYTE => self.skip_array(1),
-                TAG_SHORT => self.skip_array(2),
-                TAG_INT | TAG_FLOAT => self.skip_array(4),
-                TAG_LONG | TAG_DOUBLE => self.skip_array(8),
+                TAG_BYTE => self.nested(|de| de.skip_array(1)),
+                TAG_SHORT => self.nested(|de| de.skip_array(2)),
+                TAG_INT | TAG_FLOAT => self.nested(|de| de.skip_array(4)),
+                TAG_LONG | TAG_DOUBLE => self.nested(|de| de.skip_array(8)),
                 element => self.nested(|de| {
                     let len = i32::from_be_bytes(de.take_array()?);
                     for _ in 0..len {
