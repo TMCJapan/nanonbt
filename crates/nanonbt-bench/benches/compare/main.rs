@@ -70,12 +70,14 @@
 use std::{hint::black_box, time::Duration};
 
 use criterion::{
-    BenchmarkGroup, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main,
-    measurement::WallTime,
+    BenchmarkGroup, BenchmarkId, Criterion, SamplingMode, Throughput, criterion_group,
+    criterion_main, measurement::WallTime,
 };
 
 mod documents;
 mod targets;
+
+use documents::Skip;
 
 /// Runs one parse benchmark: `parse` decodes `bytes` into a `T` on every
 /// iteration.
@@ -238,9 +240,8 @@ fn skip(c: &mut Criterion) {
     let skips = documents::skip_inputs();
     let mut group = c.benchmark_group("skip");
     // A skip is short work, but the entries that cannot skip read the whole
-    // document, and a compound or string walk reallocates per element, so
-    // their iterations are milliseconds long. Ten samples over two seconds
-    // hold the slowest of those without the "unable to complete" warning; the
+    // document, so their iterations are milliseconds long. Ten samples over
+    // two seconds hold those without the "unable to complete" warning; the
     // entries that finish in nanoseconds still run millions of iterations,
     // and the confidence interval comes from resampling, not the sample count.
     group
@@ -248,6 +249,17 @@ fn skip(c: &mut Criterion) {
         .warm_up_time(Duration::from_millis(500))
         .measurement_time(Duration::from_secs(2));
     for input in &skips {
+        // A string or compound walk reallocates per element, and its warmup
+        // estimate drifts with the allocator, so a batch can overrun the
+        // two seconds above; one iteration per sample cannot, and twenty of
+        // the millisecond samples are worth the same resampling.
+        let walked = matches!(input.kind, Skip::StringList | Skip::CompoundList);
+        group.sampling_mode(if walked {
+            SamplingMode::Flat
+        } else {
+            SamplingMode::Auto
+        });
+        group.sample_size(if walked { 20 } else { 10 });
         group.throughput(Throughput::Bytes(input.bytes.len() as u64));
         targets::nanonbt::skip(&mut group, input.kind, &input.bytes);
         #[cfg(feature = "fastnbt")]
