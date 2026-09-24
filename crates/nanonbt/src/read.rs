@@ -189,16 +189,19 @@ impl<'de> Reader<'de> {
                     reader.skip_value(tag)?;
                 }
             }),
-            TAG_LIST => {
-                let element = self.read_tag()?;
-                let len = i32::from_be_bytes(self.take_array()?);
-                self.nested(|reader| {
+            TAG_LIST => match self.read_tag()? {
+                TAG_BYTE => self.nested(|reader| reader.skip_array(1)),
+                TAG_SHORT => self.nested(|reader| reader.skip_array(2)),
+                TAG_INT | TAG_FLOAT => self.nested(|reader| reader.skip_array(4)),
+                TAG_LONG | TAG_DOUBLE => self.nested(|reader| reader.skip_array(8)),
+                element => self.nested(|reader| {
+                    let len = i32::from_be_bytes(reader.take_array()?);
                     for _ in 0..len {
                         reader.skip_value(element)?;
                     }
                     Ok(())
-                })
-            }
+                }),
+            },
             // fastnbt panics here, skipping a list of End with elements.
             _ => Err(Error::list_of_end()),
         }

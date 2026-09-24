@@ -7,6 +7,20 @@
 //! long array and a short list — half a million elements each, so the array
 //! paths are measured on their own.
 //!
+//! A third group, `skip`, measures the other side of parsing: each of its
+//! eleven documents holds a small `kept` entry and one `skipped` entry of a
+//! hundred thousand elements, and the targets declare `kept` alone, so
+//! everything else must be passed over. `nanonbt` skips without decoding, the
+//! serde side through serde's `IgnoredAny` and the derive through
+//! `Read::skip`; `fastnbt` through the same `IgnoredAny`; `simdnbt` and
+//! `pumpkin-nbt` cannot skip, so their entries read the whole document and
+//! look up `kept` afterwards. Six of the shapes are lists whose elements all
+//! take the same number of bytes — byte, short, int, long, float and double —
+//! which a structural skip can pass over in one step; the rest are the three
+//! arrays, a list of strings and a list of compounds. `nanonbt-borrow` has no
+//! skip entry: with only an `i32` to read, its struct would compile to the
+//! owned one.
+//!
 //! `short-names` and `long-names` are the same compound of 64 `i32` fields
 //! with three- and sixty-four-byte keys, so the pair isolates what the names
 //! themselves cost each target. Their keys are drawn by the `random_names`
@@ -34,8 +48,9 @@
 //! This crate is outside the root workspace because `simdnbt` uses nightly
 //! features, and the rest of the repository pins a stable toolchain. Run it
 //! with `cd crates/nanonbt-bench && cargo +nightly bench`, or add `-- --quick`
-//! for a rough pass. A single entry or document can be selected, as in
-//! `cargo +nightly bench -- nanonbt-borrow` or
+//! for a rough pass. Add `-- --noplot` to skip the per-entry charts, which
+//! take most of the wall time. A single entry or document can be selected, as
+//! in `cargo +nightly bench -- nanonbt-borrow` or
 //! `cargo +nightly bench -- player`. Add `--features nanonbt/simd` to run the
 //! `nanonbt` entries on the vectorized paths. All three of
 //! `fastnbt`, `pumpkin-nbt`, and `simdnbt` are enabled by default;
@@ -55,12 +70,14 @@
 use std::{hint::black_box, time::Duration};
 
 use criterion::{
-    BenchmarkGroup, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main,
-    measurement::WallTime,
+    BenchmarkGroup, BenchmarkId, Criterion, SamplingMode, Throughput, criterion_group,
+    criterion_main, measurement::WallTime,
 };
 
 mod documents;
 mod targets;
+
+use documents::Skip;
 
 /// Runs one parse benchmark: `parse` decodes `bytes` into a `T` on every
 /// iteration.
@@ -96,7 +113,8 @@ pub fn bench_write<'a, T, O: AsRef<[u8]>, S: std::fmt::Display>(
     });
 }
 
-/// Keeps the suite, many benchmarks long, around seven minutes.
+/// Keeps the groups, many benchmarks long, around ten minutes; `--noplot`
+/// removes the per-entry charts, which are most of that time.
 pub fn configure(group: &mut BenchmarkGroup<'_, WallTime>) {
     group
         .sample_size(50)
@@ -134,7 +152,7 @@ fn parse(c: &mut Criterion) {
         );
     }
     // The array entries are many and their iterations are milliseconds long,
-    // so a shorter measurement keeps the suite near its five minutes.
+    // so a shorter measurement keeps the suite's array half near two minutes.
     group
         .sample_size(30)
         .warm_up_time(Duration::from_millis(500))
@@ -218,5 +236,41 @@ fn write(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, parse, write);
+fn skip(c: &mut Criterion) {
+    let skips = documents::skip_inputs();
+    let mut group = c.benchmark_group("skip");
+    // A skip is short work, but the entries that cannot skip read the whole
+    // document, so their iterations are milliseconds long. Ten samples over
+    // two seconds hold those without the "unable to complete" warning; the
+    // entries that finish in nanoseconds still run millions of iterations,
+    // and the confidence interval comes from resampling, not the sample count.
+    group
+        .sample_size(10)
+        .warm_up_time(Duration::from_millis(500))
+        .measurement_time(Duration::from_secs(2));
+    for input in &skips {
+        // A string or compound walk reallocates per element, and its warmup
+        // estimate drifts with the allocator, so a batch can overrun the
+        // two seconds above; one iteration per sample cannot, and twenty of
+        // the millisecond samples are worth the same resampling.
+        let walked = matches!(input.kind, Skip::StringList | Skip::CompoundList);
+        group.sampling_mode(if walked {
+            SamplingMode::Flat
+        } else {
+            SamplingMode::Auto
+        });
+        group.sample_size(if walked { 20 } else { 10 });
+        group.throughput(Throughput::Bytes(input.bytes.len() as u64));
+        targets::nanonbt::skip(&mut group, input.kind, &input.bytes);
+        #[cfg(feature = "fastnbt")]
+        targets::fastnbt::skip(&mut group, input.kind, &input.bytes);
+        #[cfg(feature = "simdnbt")]
+        targets::simdnbt::skip(&mut group, input.kind, &input.bytes);
+        #[cfg(feature = "pumpkin-nbt")]
+        targets::pumpkin::skip(&mut group, input.kind, &input.bytes);
+    }
+    group.finish();
+}
+
+criterion_group!(benches, parse, write, skip);
 criterion_main!(benches);

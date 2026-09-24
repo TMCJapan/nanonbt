@@ -1,11 +1,14 @@
 //! The `fastnbt` entry: one serde struct per document.
+//!
+//! The skip target at the end declares `kept` alone, so the rest of a skip
+//! document is passed over through serde's `IgnoredAny`.
 
 use criterion::{BenchmarkGroup, measurement::WallTime};
 use fastnbt::{ByteArray, IntArray, LongArray};
 use random_names::random_names;
 use serde::{Deserialize, Serialize};
 
-use crate::documents::{Array, BenchInput, Doc};
+use crate::documents::{Array, BenchInput, Doc, Skip};
 use crate::{bench_parse, bench_write};
 
 #[derive(Serialize, Deserialize)]
@@ -405,4 +408,20 @@ pub fn write(group: &mut BenchmarkGroup<'_, WallTime>, input: BenchInput) {
             }
         },
     }
+}
+
+/// The skip target: it declares `kept` alone, so the big `skipped` entry is
+/// passed over through fastnbt's `IgnoredAny`.
+#[derive(Deserialize)]
+pub struct Sparse {
+    /// Only the parse result matters; no entry reads this back.
+    #[allow(dead_code)]
+    pub kept: i32,
+}
+
+/// The skip entry of one shape.
+pub fn skip(group: &mut BenchmarkGroup<'_, WallTime>, kind: Skip, bytes: &[u8]) {
+    bench_parse(group, "fastnbt", kind.name(), bytes, |b: &[u8]| {
+        fastnbt::from_bytes::<Sparse>(b).expect("the document parses")
+    });
 }

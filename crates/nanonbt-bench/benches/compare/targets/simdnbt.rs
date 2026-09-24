@@ -1,6 +1,10 @@
 //! The two `simdnbt` entries: `simdnbt-borrow` reads a tape over the input
 //! and `simdnbt-owned` reads an owning tree first.
 //!
+//! Neither offers a partial parse: the borrow entry reads a whole tape over
+//! the input and the owned entry a whole tree, and only then is `kept` looked
+//! up.
+//!
 //! One struct family serves both. `simdnbt` lends byte arrays and strings from
 //! either source, but its `int_array` and `long_array` accessors copy on the
 //! borrowed side and lend on the owned side; the struct owns those two either
@@ -17,7 +21,7 @@ use simdnbt::{Mutf8Str, Mutf8String, borrow, owned};
 
 use crate::{
     bench_parse, bench_write,
-    documents::{Array, BenchInput, Doc},
+    documents::{Array, BenchInput, Doc, Skip},
 };
 
 // ---------------------------------------------------------------------------
@@ -1430,4 +1434,35 @@ pub fn write(group: &mut BenchmarkGroup<'_, WallTime>, input: BenchInput) {
             }
         },
     }
+}
+
+/// The skip entries of one shape.
+///
+/// `simdnbt` has no partial parse, so these entries read a whole tape or tree
+/// and only then look up `kept`; the pair records what not skipping costs.
+pub fn skip(group: &mut BenchmarkGroup<'_, WallTime>, kind: Skip, bytes: &[u8]) {
+    bench_parse(
+        group,
+        "simdnbt-borrow",
+        kind.name(),
+        bytes,
+        |b: &'_ [u8]| {
+            let base = borrow::read(&mut Cursor::new(std::hint::black_box(b)))
+                .expect("the document parses")
+                .unwrap();
+            let _ = std::hint::black_box(base.as_compound().int("kept").expect("kept"));
+        },
+    );
+    bench_parse(
+        group,
+        "simdnbt-owned",
+        kind.name(),
+        bytes,
+        |b: &'_ [u8]| {
+            let base = owned::read(&mut Cursor::new(std::hint::black_box(b)))
+                .expect("the document parses")
+                .unwrap();
+            let _ = std::hint::black_box(base.as_compound().int("kept").expect("kept"));
+        },
+    );
 }
