@@ -1,5 +1,8 @@
 //! The validated description of a type to generate code for.
 
+use std::collections::BTreeMap;
+
+use proc_macro2::Span;
 use syn::{Data, DeriveInput, Error, Fields, Generics, Ident, Path, Result, Type, TypePath};
 
 use crate::attrs::{self, ArrayKind};
@@ -24,6 +27,8 @@ pub struct Field {
     pub ident: Ident,
     pub ty: Type,
     pub name: String,
+    /// Where the name was written: the `rename` value, or the field itself.
+    pub name_span: Span,
     pub ignore: bool,
     /// `#[nbt(array = "...")]`, if the field has one.
     pub array: Option<Array>,
@@ -50,6 +55,8 @@ pub struct Array {
 pub struct Variant {
     pub ident: Ident,
     pub name: String,
+    /// Where the name was written: the `rename` value, or the variant.
+    pub name_span: Span,
 }
 
 impl Model {
@@ -72,7 +79,10 @@ impl Model {
                                     "nested `Option` fields are not supported",
                                 ));
                             }
-                            let name = attrs.rename.unwrap_or_else(|| unraw(&ident));
+                            let (name, name_span) = attrs.rename.as_ref().map_or_else(
+                                || (unraw(&ident), ident.span()),
+                                |rename| (rename.value(), rename.span()),
+                            );
                             let array = attrs
                                 .array
                                 .map(|kind| {
@@ -83,6 +93,7 @@ impl Model {
                                 ident,
                                 ty: field.ty.clone(),
                                 name,
+                                name_span,
                                 ignore: attrs.ignore,
                                 array,
                             })
@@ -109,9 +120,15 @@ impl Model {
                             return Err(Error::new_spanned(variant, "expected a unit variant"));
                         }
                         let attrs = attrs::variant(&variant.attrs)?;
+                        let ident = variant.ident.clone();
+                        let (name, name_span) = attrs.rename.as_ref().map_or_else(
+                            || (ident.to_string(), ident.span()),
+                            |rename| (rename.value(), rename.span()),
+                        );
                         Ok(Variant {
-                            ident: variant.ident.clone(),
-                            name: attrs.rename.unwrap_or_else(|| variant.ident.to_string()),
+                            ident,
+                            name,
+                            name_span,
                         })
                     })
                     .collect::<Result<Vec<_>>>()?;
@@ -124,6 +141,7 @@ impl Model {
                 ));
             }
         };
+        check_names(&shape)?;
         Ok(Self {
             ident: input.ident.clone(),
             krate,
@@ -137,6 +155,47 @@ impl Model {
 fn unraw(ident: &Ident) -> String {
     let name = ident.to_string();
     name.strip_prefix("r#").unwrap_or(&name).to_owned()
+}
+
+/// Refuses two fields, or two variants, that share the NBT name they read
+/// and write as: a read could not tell them apart, one arm being
+/// unreachable, and `hashify`'s lookups reject the duplicate outright.
+fn check_names(shape: &Shape) -> Result<()> {
+    match shape {
+        Shape::Struct(fields) => unique_names(
+            "field",
+            fields
+                .iter()
+                .filter(|field| !field.ignore)
+                .map(|field| (field.name_span, &field.ident, field.name.as_str())),
+        ),
+        Shape::Enum(variants) => unique_names(
+            "variant",
+            variants
+                .iter()
+                .map(|variant| (variant.name_span, &variant.ident, variant.name.as_str())),
+        ),
+        Shape::Newtype(_) => Ok(()),
+    }
+}
+
+/// The duplicate check: a name already seen is refused at the place the
+/// second one was written.
+fn unique_names<'a>(
+    kind: &str,
+    entries: impl Iterator<Item = (Span, &'a Ident, &'a str)>,
+) -> Result<()> {
+    let mut seen: BTreeMap<&'a str, &'a Ident> = BTreeMap::new();
+    for (span, ident, name) in entries {
+        if let Some(first) = seen.get(name) {
+            return Err(Error::new(
+                span,
+                format!("duplicate NBT name `{name}`: already used by {kind} `{first}`"),
+            ));
+        }
+        seen.insert(name, ident);
+    }
+    Ok(())
 }
 
 /// Describes an `#[nbt(array = "...")]` field from the type it is written as.
@@ -259,5 +318,60 @@ pub fn option_inner(ty: &Type) -> Option<&Type> {
     match args.args.first()? {
         syn::GenericArgument::Type(inner) => Some(inner),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn model(source: &str) -> Result<Model> {
+        Model::new(&syn::parse_str::<DeriveInput>(source).expect("parse"))
+    }
+
+    #[test]
+    fn duplicate_renames_are_refused() {
+        let error = model(
+            "struct S {
+                #[nbt(rename = \"x\")]
+                a: u8,
+                #[nbt(rename = \"x\")]
+                b: u8,
+            }",
+        )
+        .err()
+        .expect("duplicate names");
+        assert_eq!(
+            error.to_string(),
+            "duplicate NBT name `x`: already used by field `a`"
+        );
+    }
+
+    #[test]
+    fn a_default_name_and_a_rename_clash() {
+        let error = model("struct S { a: u8, #[nbt(rename = \"a\")] b: u8 }")
+            .err()
+            .expect("duplicate names");
+        assert_eq!(
+            error.to_string(),
+            "duplicate NBT name `a`: already used by field `a`"
+        );
+    }
+
+    #[test]
+    fn ignored_fields_reserve_no_name() {
+        model("struct S { #[nbt(ignore)] a: u8, #[nbt(rename = \"a\")] b: u8 }")
+            .expect("ignored names do not clash");
+    }
+
+    #[test]
+    fn duplicate_variant_renames_are_refused() {
+        let error = model("enum E { #[nbt(rename = \"x\")] A, #[nbt(rename = \"x\")] B }")
+            .err()
+            .expect("duplicate names");
+        assert_eq!(
+            error.to_string(),
+            "duplicate NBT name `x`: already used by variant `A`"
+        );
     }
 }

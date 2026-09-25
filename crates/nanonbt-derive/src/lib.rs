@@ -31,6 +31,10 @@
 //! Variant attributes:
 //! * `rename = "name"`: the string an enum variant reads and writes as.
 //!
+//! Names must be unique: two fields, or two variants, that read and write as
+//! the same name are rejected, since a read could not tell them apart. An
+//! `ignore`d field is left out of the compound, so its name never clashes.
+//!
 //! With the `hashify` feature (enable `nanonbt/hashify`), a read dispatches
 //! the names it sees through
 //! [`hashify`](https://crates.io/crates/hashify)'s perfect hash lookups
