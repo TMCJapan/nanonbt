@@ -10,13 +10,13 @@ pub struct Container {
 #[derive(Default)]
 pub struct Field {
     pub ignore: bool,
-    pub rename: Option<String>,
+    pub rename: Option<LitStr>,
     pub array: Option<ArrayKind>,
 }
 
 #[derive(Default)]
 pub struct Variant {
-    pub rename: Option<String>,
+    pub rename: Option<LitStr>,
 }
 
 /// The NBT array a field with `array = "..."` reads and writes as.
@@ -93,7 +93,7 @@ pub fn field(attrs: &[Attribute]) -> Result<Field> {
             Ok(())
         } else if meta.path.is_ident("rename") {
             let name: LitStr = meta.value()?.parse()?;
-            out.rename = Some(name.value());
+            out.rename = Some(name);
             Ok(())
         } else if meta.path.is_ident("array") {
             let kind: LitStr = meta.value()?.parse()?;
@@ -116,7 +116,7 @@ pub fn variant(attrs: &[Attribute]) -> Result<Variant> {
     parse(attrs, |meta| {
         if meta.path.is_ident("rename") {
             let name: LitStr = meta.value()?.parse()?;
-            out.rename = Some(name.value());
+            out.rename = Some(name);
             Ok(())
         } else {
             Err(meta.error("unknown nbt variant attribute"))
