@@ -23,9 +23,12 @@ random-names = { path = "random-names" }
 serde = { version = "1", features = ["derive"] }
 
 [features]
-default = ["fastnbt", "pumpkin-nbt", "simdnbt"]
+default = ["fastnbt", "hashify", "pumpkin-nbt", "simdnbt"]
 # Enable the fastnbt benchmarks.
 fastnbt = ["dep:fastnbt"]
+# Enable nanonbt's `hashify` feature, so the derived reads dispatch names
+# through its lookups.
+hashify = ["nanonbt/hashify"]
 # Enable the pumpkin-nbt benchmarks (always listed last).
 pumpkin-nbt = ["dep:pumpkin-nbt"]
 # Enable the simdnbt benchmarks.

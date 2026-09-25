@@ -31,6 +31,12 @@
 //! Variant attributes:
 //! * `rename = "name"`: the string an enum variant reads and writes as.
 //!
+//! With the `hashify` feature (enable `nanonbt/hashify`), a read dispatches
+//! the names it sees through
+//! [`hashify`](https://crates.io/crates/hashify)'s perfect hash lookups
+//! instead of a `match`. The arms are the same expressions either way, so
+//! an arm can still `?` its error.
+//!
 //! Supported shapes are named-field structs, single-field tuple structs
 //! (transparent), and enums of unit variants. A field of type `Option<T>` is
 //! left out of the compound when it is `None`; `T` needs no `Option`

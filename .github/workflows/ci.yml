@@ -135,6 +135,10 @@ jobs:
         run: cargo clippy -p nanocesu8 -p nanonbt --features nanocesu8/simd,nanonbt/simd --target ${{ matrix.target }} --locked -- -D warnings
       - name: build (simd)
         run: cargo build -p nanocesu8 -p nanonbt --features nanocesu8/simd,nanonbt/simd --target ${{ matrix.target }} --locked --release
+      # The `hashify` feature re-exports, for the generated reads to call, the
+      # macro that builds their lookups; the re-export must stay no_std too.
+      - name: clippy (hashify)
+        run: cargo clippy -p nanonbt --features hashify --target ${{ matrix.target }} --locked -- -D warnings
 
   # Model-checked agreement: nanonbt against fastnbt (crates/nanonbt-kani),
   # nanocesu8 against the cesu8 crate (crates/nanocesu8-kani).

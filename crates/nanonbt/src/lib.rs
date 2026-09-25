@@ -31,7 +31,11 @@
 //! reads as its raw bytes — so `serde_compat` has a `#[serde(with = ...)]`
 //! module per array kind for fields that hold elements. The `simd` feature
 //! settles array and numeric-list byte order a vector at a time, on x86,
-//! aarch64 and wasm, and stays `no_std`.
+//! aarch64 and wasm, and stays `no_std`. The `hashify` feature sends the
+//! names a derived read sees through
+//! [hashify](https://crates.io/crates/hashify)'s perfect hash lookups
+//! instead of a `match`, which pays off for types with many fields or
+//! variants; it too stays `no_std`.
 //!
 //! # The data model
 //!
@@ -137,6 +141,16 @@ pub use tag::{
     TAG_LIST, TAG_LONG, TAG_LONG_ARRAY, TAG_SHORT, TAG_STRING,
 };
 pub use write::{ToNBT, Write, Writer};
+
+/// Implementation details the derive macros rely on.
+///
+/// Nothing here is stable; it follows what the generated code needs.
+#[doc(hidden)]
+pub mod __private {
+    /// The macro the `hashify` feature's generated reads call.
+    #[cfg(feature = "hashify")]
+    pub use hashify;
+}
 
 /// Serializes `value` as the root compound, with an empty name.
 pub fn to_bytes<T: ToNBT + ?Sized>(value: &T) -> Result<Vec<u8>> {
