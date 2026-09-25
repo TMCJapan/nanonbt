@@ -18,12 +18,7 @@
 
 use alloc::vec::Vec;
 
-use crate::{
-    be::as_bytes,
-    error::{Error, Result},
-    read::Read,
-    write::Write,
-};
+use crate::{be::as_bytes, error::Result, write::Write};
 
 /// Whether this target has a vector byte-swap path.
 const HAS_SIMD: bool = cfg!(any(
@@ -113,23 +108,6 @@ pub(crate) fn decode_be<T: Copy, const SIZE: usize>(
             .map(|chunk| decode(*chunk)),
     );
     out
-}
-
-/// Reads `len` big-endian elements of `SIZE` bytes each: a list's payload,
-/// whose header the caller has already read.
-pub(crate) fn read_be_elements<'de, T: Copy, const SIZE: usize, R: Read<'de>>(
-    len: usize,
-    reader: &mut R,
-    decode: fn([u8; SIZE]) -> T,
-) -> Result<Vec<T>> {
-    let n = len.checked_mul(SIZE).ok_or_else(Error::array_too_large)?;
-    let bytes = reader.read_bytes(n)?;
-    // A reader that hands back fewer bytes than asked for has hit the end of
-    // the input; the elements it did lend are not the whole list.
-    if bytes.len() != n {
-        return Err(Error::unexpected_eof());
-    }
-    Ok(decode_be::<T, SIZE>(&bytes, decode))
 }
 
 /// Writes native-order `SIZE`-byte elements as big-endian, in as few writes

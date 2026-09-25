@@ -406,6 +406,19 @@ fn missing_fields_error_and_unknown_fields_skip() {
         Sparse { keep: 1, last: 2 }
     );
 
+    // A name that is not valid modified UTF-8 names no field, so it is
+    // passed over like any other unknown entry instead of being refused:
+    // the dispatch compares the raw bytes and never decodes them.
+    let mut bytes = to_bytes(&Sparse { keep: 1, last: 2 }).unwrap();
+    bytes.pop();
+    bytes.extend_from_slice(&[nanonbt::TAG_INT, 0, 2, 0xc0, 0x81]);
+    bytes.extend_from_slice(&7i32.to_be_bytes());
+    bytes.push(nanonbt::TAG_END);
+    assert_eq!(
+        from_bytes::<Sparse>(&bytes).unwrap(),
+        Sparse { keep: 1, last: 2 }
+    );
+
     #[allow(dead_code)] // compared through the parse outcome
     #[derive(FromNBT, Debug)]
     struct Needs {

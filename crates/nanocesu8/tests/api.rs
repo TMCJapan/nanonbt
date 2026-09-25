@@ -99,6 +99,46 @@ fn only_the_modified_spelling_is_accepted() {
 }
 
 #[test]
+fn decode_bytes_validates_and_decodes_in_one_walk() {
+    // Plain ASCII and other UTF-8 already spelled the modified way borrow.
+    let borrowed = Cesu8::decode_bytes(b"plain").unwrap();
+    assert!(matches!(borrowed, Cow::Borrowed(_)));
+    assert_eq!(borrowed, "plain");
+    assert_eq!(Cesu8::decode_bytes(b"").unwrap(), "");
+    let borrowed = Cesu8::decode_bytes("é日本".as_bytes()).unwrap();
+    assert!(matches!(borrowed, Cow::Borrowed(_)));
+    assert_eq!(borrowed, "é日本");
+
+    // Modified UTF-8 decodes into an owned string.
+    let owned = Cesu8::decode_bytes(MODIFIED).unwrap();
+    assert!(matches!(owned, Cow::Owned(_)));
+    assert_eq!(owned, MODIFIED_TEXT);
+
+    // The accepted bytes are exactly `Cesu8::new`'s.
+    for bytes in [
+        &b""[..],
+        b"plain",
+        b"\x7f",
+        "é日本".as_bytes(),
+        MODIFIED,
+        b"\xc0\x80",
+        &b"\0"[..],
+        &[0xf0, 0x9f, 0x98, 0x80],
+        &[0xc0, 0x41],
+        &[0xe0, 0x80, 0x80],
+        &[0xed, 0xa0, 0x81],
+        &[0xf4, 0x90, 0x80, 0x80],
+        &[0xff],
+    ] {
+        match (Cesu8::new(bytes), Cesu8::decode_bytes(bytes)) {
+            (Ok(valid), Ok(text)) => assert_eq!(&*valid.decode(), &*text, "{bytes:02x?}"),
+            (Err(_), Err(_)) => {}
+            (valid, text) => panic!("disagreement on {bytes:02x?}: {valid:?} vs {text:?}"),
+        }
+    }
+}
+
+#[test]
 fn equality_is_byte_equality() {
     let encoded_nul = Cesu8::new(b"\xc0\x80").unwrap();
     assert_eq!(encoded_nul, &*Cesu8Buf::from("\0"));

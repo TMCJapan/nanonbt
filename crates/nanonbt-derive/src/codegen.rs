@@ -76,21 +76,26 @@ fn encoded_name(krate: &Path, name: &str) -> TokenStream {
     quote!(unsafe { #krate::Cesu8::from_bytes_unchecked(#bytes) })
 }
 
-/// The lookup that finds the arm for the name a read sees.
+/// The lookup that finds the arm for the bytes a read sees.
 ///
 /// Plainly the names are match arms whose patterns are their bytes. With the
 /// `hashify` feature they become the keys of a perfect hash lookup instead,
 /// reached through `nanonbt`'s re-export so the user's crate needs no
 /// dependency of its own. Either way the arms and the default stay
 /// expressions in the function that reads, so an arm can `?` its error.
-fn name_dispatch(krate: &Path, arms: &[TokenStream], default: &TokenStream) -> TokenStream {
+fn name_dispatch(
+    krate: &Path,
+    bytes: &TokenStream,
+    arms: &[TokenStream],
+    default: &TokenStream,
+) -> TokenStream {
     if cfg!(feature = "hashify") {
         quote! {
-            #krate::__private::hashify::fnc_map!(name.as_bytes(), #(#arms)* _ => #default)
+            #krate::__private::hashify::fnc_map!(#bytes, #(#arms)* _ => #default)
         }
     } else {
         quote! {
-            match name.as_bytes() {
+            match #bytes {
                 #(#arms)*
                 _ => #default,
             }
@@ -293,7 +298,12 @@ fn struct_from_nbt(model: &Model, fields: &[Field]) -> TokenStream {
             }
         })
         .collect::<Vec<_>>();
-    let dispatch = name_dispatch(krate, &arms, &quote!(#krate::Read::skip(reader, tag)?));
+    let dispatch = name_dispatch(
+        krate,
+        &quote!(&name[..]),
+        &arms,
+        &quote!(#krate::Read::skip(reader, tag)?),
+    );
     let assigned = fields.iter().map(|field| {
         let field_ident = &field.ident;
         if field.ignore {
@@ -332,7 +342,7 @@ fn struct_from_nbt(model: &Model, fields: &[Field]) -> TokenStream {
                         if tag == #krate::TAG_END {
                             break;
                         }
-                        let name = #krate::Read::read_name(reader)?;
+                        let name = #krate::Read::read_str_bytes(reader)?;
                         #dispatch
                     }
                     ::core::result::Result::Ok(())
@@ -390,6 +400,7 @@ fn enum_from_nbt(model: &Model, variants: &[Variant]) -> TokenStream {
         .collect::<Vec<_>>();
     let dispatch = name_dispatch(
         krate,
+        &quote!(&name[..]),
         &arms,
         &quote!(::core::result::Result::Err(#krate::Error::unknown_variant())),
     );
@@ -403,7 +414,7 @@ fn enum_from_nbt(model: &Model, variants: &[Variant]) -> TokenStream {
                 if tag != #krate::TAG_STRING {
                     return ::core::result::Result::Err(#krate::Error::invalid_tag(tag));
                 }
-                let name = #krate::Read::read_cesu8(reader)?;
+                let name = #krate::Read::read_str_bytes(reader)?;
                 #dispatch
             }
         }
@@ -420,6 +431,7 @@ mod tests {
     fn dispatch_is_hashified_exactly_when_asked() {
         let dispatch = name_dispatch(
             &parse_quote!(::nanonbt),
+            &quote!(&name[..]),
             &[quote!(b"one" => (),)],
             &quote!(()),
         );

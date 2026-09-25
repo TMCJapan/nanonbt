@@ -1,6 +1,9 @@
 //! The borrowed, validated [`Cesu8`] type and its iterator.
 
-use alloc::borrow::{Cow, ToOwned};
+use alloc::{
+    borrow::{Cow, ToOwned},
+    string::String,
+};
 use core::{fmt, hash::Hash, iter::FusedIterator, str};
 
 use crate::{DecodeError, from_java_cesu8, modified, owned::Cesu8Buf, to_java_cesu8, utf8};
@@ -35,6 +38,32 @@ impl Cesu8 {
         // lead — which is modified UTF-8 as it is — or
         // `modified::validate` just accepted them.
         Ok(unsafe { Self::from_bytes_unchecked(bytes) })
+    }
+
+    /// Validates `bytes` as modified UTF-8 and decodes them in one pass.
+    ///
+    /// The bytes accepted are exactly [`Cesu8::new`]'s. Where `new` followed
+    /// by [`decode`](Cesu8::decode) walks them twice — once to validate and
+    /// once to decode — this walks them once: bytes that are already spelled
+    /// the modified way are borrowed, and the rest are decoded while they
+    /// are validated.
+    pub fn decode_bytes(bytes: &[u8]) -> Result<Cow<'_, str>, DecodeError> {
+        if utf8::is_plain_ascii(bytes) {
+            // SAFETY: every byte is `1..=0x7f`, so the slice is valid UTF-8
+            // and already Java's spelling of the same text.
+            return Ok(Cow::Borrowed(unsafe { str::from_utf8_unchecked(bytes) }));
+        }
+        match utf8::to_str(bytes) {
+            Some(text) if !modified::needs_encoding(bytes) => Ok(Cow::Borrowed(text)),
+            _ => {
+                let mut text = String::with_capacity(bytes.len());
+                let mut cursor = modified::Modified::new(bytes);
+                while !cursor.is_empty() {
+                    text.push(cursor.next_char()?);
+                }
+                Ok(Cow::Owned(text))
+            }
+        }
     }
 
     /// Encodes `text` as modified UTF-8, borrowing it when it is already

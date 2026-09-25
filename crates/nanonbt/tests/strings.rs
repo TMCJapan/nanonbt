@@ -31,6 +31,19 @@ fn read_cesu8_refuses_invalid_bytes() {
     );
 }
 
+#[test]
+fn read_str_bytes_lends_what_validation_refuses() {
+    // The name and variant dispatch only compares bytes, so a string that
+    // is not modified UTF-8 is lent as it is.
+    let mut reader = Reader::new(&[0, 2, 0xc0, 0x81], DeOpts::new());
+    let bytes = reader.read_str_bytes().unwrap();
+    assert!(matches!(bytes, Cow::Borrowed(_)));
+    assert_eq!(&*bytes, &[0xc0, 0x81]);
+
+    let mut reader = Reader::new(&[0, 1, 0], DeOpts::new());
+    assert_eq!(&*reader.read_str_bytes().unwrap(), &[0]);
+}
+
 /// Java's spelling is the only one read: plain UTF-8 with a raw NUL is
 /// refused, where fastnbt takes it because the bytes are valid UTF-8.
 #[test]

@@ -27,8 +27,13 @@ use crate::{
     write::Write,
 };
 
-/// Decodes `len` big-endian elements of `SIZE` bytes each.
-fn read_be<'de, T: Copy, const SIZE: usize, R: Read<'de>>(
+/// Reads `len` big-endian elements of `SIZE` bytes each: an array's payload
+/// or a list's, whose header the caller has already read.
+///
+/// The payload is read in one piece and decoded from it, so a list of
+/// numbers costs one allocation and one pass, vectorized under the `simd`
+/// feature and one element at a time without it.
+pub(crate) fn read_be_elements<'de, T: Copy, const SIZE: usize, R: Read<'de>>(
     len: usize,
     reader: &mut R,
     decode: fn([u8; SIZE]) -> T,
@@ -37,6 +42,11 @@ fn read_be<'de, T: Copy, const SIZE: usize, R: Read<'de>>(
         .checked_mul(SIZE)
         .ok_or_else(crate::Error::array_too_large)?;
     let bytes = reader.read_bytes(n)?;
+    // A reader that hands back fewer bytes than asked for has hit the end of
+    // the input; the elements it did lend are not the whole list.
+    if bytes.len() != n {
+        return Err(crate::Error::unexpected_eof());
+    }
     #[cfg(feature = "simd")]
     {
         Ok(crate::simd::decode_be::<T, SIZE>(&bytes, decode))
@@ -162,7 +172,7 @@ impl<T: AsRef<[i32]> + ?Sized> IntArray<i32> for T {
         }
     }
     fn read_payload<'de, R: Read<'de>>(len: usize, reader: &mut R) -> Result<Vec<i32>> {
-        read_be(len, reader, <i32>::from_be_bytes)
+        read_be_elements(len, reader, <i32>::from_be_bytes)
     }
 }
 
@@ -184,7 +194,7 @@ impl<T: AsRef<[u32]> + ?Sized> IntArray<u32> for T {
         }
     }
     fn read_payload<'de, R: Read<'de>>(len: usize, reader: &mut R) -> Result<Vec<u32>> {
-        read_be(len, reader, <u32>::from_be_bytes)
+        read_be_elements(len, reader, <u32>::from_be_bytes)
     }
 }
 
@@ -264,7 +274,7 @@ impl<T: AsRef<[i64]> + ?Sized> LongArray<i64> for T {
         }
     }
     fn read_payload<'de, R: Read<'de>>(len: usize, reader: &mut R) -> Result<Vec<i64>> {
-        read_be(len, reader, <i64>::from_be_bytes)
+        read_be_elements(len, reader, <i64>::from_be_bytes)
     }
 }
 
@@ -286,7 +296,7 @@ impl<T: AsRef<[u64]> + ?Sized> LongArray<u64> for T {
         }
     }
     fn read_payload<'de, R: Read<'de>>(len: usize, reader: &mut R) -> Result<Vec<u64>> {
-        read_be(len, reader, <u64>::from_be_bytes)
+        read_be_elements(len, reader, <u64>::from_be_bytes)
     }
 }
 
