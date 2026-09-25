@@ -37,6 +37,21 @@ pub trait Read<'de> {
         self.read_cesu8()
     }
 
+    /// Reads a length-prefixed string's bytes without validating or
+    /// decoding them.
+    ///
+    /// The derived compound dispatch and unit enums compare these bytes
+    /// with the names they encoded while the macro expanded — valid
+    /// modified UTF-8 by construction — so a name or variant that matches
+    /// none of them is passed over without being validated either.
+    /// [`read_cesu8`](Read::read_cesu8) is the validated spelling.
+    fn read_str_bytes(&mut self) -> Result<Cow<'de, [u8]>> {
+        Ok(match self.read_cesu8()? {
+            Cow::Borrowed(name) => Cow::Borrowed(name.as_bytes()),
+            Cow::Owned(name) => Cow::Owned(name.into_bytes()),
+        })
+    }
+
     /// Skips a compound entry's name.
     ///
     /// The root compound's name is skipped this way, so a document whose
@@ -131,6 +146,19 @@ pub trait Read<'de> {
     fn nest<T>(&mut self, f: impl FnOnce(&mut Self) -> Result<T>) -> Result<T>;
 }
 
+/// The capacity to reserve for a list of `len` elements without trusting the
+/// claimed length.
+///
+/// A document can claim a length its input cannot hold, so reserving for all
+/// of it upfront would let a few bytes force an allocation. The bound is
+/// 4096 bytes' worth, the one serde's `size_hint::cautious` uses, and the
+/// `Vec` grows normally past it.
+fn cautious_capacity<T>(len: usize) -> usize {
+    // A zero-sized element divides no bytes: a list of them needs none.
+    let per_element = 4096usize.checked_div(size_of::<T>()).unwrap_or_default();
+    len.min(per_element)
+}
+
 /// A value that can be read from NBT.
 ///
 /// [`read`](FromNBT::read) receives the value's tag, which the owner of the
@@ -140,16 +168,17 @@ pub trait FromNBT<'de>: Sized {
 
     /// Reads `len` list elements of tag `element`, the header already read.
     ///
-    /// The default reads them one at a time, growing the `Vec` as it goes.
-    /// The numeric types override this to read the whole payload at once,
-    /// which settles the byte order a vector at a time; an override must
-    /// read exactly `len` elements and refuse an element tag other than the
-    /// one its own [`read`](FromNBT::read) accepts.
+    /// The default reads them one at a time, growing the `Vec` as it goes
+    /// from a cautious reservation, since the claimed length need not fit
+    /// the input. The numeric types override this to read the whole payload
+    /// at once, which settles the byte order a vector at a time; an
+    /// override must read exactly `len` elements and refuse an element tag
+    /// other than the one its own [`read`](FromNBT::read) accepts.
     ///
     /// `element` is never [`TAG_END`](crate::TAG_END): the caller handles
     /// the empty list of End before calling this.
     fn read_elements<R: Read<'de>>(element: u8, len: usize, reader: &mut R) -> Result<Vec<Self>> {
-        let mut out = Vec::new();
+        let mut out = Vec::with_capacity(cautious_capacity::<Self>(len));
         for _ in 0..len {
             out.push(Self::read(element, reader)?);
         }
@@ -273,7 +302,7 @@ impl<'de> Reader<'de> {
     }
 
     fn str(&mut self) -> Result<Cow<'de, str>> {
-        self.cesu8().map(Cesu8::decode)
+        Cesu8::decode_bytes(self.take_str_bytes()?).map_err(|_| Error::nonunicode_string())
     }
 
     fn cesu8(&mut self) -> Result<&'de Cesu8> {
@@ -292,6 +321,10 @@ impl<'de> Read<'de> for Reader<'de> {
 
     fn read_str(&mut self) -> Result<Cow<'de, str>> {
         self.str()
+    }
+
+    fn read_str_bytes(&mut self) -> Result<Cow<'de, [u8]>> {
+        self.take_str_bytes().map(Cow::Borrowed)
     }
 
     fn read_cesu8(&mut self) -> Result<Cow<'de, Cesu8>> {

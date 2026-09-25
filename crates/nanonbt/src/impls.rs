@@ -40,14 +40,9 @@ impl<'de> FromNBT<'de> for i8 {
         reader.read_i8()
     }
 
-    #[cfg(feature = "simd")]
     fn read_elements<R: Read<'de>>(element: u8, len: usize, reader: &mut R) -> Result<Vec<Self>> {
         expect(element, TAG_BYTE)?;
-        let bytes = reader.read_bytes(len)?;
-        if bytes.len() != len {
-            return Err(Error::unexpected_eof());
-        }
-        Ok(crate::be::as_i8(&bytes).to_vec())
+        crate::arrays::read_be_elements::<Self, 1, R>(len, reader, <Self>::from_be_bytes)
     }
 }
 impl ToNBT for i16 {
@@ -67,10 +62,9 @@ impl<'de> FromNBT<'de> for i16 {
         reader.read_i16()
     }
 
-    #[cfg(feature = "simd")]
     fn read_elements<R: Read<'de>>(element: u8, len: usize, reader: &mut R) -> Result<Vec<Self>> {
         expect(element, TAG_SHORT)?;
-        crate::simd::read_be_elements::<Self, 2, R>(len, reader, <Self>::from_be_bytes)
+        crate::arrays::read_be_elements::<Self, 2, R>(len, reader, <Self>::from_be_bytes)
     }
 }
 impl ToNBT for i32 {
@@ -90,10 +84,9 @@ impl<'de> FromNBT<'de> for i32 {
         reader.read_i32()
     }
 
-    #[cfg(feature = "simd")]
     fn read_elements<R: Read<'de>>(element: u8, len: usize, reader: &mut R) -> Result<Vec<Self>> {
         expect(element, TAG_INT)?;
-        crate::simd::read_be_elements::<Self, 4, R>(len, reader, <Self>::from_be_bytes)
+        crate::arrays::read_be_elements::<Self, 4, R>(len, reader, <Self>::from_be_bytes)
     }
 }
 impl ToNBT for i64 {
@@ -113,10 +106,9 @@ impl<'de> FromNBT<'de> for i64 {
         reader.read_i64()
     }
 
-    #[cfg(feature = "simd")]
     fn read_elements<R: Read<'de>>(element: u8, len: usize, reader: &mut R) -> Result<Vec<Self>> {
         expect(element, TAG_LONG)?;
-        crate::simd::read_be_elements::<Self, 8, R>(len, reader, <Self>::from_be_bytes)
+        crate::arrays::read_be_elements::<Self, 8, R>(len, reader, <Self>::from_be_bytes)
     }
 }
 impl ToNBT for f32 {
@@ -136,10 +128,9 @@ impl<'de> FromNBT<'de> for f32 {
         reader.read_f32()
     }
 
-    #[cfg(feature = "simd")]
     fn read_elements<R: Read<'de>>(element: u8, len: usize, reader: &mut R) -> Result<Vec<Self>> {
         expect(element, TAG_FLOAT)?;
-        crate::simd::read_be_elements::<Self, 4, R>(len, reader, <Self>::from_be_bytes)
+        crate::arrays::read_be_elements::<Self, 4, R>(len, reader, <Self>::from_be_bytes)
     }
 }
 impl ToNBT for f64 {
@@ -159,10 +150,9 @@ impl<'de> FromNBT<'de> for f64 {
         reader.read_f64()
     }
 
-    #[cfg(feature = "simd")]
     fn read_elements<R: Read<'de>>(element: u8, len: usize, reader: &mut R) -> Result<Vec<Self>> {
         expect(element, TAG_DOUBLE)?;
-        crate::simd::read_be_elements::<Self, 8, R>(len, reader, <Self>::from_be_bytes)
+        crate::arrays::read_be_elements::<Self, 8, R>(len, reader, <Self>::from_be_bytes)
     }
 }
 impl ToNBT for u8 {
@@ -183,14 +173,9 @@ impl<'de> FromNBT<'de> for u8 {
         reader.read_i8().map(<i8>::cast_unsigned)
     }
 
-    #[cfg(feature = "simd")]
     fn read_elements<R: Read<'de>>(element: u8, len: usize, reader: &mut R) -> Result<Vec<Self>> {
         expect(element, TAG_BYTE)?;
-        let bytes = reader.read_bytes(len)?;
-        if bytes.len() != len {
-            return Err(Error::unexpected_eof());
-        }
-        Ok(bytes.into_owned())
+        crate::arrays::read_be_elements::<Self, 1, R>(len, reader, <Self>::from_be_bytes)
     }
 }
 impl ToNBT for u16 {
@@ -210,10 +195,9 @@ impl<'de> FromNBT<'de> for u16 {
         reader.read_i16().map(<i16>::cast_unsigned)
     }
 
-    #[cfg(feature = "simd")]
     fn read_elements<R: Read<'de>>(element: u8, len: usize, reader: &mut R) -> Result<Vec<Self>> {
         expect(element, TAG_SHORT)?;
-        crate::simd::read_be_elements::<Self, 2, R>(len, reader, <Self>::from_be_bytes)
+        crate::arrays::read_be_elements::<Self, 2, R>(len, reader, <Self>::from_be_bytes)
     }
 }
 impl ToNBT for u32 {
@@ -233,10 +217,9 @@ impl<'de> FromNBT<'de> for u32 {
         reader.read_i32().map(<i32>::cast_unsigned)
     }
 
-    #[cfg(feature = "simd")]
     fn read_elements<R: Read<'de>>(element: u8, len: usize, reader: &mut R) -> Result<Vec<Self>> {
         expect(element, TAG_INT)?;
-        crate::simd::read_be_elements::<Self, 4, R>(len, reader, <Self>::from_be_bytes)
+        crate::arrays::read_be_elements::<Self, 4, R>(len, reader, <Self>::from_be_bytes)
     }
 }
 impl ToNBT for u64 {
@@ -256,10 +239,9 @@ impl<'de> FromNBT<'de> for u64 {
         reader.read_i64().map(<i64>::cast_unsigned)
     }
 
-    #[cfg(feature = "simd")]
     fn read_elements<R: Read<'de>>(element: u8, len: usize, reader: &mut R) -> Result<Vec<Self>> {
         expect(element, TAG_LONG)?;
-        crate::simd::read_be_elements::<Self, 8, R>(len, reader, <Self>::from_be_bytes)
+        crate::arrays::read_be_elements::<Self, 8, R>(len, reader, <Self>::from_be_bytes)
     }
 }
 impl ToNBT for bool {
