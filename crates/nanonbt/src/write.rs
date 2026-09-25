@@ -189,9 +189,10 @@ pub trait ToNBT {
     ///
     /// The default writes them one at a time. The numeric types override
     /// this to write the whole payload in a few bulk writes, which settles
-    /// the byte order a vector at a time; an override must write exactly
-    /// `elements.len()` elements, each in the spelling its own
-    /// [`write`](ToNBT::write) uses.
+    /// the byte order a vector at a time; the big-endian wrappers hold the
+    /// bytes NBT stores, so they go out in one write as they are. An
+    /// override must write exactly `elements.len()` elements, each in the
+    /// spelling its own [`write`](ToNBT::write) uses.
     fn write_elements<W: Write>(elements: &[Self], writer: &mut W) -> Result<()>
     where
         Self: Sized,

@@ -29,7 +29,7 @@ impl ToNBT for i8 {
         writer.write_i8(*self)
     }
 
-    #[cfg(feature = "simd")]
+    // Bytes have no endianness: the slice is one run of NBT payload.
     fn write_elements<W: Write>(elements: &[Self], writer: &mut W) -> Result<()> {
         writer.write_bytes(crate::be::as_u8(elements))
     }
@@ -172,7 +172,7 @@ impl ToNBT for u8 {
         writer.write_i8(self.cast_signed())
     }
 
-    #[cfg(feature = "simd")]
+    // Bytes have no endianness: the slice is one run of NBT payload.
     fn write_elements<W: Write>(elements: &[Self], writer: &mut W) -> Result<()> {
         writer.write_bytes(elements)
     }

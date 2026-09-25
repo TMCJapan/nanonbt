@@ -359,6 +359,7 @@ pub struct PlayerRef<'a> {
     pub foodLevel: i32,
     pub XpLevel: i32,
     pub playerGameType: i32,
+    #[nbt(array = "int")]
     pub UUID: &'a [I32Be],
     pub Pos: &'a [F64Be],
     pub Motion: &'a [F64Be],
@@ -430,7 +431,9 @@ pub struct SectionRef<'a> {
     pub Y: i8,
     pub block_states: BlockStatesRef<'a>,
     pub biomes: BiomesRef<'a>,
+    #[nbt(array = "byte")]
     pub BlockLight: &'a [i8],
+    #[nbt(array = "byte")]
     pub SkyLight: &'a [i8],
 }
 
@@ -438,6 +441,7 @@ pub struct SectionRef<'a> {
 #[derive(FromNBT, ToNBT)]
 pub struct BlockStatesRef<'a> {
     pub palette: Vec<PaletteEntryRef<'a>>,
+    #[nbt(array = "long")]
     pub data: &'a [U64Be],
 }
 
@@ -451,13 +455,16 @@ pub struct PaletteEntryRef<'a> {
 #[derive(FromNBT, ToNBT)]
 pub struct BiomesRef<'a> {
     pub palette: Vec<Cow<'a, str>>,
+    #[nbt(array = "long")]
     pub data: &'a [U64Be],
 }
 
 #[allow(non_snake_case)]
 #[derive(FromNBT, ToNBT)]
 pub struct HeightmapsRef<'a> {
+    #[nbt(array = "long")]
     pub MOTION_BLOCKING: &'a [U64Be],
+    #[nbt(array = "long")]
     pub WORLD_SURFACE: &'a [U64Be],
 }
 
@@ -489,9 +496,9 @@ pub fn sample_short_names() -> ShortNames {
 /// `Vec<T>` a derived field writes and reads, and the unsigned and signed
 /// slice it lends.
 ///
-/// Bytes keep the array attribute on both sides, so a borrowed byte slice
-/// round trips as an array; the wider borrowed slices write lists, as
-/// borrowed slices do everywhere.
+/// The three array kinds keep the array attribute on both sides, so a
+/// borrowed slice round trips as the array it read; `short` has no NBT
+/// array, so its borrowed slice writes a list.
 macro_rules! array_kinds {
     ($(
         $(#[$owned:meta])?
@@ -600,9 +607,9 @@ array_kinds! {
     byte, "u8", "i8", u8, i8, u8, i8, #[nbt(array = "byte")];
     short, "u16", "i16", u16, i16, U16Be, I16Be;
     #[nbt(array = "int")]
-    int, "u32", "i32", u32, i32, U32Be, I32Be;
+    int, "u32", "i32", u32, i32, U32Be, I32Be, #[nbt(array = "int")];
     #[nbt(array = "long")]
-    long, "u64", "i64", u64, i64, U64Be, I64Be;
+    long, "u64", "i64", u64, i64, U64Be, I64Be, #[nbt(array = "long")];
 }
 
 /// The document bytes of one array kind.

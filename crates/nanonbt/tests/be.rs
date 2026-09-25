@@ -352,6 +352,74 @@ fn writing_a_borrowed_slice_writes_a_list() {
 }
 
 #[test]
+fn every_wrapper_slice_writes_its_bytes() {
+    macro_rules! case {
+        ($ty:ty, $tag:expr, [$($value:expr),* $(,)?], $bytes:expr) => {{
+            #[derive(ToNBT)]
+            struct Holder<'a> {
+                value: &'a [$ty],
+            }
+
+            let value = [$($value),*];
+            let mut payload = vec![$tag];
+            payload.extend_from_slice(&i32::try_from(value.len()).unwrap().to_be_bytes());
+            payload.extend_from_slice(&$bytes);
+            assert_eq!(
+                to_bytes(&Holder { value: &value }).unwrap(),
+                root(0x09, "value", &payload),
+                "{}",
+                stringify!($ty),
+            );
+        }};
+    }
+
+    case!(
+        U16Be,
+        0x02,
+        [U16Be::new(0x0102), U16Be::new(u16::MAX)],
+        [0x01, 0x02, 0xff, 0xff]
+    );
+    case!(
+        I16Be,
+        0x02,
+        [I16Be::new(-2), I16Be::new(i16::MIN)],
+        [0xff, 0xfe, 0x80, 0x00]
+    );
+    case!(
+        U32Be,
+        0x03,
+        [U32Be::new(0x0102_0304), U32Be::new(u32::MAX)],
+        [0x01, 0x02, 0x03, 0x04, 0xff, 0xff, 0xff, 0xff]
+    );
+    case!(I32Be, 0x03, [I32Be::new(-2)], [0xff, 0xff, 0xff, 0xfe]);
+    case!(
+        U64Be,
+        0x04,
+        [U64Be::new(0x0102_0304_0506_0708), U64Be::new(u64::MAX)],
+        [
+            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+            0xff, 0xff,
+        ]
+    );
+    case!(
+        I64Be,
+        0x04,
+        [I64Be::new(-2)],
+        [0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xfe]
+    );
+    case!(F32Be, 0x05, [F32Be::new(1.5)], [0x3f, 0xc0, 0x00, 0x00]);
+    case!(
+        F64Be,
+        0x06,
+        [F64Be::new(-0.5)],
+        [0xbf, 0xe0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+    );
+
+    // The empty slice is a list of End with no elements.
+    case!(U64Be, 0x00, [], []);
+}
+
+#[test]
 fn owned_wrappers_read_and_write_lists() {
     #[derive(FromNBT, ToNBT, PartialEq, Debug)]
     struct Holder {

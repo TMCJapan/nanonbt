@@ -42,8 +42,9 @@
 //! `nanonbt` has three entries: `nanonbt-serde` uses the `serde` feature,
 //! `nanonbt-derive` the owned `FromNBT`/`ToNBT` derive, and `nanonbt-borrow` a
 //! derived struct that borrows strings and arrays from the input. The borrowed
-//! struct writes those borrowed arrays as lists, one byte longer than the
-//! array tags it read, so its throughput is the length it produces.
+//! struct writes every borrowed array back as the array it read, so its
+//! throughput is the length of the input; only the short list, which has no
+//! NBT array, writes one byte longer than it read.
 //!
 //! This crate is outside the root workspace because `simdnbt` uses nightly
 //! features, and the rest of the repository pins a stable toolchain. Run it
@@ -59,11 +60,10 @@
 //! and `simdnbt` are enabled by default; `pumpkin-nbt` is always listed last
 //! in the report.
 //!
-//! Three entries need a note. `nanonbt-borrow` (above) changes the encoding of
-//! borrowed arrays. `simdnbt-borrow` keeps a tape over the input and decodes
-//! strings lazily; its `int_array` and `long_array` accessors copy, so those
-//! fields own their data where the rest borrows. `simdnbt-owned` reads the
-//! tree first and copies what its accessors will not lend.
+//! Two entries need a note. `simdnbt-borrow` keeps a tape over the input and
+//! decodes strings lazily; its `int_array` and `long_array` accessors copy, so
+//! those fields own their data where the rest borrows. `simdnbt-owned` reads
+//! the tree first and copies what its accessors will not lend.
 
 // Struct fields are named after their NBT keys, so that neither `serde` nor
 // the `nanonbt` derive needs a rename; the derive's generated bindings then
@@ -99,8 +99,8 @@ pub fn bench_parse<'a, T, S: std::fmt::Display>(
 /// Runs one write benchmark: `parse` sets `T` up once, outside the timing, and
 /// `write` encodes it on every iteration.
 ///
-/// Throughput is the length `write` produces, which for a borrowed struct is
-/// not always the length of the input.
+/// Throughput is the length `write` produces, which for the short list is one
+/// byte longer than the input.
 pub fn bench_write<'a, T, O: AsRef<[u8]>, S: std::fmt::Display>(
     group: &mut BenchmarkGroup<'_, WallTime>,
     name: &str,
