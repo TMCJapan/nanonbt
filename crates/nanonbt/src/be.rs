@@ -13,7 +13,8 @@
 //! Reading accepts an array's tag and a list of the same element, so a
 //! `&'de [U64Be]` reads a `TAG_Long_Array` or a `TAG_List` of `TAG_Long`.
 //! Writing a borrowed slice goes through the sequence implementations, which
-//! write a list rather than an array; the [`Write`](crate::Write) array
+//! write a list rather than an array; the slice's bytes are already those NBT
+//! stores, so they go out in one write. The [`Write`](crate::Write) array
 //! methods and derived fields with `#[nbt(array = ...)]` write arrays.
 //!
 //! ```
@@ -242,6 +243,10 @@ impl ToNBT for U16Be {
     fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_bytes(self.as_bytes())
     }
+    // Already big-endian: the slice is one run of NBT payload.
+    fn write_elements<W: Write>(elements: &[Self], writer: &mut W) -> Result<()> {
+        writer.write_bytes(as_bytes(elements))
+    }
 }
 impl<'de> FromNBT<'de> for U16Be {
     fn read<R: Read<'de>>(tag: u8, reader: &mut R) -> Result<Self> {
@@ -347,6 +352,10 @@ impl ToNBT for I16Be {
     const TAG: u8 = TAG_SHORT;
     fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_bytes(self.as_bytes())
+    }
+    // Already big-endian: the slice is one run of NBT payload.
+    fn write_elements<W: Write>(elements: &[Self], writer: &mut W) -> Result<()> {
+        writer.write_bytes(as_bytes(elements))
     }
 }
 impl<'de> FromNBT<'de> for I16Be {
@@ -454,6 +463,10 @@ impl ToNBT for U32Be {
     fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_bytes(self.as_bytes())
     }
+    // Already big-endian: the slice is one run of NBT payload.
+    fn write_elements<W: Write>(elements: &[Self], writer: &mut W) -> Result<()> {
+        writer.write_bytes(as_bytes(elements))
+    }
 }
 impl<'de> FromNBT<'de> for U32Be {
     fn read<R: Read<'de>>(tag: u8, reader: &mut R) -> Result<Self> {
@@ -559,6 +572,10 @@ impl ToNBT for I32Be {
     const TAG: u8 = TAG_INT;
     fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_bytes(self.as_bytes())
+    }
+    // Already big-endian: the slice is one run of NBT payload.
+    fn write_elements<W: Write>(elements: &[Self], writer: &mut W) -> Result<()> {
+        writer.write_bytes(as_bytes(elements))
     }
 }
 impl<'de> FromNBT<'de> for I32Be {
@@ -666,6 +683,10 @@ impl ToNBT for U64Be {
     fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_bytes(self.as_bytes())
     }
+    // Already big-endian: the slice is one run of NBT payload.
+    fn write_elements<W: Write>(elements: &[Self], writer: &mut W) -> Result<()> {
+        writer.write_bytes(as_bytes(elements))
+    }
 }
 impl<'de> FromNBT<'de> for U64Be {
     fn read<R: Read<'de>>(tag: u8, reader: &mut R) -> Result<Self> {
@@ -771,6 +792,10 @@ impl ToNBT for I64Be {
     const TAG: u8 = TAG_LONG;
     fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_bytes(self.as_bytes())
+    }
+    // Already big-endian: the slice is one run of NBT payload.
+    fn write_elements<W: Write>(elements: &[Self], writer: &mut W) -> Result<()> {
+        writer.write_bytes(as_bytes(elements))
     }
 }
 impl<'de> FromNBT<'de> for I64Be {
@@ -879,6 +904,10 @@ impl ToNBT for F32Be {
     fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_bytes(self.as_bytes())
     }
+    // Already big-endian: the slice is one run of NBT payload.
+    fn write_elements<W: Write>(elements: &[Self], writer: &mut W) -> Result<()> {
+        writer.write_bytes(as_bytes(elements))
+    }
 }
 impl<'de> FromNBT<'de> for F32Be {
     fn read<R: Read<'de>>(tag: u8, reader: &mut R) -> Result<Self> {
@@ -985,6 +1014,10 @@ impl ToNBT for F64Be {
     const TAG: u8 = TAG_DOUBLE;
     fn write<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_bytes(self.as_bytes())
+    }
+    // Already big-endian: the slice is one run of NBT payload.
+    fn write_elements<W: Write>(elements: &[Self], writer: &mut W) -> Result<()> {
+        writer.write_bytes(as_bytes(elements))
     }
 }
 impl<'de> FromNBT<'de> for F64Be {
