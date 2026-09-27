@@ -454,6 +454,7 @@ dependencies = [
  "pumpkin-nbt",
  "random-names",
  "serde",
+ "serde_json",
  "simdnbt",
 ]
 
