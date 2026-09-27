@@ -57,8 +57,13 @@ jobs:
       - name: bench the base commit
         working-directory: crates/nanonbt-bench
         # `--noplot` skips criterion's per-entry charts, which are most of the
-        # suite's wall time and are not read in CI.
-        run: cargo bench --locked --bench compare -- --noplot --save-baseline main
+        # suite's wall time and are not read in CI. `setarch -R` disables
+        # address-space randomization: the passes are different processes, and
+        # without it each lays the same input buffers out differently, which
+        # moved entries whose walk is sensitive to the placement by tens of
+        # percent between passes that measured the same iteration counts
+        # elsewhere.
+        run: setarch -R cargo bench --locked --bench compare -- --noplot --save-baseline main
 
       # The base pass saves its numbers under `main/`, but leaves them in
       # `new/` as well, and the pull request pass overwrites only the entries
@@ -74,10 +79,10 @@ jobs:
         run: git checkout --force --detach "$HEAD_SHA"
       - name: bench the pull request
         working-directory: crates/nanonbt-bench
-        # `--baseline-lenient`: an entry this pull request adds has no
-        # baseline, and the strict comparison would fail the whole pass over
-        # it.
-        run: cargo bench --locked --bench compare -- --noplot --baseline-lenient main
+        # `setarch -R` as above. `--baseline-lenient`: an entry this pull
+        # request adds has no baseline, and the strict comparison would fail
+        # the whole pass over it.
+        run: setarch -R cargo bench --locked --bench compare -- --noplot --baseline-lenient main
 
       - name: summarize
         working-directory: crates/nanonbt-bench
