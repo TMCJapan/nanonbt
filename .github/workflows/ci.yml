@@ -182,8 +182,9 @@ jobs:
   # The comparison bench lives in its own workspace, `crates/nanonbt-bench`,
   # because `simdnbt` needs nightly. Compiling and linting it here keeps it
   # from rotting without moving the jobs above off the pinned stable
-  # toolchain. This job keeps no numbers; `bench.yml` benches the base commit
-  # and the pull request against each other on one runner.
+  # toolchain. This job keeps no numbers; `bench.yml` benches both revisions
+  # in two jobs with mirrored pass order and posts a comment when the two
+  # agree.
   bench:
     runs-on: ubuntu-24.04
     steps:

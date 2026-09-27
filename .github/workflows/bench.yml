@@ -21,20 +21,35 @@ env:
 
 jobs:
   compare:
-    # Both sides are benched back to back on one runner, so the percentages
-    # describe one machine at one moment; numbers another runner stored would
-    # describe the hosts instead. Shared runners are still noisy, which is why
-    # this sits outside the required `ci` workflow in ci.yml.
+    name: compare (${{ matrix.order }})
+    # Both sides are benched in both jobs, but in opposite orders: `forward`
+    # runs the base commit first, `backward` runs the pull request first.
+    # Every number a job reports is still set against the other side on the
+    # same runner, while anything that follows the pass order — a clock
+    # ramping up, the page cache warming — pushes the two jobs' changes in
+    # opposite directions; only a change in the code moves both the same way.
+    # The summary keeps a change only where the two jobs agree, and it never
+    # subtracts numbers one runner stored from numbers another did.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - order: forward
+            first_sha: ${{ github.event.pull_request.base.sha }}
+            first_baseline: base
+            second_sha: ${{ github.event.pull_request.head.sha }}
+            second_baseline: head
+          - order: backward
+            first_sha: ${{ github.event.pull_request.head.sha }}
+            first_baseline: head
+            second_sha: ${{ github.event.pull_request.base.sha }}
+            second_baseline: base
     runs-on: ubuntu-24.04
     timeout-minutes: 90
-    permissions:
-      contents: read
-      pull-requests: write
     steps:
       - uses: actions/checkout@v7
         with:
-          # Both parents of the pull request's merge commit are checked out
-          # below, by sha.
+          # The pull request's two parents are checked out below, by sha.
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@master
         with:
@@ -46,15 +61,13 @@ jobs:
           workspaces: crates/nanonbt-bench
 
       # The cached target may hold criterion output from other commits and
-      # other runners; a comparison must start from the base commit's alone.
+      # other runners; a comparison must start from this job's passes alone.
       - name: clear criterion output
         run: rm -rf crates/nanonbt-bench/target/criterion
 
-      - name: check out the base commit
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: git checkout --force --detach "$BASE_SHA"
-      - name: bench the base commit
+      - name: check out the first commit
+        run: git checkout --force --detach "${{ matrix.first_sha }}"
+      - name: bench the first commit
         working-directory: crates/nanonbt-bench
         # `--noplot` skips criterion's per-entry charts, which are most of the
         # suite's wall time and are not read in CI. `setarch -R` disables
@@ -63,33 +76,56 @@ jobs:
         # moved entries whose walk is sensitive to the placement by tens of
         # percent between passes that measured the same iteration counts
         # elsewhere.
-        run: setarch -R cargo bench --locked --bench compare -- --noplot --save-baseline main
-
-      # The base pass saves its numbers under `main/`, but leaves them in
-      # `new/` as well, and the pull request pass overwrites only the entries
-      # it runs. Clearing `new/` between the passes leaves each side's numbers
-      # in its own directory, so an entry the pull request removed still
-      # reaches the summary.
-      - name: clear the base pass's numbers
-        run: find crates/nanonbt-bench/target/criterion -type d -name new -prune -exec rm -rf {} +
-
-      - name: check out the pull request
-        env:
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: git checkout --force --detach "$HEAD_SHA"
-      - name: bench the pull request
+        run: setarch -R cargo bench --locked --bench compare -- --noplot --save-baseline "${{ matrix.first_baseline }}"
+      - name: check out the second commit
+        run: git checkout --force --detach "${{ matrix.second_sha }}"
+      - name: bench the second commit
         working-directory: crates/nanonbt-bench
-        # `setarch -R` as above. `--baseline-lenient`: an entry this pull
-        # request adds has no baseline, and the strict comparison would fail
-        # the whole pass over it.
-        run: setarch -R cargo bench --locked --bench compare -- --noplot --baseline-lenient main
+        # `setarch -R` as above. Each pass saves under its own name, so an
+        # entry the second side no longer runs still has the first side's
+        # numbers, which the summary reports as removed.
+        run: setarch -R cargo bench --locked --bench compare -- --noplot --save-baseline "${{ matrix.second_baseline }}"
 
+      # The summarize job compares the two jobs' numbers, so each job hands
+      # over its criterion tree; a day is long enough for one run's comment.
+      - name: upload the criterion output
+        uses: actions/upload-artifact@v7
+        with:
+          name: criterion-${{ matrix.order }}
+          path: crates/nanonbt-bench/target/criterion
+          retention-days: 1
+          if-no-files-found: error
+
+  summarize:
+    needs: compare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_NIGHTLY_TOOLCHAIN }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # Keyed like the compare jobs, to reuse their build of the example.
+          workspaces: crates/nanonbt-bench
+      - name: download both jobs' numbers
+        uses: actions/download-artifact@v8
+        with:
+          pattern: criterion-*
+          path: pairs
       - name: summarize
         working-directory: crates/nanonbt-bench
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: cargo run --quiet --locked --no-default-features --example bench-summary -- target/criterion main "$BASE_SHA" "$HEAD_SHA" > "$GITHUB_WORKSPACE/bench-summary.md"
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        # `forward` benches the base commit first, so it is the summary's
+        # base-first directory.
+        run: cargo run --quiet --locked --no-default-features --example bench-summary -- "$GITHUB_WORKSPACE/pairs/criterion-forward" "$GITHUB_WORKSPACE/pairs/criterion-backward" "$BASE_SHA" "$HEAD_SHA" "$BASE_REF" > "$GITHUB_WORKSPACE/bench-summary.md"
 
       # A pull request from a fork, or one Dependabot opened, runs with a
       # read-only token and cannot comment; its numbers are still in the log
