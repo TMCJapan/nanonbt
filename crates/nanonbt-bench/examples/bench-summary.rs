@@ -1,26 +1,30 @@
 //! Renders the `compare` benchmark's criterion output as the pull request
 //! comment the `Bench` workflow posts.
 //!
-//! The workflow runs the bench twice, back to back on one runner: first on the
-//! base commit with `--save-baseline main`, then on the pull request with
-//! `--baseline-lenient main`. Criterion leaves the numbers under its output
-//! directory as JSON: each entry's `new` estimates, the saved baseline's
-//! `main` estimates, and, where the two could be compared, the `change`
-//! estimates between them. This tool reads those files and writes a Markdown
-//! summary: what improved or regressed beyond criterion's noise threshold, and
-//! every entry under a collapsed table.
+//! The workflow benches both sides in two parallel jobs whose pass order is
+//! mirrored: the base-first job runs the base commit and saves its numbers as
+//! `base`, then runs the pull request and saves `head`; the head-first job
+//! runs the two in the opposite order under the same names. Each job uploads
+//! its criterion output, and this tool reads every entry's `base` and `head`
+//! estimates from both and writes the Markdown summary.
 //!
-//! An entry counts as improved or regressed exactly when criterion's own
-//! report would say so: the 95% confidence interval of the mean change must
-//! clear the threshold on one side. The t-test's p-value is not among the
-//! saved files, so the interval alone decides.
+//! The mirrored order is what makes the numbers worth reading: anything that
+//! follows the pass order — a clock ramping up, the page cache warming —
+//! pushes one job's change up and the other's down, while a real change moves
+//! both the same way. An entry counts as improved or regressed only when both
+//! jobs clear criterion's ±1% noise threshold in the same direction; the two
+//! jobs' numbers are always shown side by side, and a pair that disagrees is
+//! called unstable rather than a change.
 //!
-//! Usage: `cargo run --example bench-summary -- [DIR] [BASELINE] [BASE]
-//! [HEAD]`, where `DIR` defaults to `target/criterion`, `BASELINE` to `main`,
-//! `BASE` to `main` and `HEAD` to `PR`. The labels are what the summary calls
-//! the two sides; a label longer than eight characters is shortened to one.
+//! Usage: `cargo run --example bench-summary -- <BASE_FIRST> <HEAD_FIRST>
+//! [BASE] [HEAD] [BASE_BRANCH]`, where `BASE_FIRST` and `HEAD_FIRST` are the
+//! two jobs' criterion directories, each holding every entry's `base` and
+//! `head` estimates; `BASE` and `HEAD` are the shas the header names the two
+//! sides by, defaulting to `base` and `PR`; and `BASE_BRANCH` labels the base
+//! side in the tables, defaulting to `main`. A sha label longer than eight
+//! characters is shortened to one.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fmt::{self, Write as _};
 use std::fs;
@@ -47,54 +51,87 @@ fn main() -> ExitCode {
 
 fn run() -> Result<()> {
     let mut args = env::args().skip(1);
-    let dir = args.next().unwrap_or_else(|| "target/criterion".to_owned());
-    let baseline = args.next().unwrap_or_else(|| "main".to_owned());
-    let base = args.next().unwrap_or_else(|| "main".to_owned());
+    let (Some(base_first), Some(head_first)) = (args.next(), args.next()) else {
+        return Err(
+            "usage: bench-summary <BASE_FIRST> <HEAD_FIRST> [BASE] [HEAD] [BASE_BRANCH]".into(),
+        );
+    };
+    let base = args.next().unwrap_or_else(|| "base".to_owned());
     let head = args.next().unwrap_or_else(|| "PR".to_owned());
+    let base_branch = args.next().unwrap_or_else(|| "main".to_owned());
 
-    let entries = collect(Path::new(&dir), &baseline)?;
-    if entries.is_empty() {
-        return Err(format!("no criterion estimates under {dir}").into());
+    let jobs = [
+        read_job(Path::new(&base_first))?,
+        read_job(Path::new(&head_first))?,
+    ];
+    if jobs[0].is_empty() || jobs[1].is_empty() {
+        return Err(format!("no criterion estimates under {base_first} or {head_first}").into());
     }
-    print!("{}", render(&entries, &baseline, &base, &head)?);
+    print!("{}", render(&jobs, &base, &head, &base_branch)?);
     Ok(())
 }
 
-/// One benchmark's estimates: the saved baseline, the pull request's numbers,
-/// and the change between the two where criterion could compute one.
-#[derive(Default)]
-struct Entry {
-    baseline: Option<f64>,
-    new: Option<f64>,
-    change: Option<Change>,
+/// One benchmark's estimates from one job: the base commit's mean time and
+/// the pull request's, in nanoseconds.
+#[derive(Clone, Copy, Default)]
+struct Pair {
+    base: Option<f64>,
+    head: Option<f64>,
 }
 
-/// The mean change against the baseline, as a fraction, and the bounds of its
-/// confidence interval.
-struct Change {
-    point: f64,
-    lower: f64,
-    upper: f64,
+impl Pair {
+    /// The job's change of the pull request against the base commit, as a
+    /// fraction, or `None` when the job did not run both sides.
+    fn change(self) -> Option<f64> {
+        Some(self.head? / self.base? - 1.0)
+    }
 }
 
-/// Reads every `estimates.json` under `root`, keyed by benchmark id — the
-/// `group/function/value` path criterion files an entry under.
-fn collect(root: &Path, baseline: &str) -> Result<BTreeMap<String, Entry>> {
-    let mut entries: BTreeMap<String, Entry> = BTreeMap::new();
+/// One benchmark across both jobs.
+struct Entry<'a> {
+    id: &'a str,
+    sides: [Pair; 2],
+}
+
+impl Entry<'_> {
+    /// The mean time of each side across the jobs that ran it.
+    fn base(&self) -> Option<f64> {
+        mean(self.sides.iter().filter_map(|side| side.base))
+    }
+
+    fn head(&self) -> Option<f64> {
+        mean(self.sides.iter().filter_map(|side| side.head))
+    }
+
+    /// Each job's change of the pull request against the base commit.
+    fn changes(&self) -> Vec<f64> {
+        self.sides.iter().filter_map(|side| side.change()).collect()
+    }
+
+    /// What the jobs' changes add up to, or `None` when no job compared the
+    /// entry's two sides.
+    fn verdict(&self) -> Option<Verdict> {
+        verdict(&self.changes())
+    }
+}
+
+/// Reads every `base` and `head` estimate under `root`, keyed by benchmark id
+/// — the `group/function/value` path criterion files an entry under.
+fn read_job(root: &Path) -> Result<BTreeMap<String, Pair>> {
+    let mut job: BTreeMap<String, Pair> = BTreeMap::new();
     for file in estimates_files(root)? {
         let Some((id, directory)) = split(&file, root) else {
             continue;
         };
-        let entry = entries.entry(id).or_default();
+        let side = job.entry(id).or_default();
         let value = load(&file)?;
         match directory.as_str() {
-            "new" => entry.new = point(&value, "mean"),
-            "change" => entry.change = change(&value),
-            directory if directory == baseline => entry.baseline = point(&value, "mean"),
+            "base" => side.base = point(&value, "mean"),
+            "head" => side.head = point(&value, "mean"),
             _ => {}
         }
     }
-    Ok(entries)
+    Ok(job)
 }
 
 /// Every `estimates.json` below `root`, skipping criterion's `report` tree,
@@ -119,7 +156,7 @@ fn estimates_files(root: &Path) -> std::io::Result<Vec<PathBuf>> {
 }
 
 /// Splits `.../<id>/<directory>/estimates.json` into the benchmark id and the
-/// directory the file sits in (`new`, `change`, or the baseline's name).
+/// directory the file sits in (`new`, `base`, or `head`).
 fn split(file: &Path, root: &Path) -> Option<(String, String)> {
     let relative = file.strip_prefix(root).ok()?;
     let mut parts: Vec<String> = relative
@@ -147,79 +184,97 @@ fn point(value: &Value, statistic: &str) -> Option<f64> {
     value.get(statistic)?.get("point_estimate")?.as_f64()
 }
 
-/// The mean change of a `change/estimates.json`.
-fn change(value: &Value) -> Option<Change> {
-    let mean = value.get("mean")?;
-    let interval = mean.get("confidence_interval")?;
-    Some(Change {
-        point: mean.get("point_estimate")?.as_f64()?,
-        lower: interval.get("lower_bound")?.as_f64()?,
-        upper: interval.get("upper_bound")?.as_f64()?,
-    })
-}
-
-/// What a change clears the noise threshold as.
+/// What the jobs' changes agree on.
 enum Verdict {
     Improved,
     /// Slower, and beyond noise.
     Regressed,
+    /// The jobs disagree; neither one's change is trustworthy.
+    Unstable,
     WithinNoise,
 }
 
-fn verdict(change: &Change) -> Verdict {
-    if change.lower < -NOISE_THRESHOLD && change.upper < -NOISE_THRESHOLD {
+/// The verdict for one entry's per-job changes: every job must clear the
+/// threshold in the same direction. Some jobs moving and others not, or two
+/// jobs moving opposite ways, is a disagreement, not a change.
+fn verdict(changes: &[f64]) -> Option<Verdict> {
+    if changes.is_empty() {
+        return None;
+    }
+    let improved = changes.iter().all(|change| *change <= -NOISE_THRESHOLD);
+    let regressed = changes.iter().all(|change| *change >= NOISE_THRESHOLD);
+    Some(if improved {
         Verdict::Improved
-    } else if change.lower > NOISE_THRESHOLD && change.upper > NOISE_THRESHOLD {
+    } else if regressed {
         Verdict::Regressed
+    } else if changes.iter().any(|change| change.abs() >= NOISE_THRESHOLD) {
+        Verdict::Unstable
     } else {
         Verdict::WithinNoise
-    }
+    })
 }
 
 fn render(
-    entries: &BTreeMap<String, Entry>,
-    baseline: &str,
+    jobs: &[BTreeMap<String, Pair>; 2],
     base: &str,
     head: &str,
+    base_branch: &str,
 ) -> std::result::Result<String, fmt::Error> {
+    let ids: BTreeSet<&str> = jobs
+        .iter()
+        .flat_map(|job| job.keys().map(String::as_str))
+        .collect();
+    let entries: Vec<Entry> = ids
+        .into_iter()
+        .map(|id| Entry {
+            id,
+            sides: [
+                jobs[0].get(id).copied().unwrap_or_default(),
+                jobs[1].get(id).copied().unwrap_or_default(),
+            ],
+        })
+        .collect();
+
     let mut improved = Vec::new();
     let mut regressed = Vec::new();
+    let mut unstable = Vec::new();
     let mut within_noise = 0;
     let mut new = 0;
     let mut removed = 0;
-    for (id, entry) in entries {
-        match &entry.change {
-            Some(change) => match verdict(change) {
-                Verdict::Improved => improved.push((id, entry, change)),
-                Verdict::Regressed => regressed.push((id, entry, change)),
-                Verdict::WithinNoise => within_noise += 1,
-            },
-            None if entry.baseline.is_some() && entry.new.is_none() => removed += 1,
-            None if entry.new.is_some() && entry.baseline.is_none() => new += 1,
+    for entry in &entries {
+        match entry.verdict() {
+            Some(Verdict::Improved) => improved.push(entry),
+            Some(Verdict::Regressed) => regressed.push(entry),
+            Some(Verdict::Unstable) => unstable.push(entry),
+            Some(Verdict::WithinNoise) => within_noise += 1,
+            None if entry.base().is_some() && entry.head().is_none() => removed += 1,
+            None if entry.head().is_some() && entry.base().is_none() => new += 1,
             None => {}
         }
     }
-    // The most improved first, and the most regressed first, so each table
-    // leads with its news.
-    improved.sort_by(|a, b| a.2.point.total_cmp(&b.2.point));
-    regressed.sort_by(|a, b| b.2.point.total_cmp(&a.2.point));
+    // Each table leads with its news. An entry is ordered by the number its
+    // table shows: the change closest to zero, the one both jobs support.
+    improved.sort_by(|a, b| closest(&a.changes()).total_cmp(&closest(&b.changes())));
+    regressed.sort_by(|a, b| closest(&b.changes()).total_cmp(&closest(&a.changes())));
+    unstable.sort_by(|a, b| widest(&b.changes()).total_cmp(&widest(&a.changes())));
 
-    let baseline = short_label(baseline);
     let mut out = String::new();
     writeln!(out, "## Benchmark results\n")?;
     writeln!(
         out,
-        "`{}` (this pull request) against `{}` ({baseline}), benchmarked back to back on one \
-         runner. A negative change is faster.\n",
+        "`{}` (this pull request) against `{}` ({base_branch}). Each side was benched in two \
+         jobs whose pass order is mirrored, and a change is listed only where both agree. A \
+         negative change is faster.\n",
         short_label(head),
         short_label(base),
     )?;
     write!(
         out,
-        "**{} improved · {} regressed · {within_noise} within noise** of {} entries compared",
+        "**{} improved · {} regressed · {} unstable · {within_noise} within noise** of {} entries compared",
         improved.len(),
         regressed.len(),
-        improved.len() + regressed.len() + within_noise,
+        unstable.len(),
+        improved.len() + regressed.len() + unstable.len() + within_noise,
     )?;
     let mut extras = Vec::new();
     if new > 0 {
@@ -233,89 +288,130 @@ fn render(
     }
     writeln!(out, ".\n")?;
 
-    if !improved.is_empty() {
-        writeln!(out, "### Improved\n")?;
-        table(&mut out, baseline, &improved)?;
-    }
-    if !regressed.is_empty() {
-        writeln!(out, "### Regressed\n")?;
-        table(&mut out, baseline, &regressed)?;
+    for (title, rows) in [
+        ("Improved", &improved),
+        ("Regressed", &regressed),
+        ("Unstable", &unstable),
+    ] {
+        if rows.is_empty() {
+            continue;
+        }
+        writeln!(out, "### {title}\n")?;
+        table(&mut out, base_branch, rows)?;
     }
 
     writeln!(out, "<details>")?;
     writeln!(out, "<summary>All {} entries</summary>\n", entries.len())?;
-    let mut groups: BTreeMap<&str, Vec<(&String, &Entry)>> = BTreeMap::new();
-    for (id, entry) in entries {
-        let group = id.split_once('/').map_or(id.as_str(), |(group, _)| group);
-        groups.entry(group).or_default().push((id, entry));
+    let mut groups: BTreeMap<&str, Vec<&Entry>> = BTreeMap::new();
+    for entry in &entries {
+        let group = entry
+            .id
+            .split_once('/')
+            .map_or(entry.id, |(group, _)| group);
+        groups.entry(group).or_default().push(entry);
     }
     for (&group, rows) in &groups {
         writeln!(out, "#### {group}\n")?;
-        writeln!(out, "| Benchmark | {baseline} | PR | Change |")?;
-        writeln!(out, "| --- | ---: | ---: | ---: |")?;
-        for &(id, entry) in rows {
-            out.push_str(&row(id, entry));
-        }
-        writeln!(out)?;
+        table(&mut out, base_branch, rows)?;
     }
     writeln!(out, "</details>\n")?;
     writeln!(
         out,
-        "<sub>An entry counts as improved or regressed when the 95% confidence interval of its \
-         mean change clears criterion's ±1% noise threshold. Shared runners are noisy; repeat \
-         before trusting a small change.</sub>",
+        "<sub>`base first` benched the base commit and then the pull request; `head first` \
+         benched them in the opposite order. An entry counts as improved or regressed only when \
+         both jobs' changes clear criterion's ±1% noise threshold in the same direction — the \
+         percentage is then the less extreme of the two — and a pair that disagrees is listed as \
+         unstable. Shared runners are noisy; repeat before trusting a small change.</sub>",
     )?;
     Ok(out)
 }
 
-/// Writes one change table, header and all.
-fn table(out: &mut String, baseline: &str, rows: &[(&String, &Entry, &Change)]) -> fmt::Result {
-    writeln!(out, "| Benchmark | {baseline} | PR | Change |")?;
-    writeln!(out, "| --- | ---: | ---: | ---: |")?;
-    for &(id, entry, change) in rows {
+/// Writes one entry table, header and all.
+fn table(out: &mut String, base_branch: &str, rows: &[&Entry]) -> fmt::Result {
+    writeln!(
+        out,
+        "| Benchmark | {base_branch} | PR | Change | base first / head first |",
+    )?;
+    writeln!(out, "| --- | ---: | ---: | ---: | ---: |")?;
+    for entry in rows {
         writeln!(
             out,
-            "| `{id}` | {} | {} | {} |",
-            time_cell(entry.baseline),
-            time_cell(entry.new),
-            marked(change),
+            "| `{}` | {} | {} | {} | {} |",
+            entry.id,
+            time_cell(entry.base()),
+            time_cell(entry.head()),
+            change_cell(entry),
+            changes_cell(entry),
         )?;
     }
     out.push('\n');
     Ok(())
 }
 
-/// One row of the collapsed table: every entry, whether it compared or is new
-/// or gone.
-fn row(id: &str, entry: &Entry) -> String {
-    let change = entry.change.as_ref().map_or_else(
-        || match (entry.baseline.is_some(), entry.new.is_some()) {
-            (true, false) => "removed".to_owned(),
-            (false, true) => "new".to_owned(),
-            _ => "—".to_owned(),
-        },
-        marked,
-    );
-    format!(
-        "| `{id}` | {} | {} | {change} |\n",
-        time_cell(entry.baseline),
-        time_cell(entry.new),
-    )
+/// The entry's change cell: the verdict both jobs add up to, or how the entry
+/// stands out of the comparison.
+fn change_cell(entry: &Entry) -> String {
+    match entry.verdict() {
+        Some(Verdict::Unstable) => "⚠️ unstable".to_owned(),
+        Some(verdict) => marked(verdict, closest(&entry.changes())),
+        None if entry.base().is_some() && entry.head().is_none() => "removed".to_owned(),
+        None if entry.head().is_some() && entry.base().is_none() => "new".to_owned(),
+        None => "—".to_owned(),
+    }
+}
+
+/// Each job's change, in the order the two jobs are named, with an em dash
+/// where a job has no comparison.
+fn changes_cell(entry: &Entry) -> String {
+    entry
+        .sides
+        .iter()
+        .map(|side| side.change().map_or_else(|| "—".to_owned(), percent))
+        .collect::<Vec<_>>()
+        .join(" / ")
 }
 
 /// A change with the mark and emphasis its verdict earns.
-fn marked(change: &Change) -> String {
-    let (mark, bold) = match verdict(change) {
+fn marked(verdict: Verdict, change: f64) -> String {
+    let (mark, bold) = match verdict {
         Verdict::Improved => ("🟢", true),
         Verdict::Regressed => ("🔴", true),
+        Verdict::Unstable => ("⚠️", false),
         Verdict::WithinNoise => ("⚪", false),
     };
-    let percent = percent(change.point);
+    let percent = percent(change);
     if bold {
         format!("{mark} **{percent}**")
     } else {
         format!("{mark} {percent}")
     }
+}
+
+/// The mean of the values, or `None` when there are none.
+fn mean(values: impl Iterator<Item = f64>) -> Option<f64> {
+    let values: Vec<f64> = values.collect();
+    if values.is_empty() {
+        None
+    } else {
+        Some(values.iter().sum::<f64>() / values.len() as f64)
+    }
+}
+
+/// The change closest to zero: the least extreme one, the number both jobs
+/// support.
+fn closest(changes: &[f64]) -> f64 {
+    changes
+        .iter()
+        .copied()
+        .min_by(|a, b| a.abs().total_cmp(&b.abs()))
+        .unwrap_or_default()
+}
+
+/// The largest change magnitude a job saw; the unstable table leads with it.
+fn widest(changes: &[f64]) -> f64 {
+    changes
+        .iter()
+        .fold(0.0, |widest, change| widest.max(change.abs()))
 }
 
 /// A time, in the unit that keeps it readable, or an em dash when the side

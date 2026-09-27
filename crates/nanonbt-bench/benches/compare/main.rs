@@ -60,9 +60,9 @@
 //! and `simdnbt` are enabled by default; `pumpkin-nbt` is always listed last
 //! in the report.
 //!
-//! The `Bench` workflow runs this bench twice per pull request, on the base
-//! commit with `--save-baseline main` and on the head with
-//! `--baseline-lenient main`, and posts the difference as a comment; see
+//! The `Bench` workflow runs this bench on both the base commit and the head
+//! in each of two jobs, passing the two in opposite orders, and posts a
+//! comment that keeps only the changes both jobs agree on; see
 //! `.github/workflows/bench.yml` and `examples/bench-summary.rs`.
 //!
 //! Two entries need a note. `simdnbt-borrow` keeps a tape over the input and
