@@ -17,12 +17,13 @@ hashify = ["derive", "nanonbt-derive/hashify", "dep:hashify"]
 serde = ["dep:serde"]
 # Vectorizes nanocesu8's string validation and encode fast-path scan, and
 # settles array and numeric-list byte order a vector at a time.
-simd = ["nanocesu8/simd"]
+simd = ["nanocesu8/simd", "dep:pulp"]
 
 [dependencies]
 hashify = { workspace = true, optional = true }
 nanocesu8.workspace = true
 nanonbt-derive = { workspace = true, optional = true }
+pulp = { workspace = true, optional = true, default-features = false }
 serde = { version = "1", default-features = false, features = [
   "alloc",
 ], optional = true }

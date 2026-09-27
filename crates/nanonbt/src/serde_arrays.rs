@@ -332,7 +332,7 @@ pub mod int_array {
     fn decode<E: IntArrayElement>(bytes: &[u8]) -> Vec<E> {
         #[cfg(feature = "simd")]
         {
-            crate::simd::decode_be::<E, 4>(bytes, E::from_be_bytes)
+            crate::simd::decode_be::<E, 4>(bytes)
         }
         #[cfg(not(feature = "simd"))]
         {
@@ -453,7 +453,7 @@ pub mod long_array {
     fn decode<E: LongArrayElement>(bytes: &[u8]) -> Vec<E> {
         #[cfg(feature = "simd")]
         {
-            crate::simd::decode_be::<E, 8>(bytes, E::from_be_bytes)
+            crate::simd::decode_be::<E, 8>(bytes)
         }
         #[cfg(not(feature = "simd"))]
         {

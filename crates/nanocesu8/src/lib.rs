@@ -19,8 +19,8 @@
 //!
 //! The `simd` feature vectorizes the two hot scans: the accept fast path
 //! checks UTF-8 with `simdutf8` and looks for what UTF-8 does not spell the
-//! modified way with `wide`, and deciding whether encoding can borrow runs
-//! 32 bytes at a time through `wide` as well. What is accepted, borrowed and
+//! modified way with `pulp`, and deciding whether encoding can borrow runs a
+//! vector at a time through `pulp` as well. What is accepted, borrowed and
 //! decoded does not change.
 //!
 //! ```

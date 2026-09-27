@@ -39,7 +39,8 @@ fn read_be<'de, T: Copy, const SIZE: usize, R: Read<'de>>(
     let bytes = reader.read_bytes(n)?;
     #[cfg(feature = "simd")]
     {
-        Ok(crate::simd::decode_be::<T, SIZE>(&bytes, decode))
+        let _ = decode;
+        Ok(crate::simd::decode_be::<T, SIZE>(&bytes))
     }
     #[cfg(not(feature = "simd"))]
     {
