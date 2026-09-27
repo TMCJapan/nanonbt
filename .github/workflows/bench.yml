@@ -1,0 +1,98 @@
+name: Bench
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: 1
+  # The comparison bench needs `simdnbt`, which uses nightly features. Pinned
+  # for the same reason as the stable toolchain in ci.yml; keep the two in
+  # step.
+  RUST_NIGHTLY_TOOLCHAIN: nightly-2026-09-17
+
+jobs:
+  compare:
+    # Both sides are benched back to back on one runner, so the percentages
+    # describe one machine at one moment; numbers another runner stored would
+    # describe the hosts instead. Shared runners are still noisy, which is why
+    # this sits outside the required `ci` workflow in ci.yml.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Both parents of the pull request's merge commit are checked out
+          # below, by sha.
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_NIGHTLY_TOOLCHAIN }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # The root lock file does not cover the excluded bench, so key the
+          # cache on the bench's own.
+          workspaces: crates/nanonbt-bench
+
+      # The cached target may hold criterion output from other commits and
+      # other runners; a comparison must start from the base commit's alone.
+      - name: clear criterion output
+        run: rm -rf crates/nanonbt-bench/target/criterion
+
+      - name: check out the base commit
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: git checkout --force --detach "$BASE_SHA"
+      - name: bench the base commit
+        working-directory: crates/nanonbt-bench
+        # `--noplot` skips criterion's per-entry charts, which are most of the
+        # suite's wall time and are not read in CI.
+        run: cargo bench --locked --bench compare -- --noplot --save-baseline main
+
+      # The base pass saves its numbers under `main/`, but leaves them in
+      # `new/` as well, and the pull request pass overwrites only the entries
+      # it runs. Clearing `new/` between the passes leaves each side's numbers
+      # in its own directory, so an entry the pull request removed still
+      # reaches the summary.
+      - name: clear the base pass's numbers
+        run: find crates/nanonbt-bench/target/criterion -type d -name new -prune -exec rm -rf {} +
+
+      - name: check out the pull request
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: git checkout --force --detach "$HEAD_SHA"
+      - name: bench the pull request
+        working-directory: crates/nanonbt-bench
+        # `--baseline-lenient`: an entry this pull request adds has no
+        # baseline, and the strict comparison would fail the whole pass over
+        # it.
+        run: cargo bench --locked --bench compare -- --noplot --baseline-lenient main
+
+      - name: summarize
+        working-directory: crates/nanonbt-bench
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: cargo run --quiet --locked --no-default-features --example bench-summary -- target/criterion main "$BASE_SHA" "$HEAD_SHA" > "$GITHUB_WORKSPACE/bench-summary.md"
+
+      # A pull request from a fork, or one Dependabot opened, runs with a
+      # read-only token and cannot comment; its numbers are still in the log
+      # above.
+      - uses: marocchino/sticky-pull-request-comment@v3
+        if: >-
+          github.actor != 'dependabot[bot]' &&
+          github.event.pull_request.head.repo.full_name == github.repository
+        with:
+          header: bench
+          path: bench-summary.md

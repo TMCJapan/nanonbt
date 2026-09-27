@@ -60,6 +60,11 @@
 //! and `simdnbt` are enabled by default; `pumpkin-nbt` is always listed last
 //! in the report.
 //!
+//! The `Bench` workflow runs this bench twice per pull request, on the base
+//! commit with `--save-baseline main` and on the head with
+//! `--baseline-lenient main`, and posts the difference as a comment; see
+//! `.github/workflows/bench.yml` and `examples/bench-summary.rs`.
+//!
 //! Two entries need a note. `simdnbt-borrow` keeps a tape over the input and
 //! decodes strings lazily; its `int_array` and `long_array` accessors copy, so
 //! those fields own their data where the rest borrows. `simdnbt-owned` reads
