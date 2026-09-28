@@ -54,11 +54,15 @@
 //! wherever they run and compare without a noise band.
 //! `examples/bench-summary.rs` rebuilds the report ids from those two names.
 //!
-//! The `Bench` workflow runs the suite on the base commit and the head in one
-//! job, base first, and posts a comment that compares the two instruction
-//! counts; see `.github/workflows/bench.yml` and `examples/bench-summary.rs`.
-//! Run it locally with `cd crates/nanonbt-bench && cargo +nightly bench`; a
-//! recent valgrind and a matching `iai-callgrind-runner` must be on the path.
+//! The `Bench` workflow runs the suite once per platform and posts one
+//! comment with a section per platform: callgrind on Linux x86_64 and
+//! aarch64, wasmi fuel on wasm32, and a run-every-entry smoke test on Windows
+//! and macOS; see `.github/workflows/bench.yml` and
+//! `examples/bench-summary.rs`. The same entry files also compile into the
+//! crate's library, whose runtime registry drives the wasm and smoke
+//! runners; see `src/lib.rs`. Run the iai side locally with
+//! `cd crates/nanonbt-bench && cargo +nightly bench`; a recent valgrind and a
+//! matching `iai-callgrind-runner` must be on the path.
 //! Add `--features nanonbt/simd` to run the `nanonbt` entries on the
 //! vectorized paths. The derived entries send their names through `hashify`,
 //! which is on by default so the name pair measures the lookup;

@@ -20,13 +20,22 @@ env:
   RUST_NIGHTLY_TOOLCHAIN: nightly-2026-09-17
 
 jobs:
+  # One callgrind run per architecture. Callgrind counts instructions, so a
+  # count depends on neither the machine nor the run and the two revisions of
+  # one platform compare exactly; counts are different instruction sets across
+  # architectures, which is why every platform gets its own report section.
   compare:
-    name: compare
-    runs-on: ubuntu-24.04
+    name: compare (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            runner: ubuntu-24.04
+          - name: linux-aarch64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
-    permissions:
-      contents: read
-      pull-requests: write
     steps:
       - uses: actions/checkout@v7
         with:
@@ -42,22 +51,10 @@ jobs:
           workspaces: crates/nanonbt-bench
       - name: install valgrind
         # `iai-callgrind` counts instructions under callgrind, and neither
-        # side can run without valgrind. Both sides run in this job, under
-        # this one valgrind, so the counts are comparable.
+        # side can run without valgrind.
         run: |
           sudo apt-get update
           sudo apt-get install --yes valgrind
-
-      # Both sides of the comparison run the pull request's bench crate, so
-      # the two revisions are measured by the same suite over their own
-      # library sources; the base commit may not even carry this suite yet.
-      - name: check out the base commit with the pull request's bench
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          git checkout --force --detach "$BASE_SHA"
-          git checkout --force "$HEAD_SHA" -- crates/nanonbt-bench
       - name: read the runner version
         id: runner
         working-directory: crates/nanonbt-bench
@@ -69,6 +66,17 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: iai-callgrind-runner@${{ steps.runner.outputs.version }}
+
+      # Both sides of the comparison run the pull request's bench crate, so
+      # the two revisions are measured by the same suite over their own
+      # library sources; the base commit may not even carry this suite yet.
+      - name: check out the base commit with the pull request's bench
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          git checkout --force --detach "$BASE_SHA"
+          git checkout --force "$HEAD_SHA" -- crates/nanonbt-bench
 
       # The cached target may hold summaries from another commit's run; a
       # comparison must start from this job's runs alone.
@@ -84,7 +92,7 @@ jobs:
       - name: keep the base summaries
         working-directory: crates/nanonbt-bench
         # The head run below writes `target/iai` again, so move the base's
-        # summaries out of its way; nothing has to travel between jobs.
+        # summaries out of its way.
         run: mv target/iai "$RUNNER_TEMP/base-iai"
 
       - name: check out the pull request
@@ -93,16 +101,174 @@ jobs:
         working-directory: crates/nanonbt-bench
         run: cargo bench --locked --bench compare -- --save-summary=json
 
+      - name: stage the summaries
+        run: |
+          mkdir -p bench-out/base bench-out/head
+          cp -r "$RUNNER_TEMP/base-iai/." bench-out/base/
+          cp -r crates/nanonbt-bench/target/iai/. bench-out/head/
+      - uses: actions/upload-artifact@v5
+        with:
+          name: bench-${{ matrix.name }}
+          path: bench-out
+          if-no-files-found: error
+
+  # wasm32 has no valgrind, so the same registry runs under wasmi, which
+  # counts wasm instructions as fuel. `simdnbt` does not build for wasm32, so
+  # the module and the host both leave it off and walk the same 144 entries.
+  wasm:
+    name: wasm32-wasip1
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      # Both the module and the host must be built with these; the host
+      # checks that its registry and the module's agree.
+      WASM_FEATURES: fastnbt,hashify,pumpkin-nbt
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_NIGHTLY_TOOLCHAIN }}
+          targets: wasm32-wasip1
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates/nanonbt-bench
+      - name: check out the base commit with the pull request's bench
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          git checkout --force --detach "$BASE_SHA"
+          git checkout --force "$HEAD_SHA" -- crates/nanonbt-bench
+      - name: run the base commit on wasmi
+        working-directory: crates/nanonbt-bench
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/bench-out"
+          cargo build --locked --release --target wasm32-wasip1 --lib \
+            --no-default-features --features "$WASM_FEATURES"
+          cargo run --quiet --locked --release --no-default-features \
+            --features "$WASM_FEATURES" --bin wasm-run -- \
+            target/wasm32-wasip1/release/nanonbt_bench.wasm \
+            "$GITHUB_WORKSPACE/bench-out/base.json"
+
+      - name: check out the pull request
+        run: git checkout --force --detach "${{ github.event.pull_request.head.sha }}"
+      - name: run the pull request on wasmi
+        working-directory: crates/nanonbt-bench
+        run: |
+          cargo build --locked --release --target wasm32-wasip1 --lib \
+            --no-default-features --features "$WASM_FEATURES"
+          cargo run --quiet --locked --release --no-default-features \
+            --features "$WASM_FEATURES" --bin wasm-run -- \
+            target/wasm32-wasip1/release/nanonbt_bench.wasm \
+            "$GITHUB_WORKSPACE/bench-out/head.json"
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: bench-wasm32
+          path: bench-out
+          if-no-files-found: error
+
+  # Windows and macOS cannot run callgrind, so their runners build the suite
+  # and run every entry once; the marker each uploads says how many entries
+  # ran, and the report lists the platform without counts.
+  smoke:
+    name: smoke (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows-x64
+            runner: windows-2025
+          - name: windows-arm64
+            runner: windows-11-arm
+          - name: macos-x64
+            runner: macos-15-intel
+          - name: macos-arm64
+            runner: macos-15
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_NIGHTLY_TOOLCHAIN }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates/nanonbt-bench
+      - name: run every entry
+        shell: bash
+        env:
+          NAME: ${{ matrix.name }}
+        # The last line the smoke runner prints is its entry count, so the
+        # log doubles as the marker the summarizer reads.
+        run: |
+          mkdir -p "smoke-$NAME"
+          cd crates/nanonbt-bench
+          cargo run --locked --release --bin smoke | tee "../../smoke-$NAME/$NAME.txt"
+      - uses: actions/upload-artifact@v5
+        with:
+          name: smoke-${{ matrix.name }}
+          path: smoke-${{ matrix.name }}
+          if-no-files-found: error
+
+  # One comment with every platform. It runs even when a platform job failed,
+  # so the platforms that did work still post — a platform with no artifacts
+  # reads as `did not run`, and the failed job is visible above either way.
+  summary:
+    name: summary
+    needs: [compare, wasm, smoke]
+    if: always()
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_NIGHTLY_TOOLCHAIN }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates/nanonbt-bench
+      - name: download the bench artifacts
+        continue-on-error: true
+        uses: actions/download-artifact@v5
+        with:
+          pattern: bench-*
+          path: artifacts
+      - name: download the smoke artifacts
+        continue-on-error: true
+        uses: actions/download-artifact@v5
+        with:
+          pattern: smoke-*
+          path: artifacts
+
       - name: summarize
         working-directory: crates/nanonbt-bench
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           BASE_REF: ${{ github.event.pull_request.base.ref }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           cargo run --quiet --locked --no-default-features --example bench-summary -- \
-            "$RUNNER_TEMP/base-iai" "$GITHUB_WORKSPACE/crates/nanonbt-bench/target/iai" \
-            "$BASE_SHA" "$HEAD_SHA" "$BASE_REF" > "$GITHUB_WORKSPACE/bench-summary.md"
+            --base-sha "$BASE_SHA" --head-sha "$HEAD_SHA" --base-ref "$BASE_REF" \
+            --run-url "$RUN_URL" \
+            --callgrind linux-x86_64 \
+              "$GITHUB_WORKSPACE/artifacts/bench-linux-x86_64/base" \
+              "$GITHUB_WORKSPACE/artifacts/bench-linux-x86_64/head" \
+            --callgrind linux-aarch64 \
+              "$GITHUB_WORKSPACE/artifacts/bench-linux-aarch64/base" \
+              "$GITHUB_WORKSPACE/artifacts/bench-linux-aarch64/head" \
+            --fuel wasm32-wasip1 \
+              "$GITHUB_WORKSPACE/artifacts/bench-wasm32/base.json" \
+              "$GITHUB_WORKSPACE/artifacts/bench-wasm32/head.json" \
+            --smoke-dir "$GITHUB_WORKSPACE/artifacts" \
+            --smoke windows-x64 --smoke windows-arm64 \
+            --smoke macos-x64 --smoke macos-arm64 \
+            > "$GITHUB_WORKSPACE/bench-summary.md"
 
       # A pull request from a fork, or one Dependabot opened, runs with a
       # read-only token and cannot comment; its numbers are still in the log
