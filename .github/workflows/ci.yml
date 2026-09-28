@@ -183,8 +183,8 @@ jobs:
   # because `simdnbt` needs nightly. Compiling and linting it here keeps it
   # from rotting without moving the jobs above off the pinned stable
   # toolchain. This job keeps no numbers; `bench.yml` benches both revisions
-  # in two jobs with mirrored pass order and posts a comment when the two
-  # agree.
+  # under callgrind in one job and posts their instruction counts as a
+  # comment.
   bench:
     runs-on: ubuntu-24.04
     steps:

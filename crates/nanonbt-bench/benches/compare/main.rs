@@ -46,24 +46,25 @@
 //! throughput is the length of the input; only the short list, which has no
 //! NBT array, writes one byte longer than it read.
 //!
-//! This crate is outside the root workspace because `simdnbt` uses nightly
-//! features, and the rest of the repository pins a stable toolchain. Run it
-//! with `cd crates/nanonbt-bench && cargo +nightly bench`, or add `-- --quick`
-//! for a rough pass. Add `-- --noplot` to skip the per-entry charts, which
-//! take most of the wall time. A single entry or document can be selected, as
-//! in `cargo +nightly bench -- nanonbt-borrow` or
-//! `cargo +nightly bench -- player`. Add `--features nanonbt/simd` to run the
-//! `nanonbt` entries on the vectorized paths. The derived entries send their
-//! names through `hashify`, which is on by default so the name pair measures
-//! the lookup; `--no-default-features --features fastnbt,pumpkin-nbt,simdnbt`
-//! turns it back into a plain `match`. All three of `fastnbt`, `pumpkin-nbt`,
-//! and `simdnbt` are enabled by default; `pumpkin-nbt` is always listed last
-//! in the report.
+//! Every entry is one `#[library_benchmark]` function named
+//! `<kind>_<target>_<id>` — `parse_nanonbt_serde_small` is
+//! `parse/nanonbt-serde/small`. `iai-callgrind` runs each under callgrind and
+//! files the instruction count under that function name and the id its
+//! `#[bench]` attribute carries, so two runs count exactly the same work
+//! wherever they run and compare without a noise band.
+//! `examples/bench-summary.rs` rebuilds the report ids from those two names.
 //!
-//! The `Bench` workflow runs this bench on both the base commit and the head
-//! in each of two jobs, passing the two in opposite orders, and posts a
-//! comment that keeps only the changes both jobs agree on; see
-//! `.github/workflows/bench.yml` and `examples/bench-summary.rs`.
+//! The `Bench` workflow runs the suite on the base commit and the head in one
+//! job, base first, and posts a comment that compares the two instruction
+//! counts; see `.github/workflows/bench.yml` and `examples/bench-summary.rs`.
+//! Run it locally with `cd crates/nanonbt-bench && cargo +nightly bench`; a
+//! recent valgrind and a matching `iai-callgrind-runner` must be on the path.
+//! Add `--features nanonbt/simd` to run the `nanonbt` entries on the
+//! vectorized paths. The derived entries send their names through `hashify`,
+//! which is on by default so the name pair measures the lookup;
+//! `--no-default-features --features fastnbt,pumpkin-nbt,simdnbt` turns it
+//! back into a plain `match`. All three of `fastnbt`, `pumpkin-nbt`, and
+//! `simdnbt` are enabled by default.
 //!
 //! Two entries need a note. `simdnbt-borrow` keeps a tape over the input and
 //! decodes strings lazily; its `int_array` and `long_array` accessors copy, so
@@ -75,210 +76,43 @@
 // carry those names too.
 #![allow(non_snake_case)]
 
-use std::{hint::black_box, time::Duration};
+use iai_callgrind::{Callgrind, LibraryBenchmarkConfig, main};
 
-use criterion::{
-    BenchmarkGroup, BenchmarkId, Criterion, SamplingMode, Throughput, criterion_group,
-    criterion_main, measurement::WallTime,
-};
+#[allow(unused_imports)]
+use crate::macros::empty_group;
 
 mod documents;
+mod macros;
 mod targets;
 
-use documents::Skip;
+#[cfg(feature = "fastnbt")]
+use targets::fastnbt::fastnbt_entries;
+#[cfg(not(feature = "fastnbt"))]
+empty_group!(fastnbt_entries);
 
-/// Runs one parse benchmark: `parse` decodes `bytes` into a `T` on every
-/// iteration.
-pub fn bench_parse<'a, T, S: std::fmt::Display>(
-    group: &mut BenchmarkGroup<'_, WallTime>,
-    name: &str,
-    label: S,
-    bytes: &'a [u8],
-    parse: impl Fn(&'a [u8]) -> T,
-) {
-    group.bench_function(BenchmarkId::new(name, label), |b| {
-        b.iter(|| parse(black_box(bytes)));
-    });
+#[cfg(feature = "simdnbt")]
+use targets::simdnbt::simdnbt_entries;
+#[cfg(not(feature = "simdnbt"))]
+empty_group!(simdnbt_entries);
+
+#[cfg(feature = "pumpkin-nbt")]
+use targets::pumpkin::pumpkin_entries;
+#[cfg(not(feature = "pumpkin-nbt"))]
+empty_group!(pumpkin_entries);
+
+use targets::nanonbt::nanonbt_entries;
+
+/// `--cache-sim=no` turns off callgrind's cache simulation, which the report
+/// does not use: the instruction count stays exact and the run gets much
+/// faster.
+fn config() -> LibraryBenchmarkConfig {
+    let mut config = LibraryBenchmarkConfig::default();
+    config.tool(Callgrind::with_args(["--cache-sim=no"]));
+    config
 }
 
-/// Runs one write benchmark: `parse` sets `T` up once, outside the timing, and
-/// `write` encodes it on every iteration.
-///
-/// Throughput is the length `write` produces, which for the short list is one
-/// byte longer than the input.
-pub fn bench_write<'a, T, O: AsRef<[u8]>, S: std::fmt::Display>(
-    group: &mut BenchmarkGroup<'_, WallTime>,
-    name: &str,
-    label: S,
-    bytes: &'a [u8],
-    parse: impl Fn(&'a [u8]) -> T,
-    write: impl Fn(&T) -> O,
-) {
-    let value = parse(bytes);
-    group.throughput(Throughput::Bytes(write(&value).as_ref().len() as u64));
-    group.bench_function(BenchmarkId::new(name, label), |b| {
-        b.iter(|| write(black_box(&value)));
-    });
-}
-
-/// Keeps the groups, many benchmarks long, around ten minutes; `--noplot`
-/// removes the per-entry charts, which are most of that time.
-pub fn configure(group: &mut BenchmarkGroup<'_, WallTime>) {
-    group
-        .sample_size(50)
-        .warm_up_time(Duration::from_secs(1))
-        .measurement_time(Duration::from_secs(2));
-}
-
-fn parse(c: &mut Criterion) {
-    let inputs = documents::inputs();
-    let arrays = documents::array_inputs();
-    let mut group = c.benchmark_group("parse");
-    configure(&mut group);
-    for input in &inputs {
-        // The `bench_parse` entries record this length; the `write` group sets
-        // its own per entry.
-        group.throughput(Throughput::Bytes(input.bytes.len() as u64));
-        targets::nanonbt::parse(
-            &mut group,
-            documents::BenchInput::Doc(input.doc, &input.bytes),
-        );
-        #[cfg(feature = "fastnbt")]
-        targets::fastnbt::parse(
-            &mut group,
-            documents::BenchInput::Doc(input.doc, &input.bytes),
-        );
-        #[cfg(feature = "simdnbt")]
-        targets::simdnbt::parse(
-            &mut group,
-            documents::BenchInput::Doc(input.doc, &input.bytes),
-        );
-        #[cfg(feature = "pumpkin-nbt")]
-        targets::pumpkin::parse(
-            &mut group,
-            documents::BenchInput::Doc(input.doc, &input.bytes),
-        );
-    }
-    // The array entries are many and their iterations are milliseconds long,
-    // so a shorter measurement keeps the suite's array half near two minutes.
-    group
-        .sample_size(30)
-        .warm_up_time(Duration::from_millis(500))
-        .measurement_time(Duration::from_secs(1));
-    for input in &arrays {
-        group.throughput(Throughput::Bytes(input.bytes.len() as u64));
-        targets::nanonbt::parse(
-            &mut group,
-            documents::BenchInput::Array(input.kind, &input.bytes),
-        );
-        #[cfg(feature = "fastnbt")]
-        targets::fastnbt::parse(
-            &mut group,
-            documents::BenchInput::Array(input.kind, &input.bytes),
-        );
-        #[cfg(feature = "simdnbt")]
-        targets::simdnbt::parse(
-            &mut group,
-            documents::BenchInput::Array(input.kind, &input.bytes),
-        );
-        #[cfg(feature = "pumpkin-nbt")]
-        targets::pumpkin::parse(
-            &mut group,
-            documents::BenchInput::Array(input.kind, &input.bytes),
-        );
-    }
-    group.finish();
-}
-
-fn write(c: &mut Criterion) {
-    let inputs = documents::inputs();
-    let arrays = documents::array_inputs();
-    let mut group = c.benchmark_group("write");
-    configure(&mut group);
-    for input in &inputs {
-        targets::nanonbt::write(
-            &mut group,
-            documents::BenchInput::Doc(input.doc, &input.bytes),
-        );
-        #[cfg(feature = "fastnbt")]
-        targets::fastnbt::write(
-            &mut group,
-            documents::BenchInput::Doc(input.doc, &input.bytes),
-        );
-        #[cfg(feature = "simdnbt")]
-        targets::simdnbt::write(
-            &mut group,
-            documents::BenchInput::Doc(input.doc, &input.bytes),
-        );
-        #[cfg(feature = "pumpkin-nbt")]
-        targets::pumpkin::write(
-            &mut group,
-            documents::BenchInput::Doc(input.doc, &input.bytes),
-        );
-    }
-    group
-        .sample_size(30)
-        .warm_up_time(Duration::from_millis(500))
-        .measurement_time(Duration::from_secs(1));
-    for input in &arrays {
-        targets::nanonbt::write(
-            &mut group,
-            documents::BenchInput::Array(input.kind, &input.bytes),
-        );
-        #[cfg(feature = "fastnbt")]
-        targets::fastnbt::write(
-            &mut group,
-            documents::BenchInput::Array(input.kind, &input.bytes),
-        );
-        #[cfg(feature = "simdnbt")]
-        targets::simdnbt::write(
-            &mut group,
-            documents::BenchInput::Array(input.kind, &input.bytes),
-        );
-        #[cfg(feature = "pumpkin-nbt")]
-        targets::pumpkin::write(
-            &mut group,
-            documents::BenchInput::Array(input.kind, &input.bytes),
-        );
-    }
-    group.finish();
-}
-
-fn skip(c: &mut Criterion) {
-    let skips = documents::skip_inputs();
-    let mut group = c.benchmark_group("skip");
-    // A skip is short work, but the entries that cannot skip read the whole
-    // document, so their iterations are milliseconds long. Ten samples over
-    // two seconds hold those without the "unable to complete" warning; the
-    // entries that finish in nanoseconds still run millions of iterations,
-    // and the confidence interval comes from resampling, not the sample count.
-    group
-        .sample_size(10)
-        .warm_up_time(Duration::from_millis(500))
-        .measurement_time(Duration::from_secs(2));
-    for input in &skips {
-        // A string or compound walk reallocates per element, and its warmup
-        // estimate drifts with the allocator, so a batch can overrun the
-        // two seconds above; one iteration per sample cannot, and twenty of
-        // the millisecond samples are worth the same resampling.
-        let walked = matches!(input.kind, Skip::StringList | Skip::CompoundList);
-        group.sampling_mode(if walked {
-            SamplingMode::Flat
-        } else {
-            SamplingMode::Auto
-        });
-        group.sample_size(if walked { 20 } else { 10 });
-        group.throughput(Throughput::Bytes(input.bytes.len() as u64));
-        targets::nanonbt::skip(&mut group, input.kind, &input.bytes);
-        #[cfg(feature = "fastnbt")]
-        targets::fastnbt::skip(&mut group, input.kind, &input.bytes);
-        #[cfg(feature = "simdnbt")]
-        targets::simdnbt::skip(&mut group, input.kind, &input.bytes);
-        #[cfg(feature = "pumpkin-nbt")]
-        targets::pumpkin::skip(&mut group, input.kind, &input.bytes);
-    }
-    group.finish();
-}
-
-criterion_group!(benches, parse, write, skip);
-criterion_main!(benches);
+main!(
+    config = config();
+    library_benchmark_groups =
+        nanonbt_entries, fastnbt_entries, simdnbt_entries, pumpkin_entries
+);

@@ -17,11 +17,11 @@ pumpkin-nbt = { git = "https://github.com/Pumpkin-MC/Pumpkin.git", rev = "218a7f
 simdnbt = { version = "0.10", optional = true }
 
 [dev-dependencies]
-criterion = "0.8"
+iai-callgrind = "0.16.1"
 nanonbt = { path = "../nanonbt", features = ["serde"] }
 random-names = { path = "random-names" }
 serde = { version = "1", features = ["derive"] }
-# The `bench-summary` example reads criterion's JSON results.
+# The `bench-summary` example reads iai-callgrind's JSON summaries.
 serde_json = "1"
 
 [features]
@@ -46,3 +46,8 @@ harness = false
 [profile.release]
 lto = true
 codegen-units = 1
+
+# Iai-Callgrind needs debug symbols to match the names callgrind reports, so
+# the measurement collects the benchmark function and nothing else around it.
+[profile.bench]
+debug = true

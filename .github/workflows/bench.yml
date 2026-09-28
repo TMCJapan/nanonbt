@@ -21,31 +21,12 @@ env:
 
 jobs:
   compare:
-    name: compare (${{ matrix.order }})
-    # Both sides are benched in both jobs, but in opposite orders: `forward`
-    # runs the base commit first, `backward` runs the pull request first.
-    # Every number a job reports is still set against the other side on the
-    # same runner, while anything that follows the pass order — a clock
-    # ramping up, the page cache warming — pushes the two jobs' changes in
-    # opposite directions; only a change in the code moves both the same way.
-    # The summary keeps a change only where the two jobs agree, and it never
-    # subtracts numbers one runner stored from numbers another did.
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - order: forward
-            first_sha: ${{ github.event.pull_request.base.sha }}
-            first_baseline: base
-            second_sha: ${{ github.event.pull_request.head.sha }}
-            second_baseline: head
-          - order: backward
-            first_sha: ${{ github.event.pull_request.head.sha }}
-            first_baseline: head
-            second_sha: ${{ github.event.pull_request.base.sha }}
-            second_baseline: base
+    name: compare
     runs-on: ubuntu-24.04
     timeout-minutes: 90
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
       - uses: actions/checkout@v7
         with:
@@ -59,73 +40,69 @@ jobs:
           # The root lock file does not cover the excluded bench, so key the
           # cache on the bench's own.
           workspaces: crates/nanonbt-bench
+      - name: install valgrind
+        # `iai-callgrind` counts instructions under callgrind, and neither
+        # side can run without valgrind. Both sides run in this job, under
+        # this one valgrind, so the counts are comparable.
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes valgrind
 
-      # The cached target may hold criterion output from other commits and
-      # other runners; a comparison must start from this job's passes alone.
-      - name: clear criterion output
-        run: rm -rf crates/nanonbt-bench/target/criterion
-
-      - name: check out the first commit
-        run: git checkout --force --detach "${{ matrix.first_sha }}"
-      - name: bench the first commit
+      # Both sides of the comparison run the pull request's bench crate, so
+      # the two revisions are measured by the same suite over their own
+      # library sources; the base commit may not even carry this suite yet.
+      - name: check out the base commit with the pull request's bench
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          git checkout --force --detach "$BASE_SHA"
+          git checkout --force "$HEAD_SHA" -- crates/nanonbt-bench
+      - name: read the runner version
+        id: runner
         working-directory: crates/nanonbt-bench
-        # `--noplot` skips criterion's per-entry charts, which are most of the
-        # suite's wall time and are not read in CI. `setarch -R` disables
-        # address-space randomization: the passes are different processes, and
-        # without it each lays the same input buffers out differently, which
-        # moved entries whose walk is sensitive to the placement by tens of
-        # percent between passes that measured the same iteration counts
-        # elsewhere.
-        run: setarch -R cargo bench --locked --bench compare -- --noplot --save-baseline "${{ matrix.first_baseline }}"
-      - name: check out the second commit
-        run: git checkout --force --detach "${{ matrix.second_sha }}"
-      - name: bench the second commit
+        # The runner runs the benches, so it has to be the same version as
+        # the `iai-callgrind` the bench crate builds against.
+        run: |
+          version=$(sed -n '/^name = "iai-callgrind"$/{n;s/^version = "\(.*\)"$/\1/;p}' Cargo.lock)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: iai-callgrind-runner@${{ steps.runner.outputs.version }}
+
+      # The cached target may hold summaries from another commit's run; a
+      # comparison must start from this job's runs alone.
+      - name: clear the iai-callgrind output
         working-directory: crates/nanonbt-bench
-        # `setarch -R` as above. Each pass saves under its own name, so an
-        # entry the second side no longer runs still has the first side's
-        # numbers, which the summary reports as removed.
-        run: setarch -R cargo bench --locked --bench compare -- --noplot --save-baseline "${{ matrix.second_baseline }}"
+        run: rm -rf target/iai
 
-      # The summarize job compares the two jobs' numbers, so each job hands
-      # over its criterion tree; a day is long enough for one run's comment.
-      - name: upload the criterion output
-        uses: actions/upload-artifact@v7
-        with:
-          name: criterion-${{ matrix.order }}
-          path: crates/nanonbt-bench/target/criterion
-          retention-days: 1
-          if-no-files-found: error
+      - name: bench the base commit
+        working-directory: crates/nanonbt-bench
+        # `--save-summary=json` writes one summary per entry below
+        # `target/iai`, which the summarizer pairs up afterwards.
+        run: cargo bench --locked --bench compare -- --save-summary=json
+      - name: keep the base summaries
+        working-directory: crates/nanonbt-bench
+        # The head run below writes `target/iai` again, so move the base's
+        # summaries out of its way; nothing has to travel between jobs.
+        run: mv target/iai "$RUNNER_TEMP/base-iai"
 
-  summarize:
-    needs: compare
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    permissions:
-      contents: read
-      pull-requests: write
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ env.RUST_NIGHTLY_TOOLCHAIN }}
-      - uses: Swatinem/rust-cache@v2
-        with:
-          # Keyed like the compare jobs, to reuse their build of the example.
-          workspaces: crates/nanonbt-bench
-      - name: download both jobs' numbers
-        uses: actions/download-artifact@v8
-        with:
-          pattern: criterion-*
-          path: pairs
+      - name: check out the pull request
+        run: git checkout --force --detach "${{ github.event.pull_request.head.sha }}"
+      - name: bench the pull request
+        working-directory: crates/nanonbt-bench
+        run: cargo bench --locked --bench compare -- --save-summary=json
+
       - name: summarize
         working-directory: crates/nanonbt-bench
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           BASE_REF: ${{ github.event.pull_request.base.ref }}
-        # `forward` benches the base commit first, so it is the summary's
-        # base-first directory.
-        run: cargo run --quiet --locked --no-default-features --example bench-summary -- "$GITHUB_WORKSPACE/pairs/criterion-forward" "$GITHUB_WORKSPACE/pairs/criterion-backward" "$BASE_SHA" "$HEAD_SHA" "$BASE_REF" > "$GITHUB_WORKSPACE/bench-summary.md"
+        run: |
+          cargo run --quiet --locked --no-default-features --example bench-summary -- \
+            "$RUNNER_TEMP/base-iai" "$GITHUB_WORKSPACE/crates/nanonbt-bench/target/iai" \
+            "$BASE_SHA" "$HEAD_SHA" "$BASE_REF" > "$GITHUB_WORKSPACE/bench-summary.md"
 
       # A pull request from a fork, or one Dependabot opened, runs with a
       # read-only token and cannot comment; its numbers are still in the log

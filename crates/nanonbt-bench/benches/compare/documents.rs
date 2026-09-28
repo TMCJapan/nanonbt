@@ -8,6 +8,9 @@
 //! `short-names` and `long-names` hold the same 64 `i32` fields and
 //! differ only in key length, so their numbers read as a pair; the
 //! `random_names` attribute draws their keys.
+//!
+//! The benchmark entries ask for their document by name — `doc(Doc::Chunk)` —
+//! and the bytes are built once per run, outside the measurement.
 
 use nanonbt::ToNBT;
 
@@ -35,40 +38,19 @@ pub enum Doc {
     LongNames,
 }
 
-impl Doc {
-    pub const fn name(self) -> &'static str {
-        match self {
-            Self::Small => "small",
-            Self::Player => "player",
-            Self::Chunk => "chunk",
-            Self::ShortNames => "short-names",
-            Self::LongNames => "long-names",
-        }
+/// The bytes of one document, serialized by `nanonbt`.
+pub fn doc(doc: Doc) -> Vec<u8> {
+    match doc {
+        Doc::Small => bytes(&model::sample_small()),
+        Doc::Player => bytes(&model::sample_player()),
+        Doc::Chunk => bytes(&model::sample_chunk(8)),
+        Doc::ShortNames => bytes(&model::ShortNames::sample()),
+        Doc::LongNames => bytes(&model::LongNames::sample()),
     }
 }
 
-/// A serialized document.
-pub struct Input {
-    pub doc: Doc,
-    pub bytes: Vec<u8>,
-}
-
-/// The documents, serialized once by `nanonbt`.
-pub fn inputs() -> Vec<Input> {
-    vec![
-        input(Doc::Small, &model::sample_small()),
-        input(Doc::Player, &model::sample_player()),
-        input(Doc::Chunk, &model::sample_chunk(8)),
-        input(Doc::ShortNames, &model::ShortNames::sample()),
-        input(Doc::LongNames, &model::LongNames::sample()),
-    ]
-}
-
-fn input<T: ToNBT>(doc: Doc, value: &T) -> Input {
-    Input {
-        doc,
-        bytes: nanonbt::to_bytes(value).expect("documents are valid NBT"),
-    }
+fn bytes<T: ToNBT>(value: &T) -> Vec<u8> {
+    nanonbt::to_bytes(value).expect("documents are valid NBT")
 }
 
 /// One array shape: a byte, int or long array, or a short list.
@@ -83,45 +65,12 @@ pub enum Array {
     Long,
 }
 
-impl Array {
-    /// Every shape, in the order the report lists them.
-    pub const ALL: [Self; 4] = [Self::Byte, Self::Short, Self::Int, Self::Long];
-
-    /// The name in the report.
-    pub const fn name(self) -> &'static str {
-        match self {
-            Self::Byte => "byte-array",
-            Self::Short => "short-list",
-            Self::Int => "int-array",
-            Self::Long => "long-array",
-        }
-    }
-}
-
-/// A serialized array document.
-pub struct ArrayInput {
-    pub kind: Array,
-    pub bytes: Vec<u8>,
-}
-
-/// A single benchmark input: either a document or an array.
-pub enum BenchInput<'a> {
-    Doc(Doc, &'a [u8]),
-    Array(Array, &'a [u8]),
-}
-
-/// The array documents, serialized once by `nanonbt`.
+/// The bytes of one array document.
 ///
 /// Each is a compound holding one entry, `data`, with [`ARRAY_LENGTH`]
 /// elements, written by the owned unsigned struct of that kind.
-pub fn array_inputs() -> Vec<ArrayInput> {
-    Array::ALL
-        .into_iter()
-        .map(|kind| ArrayInput {
-            kind,
-            bytes: model::array_document(kind, ARRAY_LENGTH),
-        })
-        .collect()
+pub fn array_doc(kind: Array) -> Vec<u8> {
+    model::array_document(kind, ARRAY_LENGTH)
 }
 
 /// One skip shape: a compound with one `kept` entry and one huge `skipped`
@@ -148,57 +97,11 @@ pub enum Skip {
     CompoundList,
 }
 
-impl Skip {
-    /// Every shape, in the order the report lists them.
-    pub const ALL: [Self; 11] = [
-        Self::ByteList,
-        Self::ShortList,
-        Self::IntList,
-        Self::LongList,
-        Self::FloatList,
-        Self::DoubleList,
-        Self::ByteArray,
-        Self::IntArray,
-        Self::LongArray,
-        Self::StringList,
-        Self::CompoundList,
-    ];
-
-    /// The name in the report.
-    pub const fn name(self) -> &'static str {
-        match self {
-            Self::ByteList => "byte-list",
-            Self::ShortList => "short-list",
-            Self::IntList => "int-list",
-            Self::LongList => "long-list",
-            Self::FloatList => "float-list",
-            Self::DoubleList => "double-list",
-            Self::ByteArray => "byte-array",
-            Self::IntArray => "int-array",
-            Self::LongArray => "long-array",
-            Self::StringList => "string-list",
-            Self::CompoundList => "compound-list",
-        }
-    }
-}
-
-/// A serialized skip document.
-pub struct SkipInput {
-    pub kind: Skip,
-    pub bytes: Vec<u8>,
-}
-
-/// The skip documents, serialized once by `nanonbt`.
+/// The bytes of one skip document.
 ///
 /// Each is a compound holding `kept`, one `i32` the skip targets read, and
 /// `skipped`, one entry with [`SKIP_LENGTH`] elements, written by the owned
 /// struct of that kind. Everything but `kept` is what a skip passes over.
-pub fn skip_inputs() -> Vec<SkipInput> {
-    Skip::ALL
-        .into_iter()
-        .map(|kind| SkipInput {
-            kind,
-            bytes: model::skip_document(kind, SKIP_LENGTH),
-        })
-        .collect()
+pub fn skip_doc(kind: Skip) -> Vec<u8> {
+    model::skip_document(kind, SKIP_LENGTH)
 }

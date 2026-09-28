@@ -9,12 +9,12 @@
 
 use std::io::Cursor;
 
-use criterion::{BenchmarkGroup, measurement::WallTime};
+use iai_callgrind::library_benchmark_group;
 use pumpkin_nbt::{Nbt, NbtCompound, deserializer::NbtReadHelperJava, tag::NbtTag};
 use random_names::random_names;
 
-use crate::documents::{Array, BenchInput, Doc, Skip};
-use crate::{bench_parse, bench_write};
+use crate::documents::{self, Array, Doc, Skip};
+use crate::macros::{parse_bench, write_bench};
 
 /// Extracts each tag of a list of compounds.
 fn compounds<T>(list: &[NbtTag], from: impl Fn(&NbtCompound) -> T) -> Vec<T> {
@@ -700,10 +700,86 @@ impl ShortNames {
 }
 
 // ---------------------------------------------------------------------------
-// The entries.
+// The entries, one `#[bench]` function per document or array.
 // ---------------------------------------------------------------------------
+//
+// A function is named `<kind>_<target>_<id>` — `parse_pumpkin_short_list` is
+// `parse/pumpkin/short-list` — and `examples/bench-summary.rs` recovers the id
+// from the name plus the `#[bench]` id; see `crate::macros`.
 
-/// The owned `data` entry of each kind, for the write entries.
+/// The parse and write entries of one document.
+macro_rules! document_entry {
+    ($ty:ty, $input:expr, $id:ident, $parse:ident, $setup:ident, $write:ident) => {
+        parse_bench!($parse, $id, $input, |b: &[u8]| {
+            let mut reader = NbtReadHelperJava::new(Cursor::new(b));
+            <$ty>::from_compound(
+                &Nbt::read(&mut reader)
+                    .expect("the document parses")
+                    .root_tag,
+            )
+        });
+        write_bench!(
+            $write,
+            $setup,
+            $id,
+            $input,
+            $ty,
+            |b: &[u8]| {
+                let mut reader = NbtReadHelperJava::new(Cursor::new(b));
+                <$ty>::from_compound(
+                    &Nbt::read(&mut reader)
+                        .expect("the document parses")
+                        .root_tag,
+                )
+            },
+            |v: &$ty| Nbt::new(String::new(), v.to_compound()).write()
+        );
+    };
+}
+
+document_entry!(
+    Small,
+    documents::doc(Doc::Small),
+    small,
+    parse_pumpkin_small,
+    setup_pumpkin_small,
+    write_pumpkin_small
+);
+document_entry!(
+    Player,
+    documents::doc(Doc::Player),
+    player,
+    parse_pumpkin_player,
+    setup_pumpkin_player,
+    write_pumpkin_player
+);
+document_entry!(
+    Chunk,
+    documents::doc(Doc::Chunk),
+    chunk,
+    parse_pumpkin_chunk,
+    setup_pumpkin_chunk,
+    write_pumpkin_chunk
+);
+document_entry!(
+    ShortNames,
+    documents::doc(Doc::ShortNames),
+    short_names,
+    parse_pumpkin_short_names,
+    setup_pumpkin_short_names,
+    write_pumpkin_short_names
+);
+document_entry!(
+    LongNames,
+    documents::doc(Doc::LongNames),
+    long_names,
+    parse_pumpkin_long_names,
+    setup_pumpkin_long_names,
+    write_pumpkin_long_names
+);
+
+// The four array documents. `pumpkin-nbt` reads and writes through its
+// accessors, so a write rebuilds the `data` entry from the copied vector.
 fn byte_data(bytes: &[u8]) -> Vec<i8> {
     let mut reader = NbtReadHelperJava::new(Cursor::new(bytes));
     Nbt::read(&mut reader)
@@ -746,171 +822,252 @@ fn long_data(bytes: &[u8]) -> Vec<i64> {
         .to_vec()
 }
 
-pub fn parse(group: &mut BenchmarkGroup<'_, WallTime>, input: BenchInput) {
-    match input {
-        BenchInput::Doc(doc, bytes) => match doc {
-            Doc::Small => bench_parse(group, "pumpkin", doc.name(), bytes, |b: &[u8]| {
-                let mut reader = NbtReadHelperJava::new(Cursor::new(b));
-                Small::from_compound(&Nbt::read(&mut reader).expect("document parses").root_tag)
-            }),
-            Doc::Player => bench_parse(group, "pumpkin", doc.name(), bytes, |b: &[u8]| {
-                let mut reader = NbtReadHelperJava::new(Cursor::new(b));
-                Player::from_compound(&Nbt::read(&mut reader).expect("document parses").root_tag)
-            }),
-            Doc::Chunk => bench_parse(group, "pumpkin", doc.name(), bytes, |b: &[u8]| {
-                let mut reader = NbtReadHelperJava::new(Cursor::new(b));
-                Chunk::from_compound(&Nbt::read(&mut reader).expect("document parses").root_tag)
-            }),
-            Doc::ShortNames => bench_parse(group, "pumpkin", doc.name(), bytes, |b: &[u8]| {
-                let mut reader = NbtReadHelperJava::new(Cursor::new(b));
-                ShortNames::from_compound(
-                    &Nbt::read(&mut reader).expect("document parses").root_tag,
-                )
-            }),
-            Doc::LongNames => bench_parse(group, "pumpkin", doc.name(), bytes, |b: &[u8]| {
-                let mut reader = NbtReadHelperJava::new(Cursor::new(b));
-                LongNames::from_compound(&Nbt::read(&mut reader).expect("document parses").root_tag)
-            }),
-        },
-        BenchInput::Array(kind, bytes) => match kind {
-            Array::Byte => bench_parse(group, "pumpkin", kind.name(), bytes, byte_data),
-            Array::Short => bench_parse(group, "pumpkin", kind.name(), bytes, short_data),
-            Array::Int => bench_parse(group, "pumpkin", kind.name(), bytes, int_data),
-            Array::Long => bench_parse(group, "pumpkin", kind.name(), bytes, long_data),
-        },
-    }
-}
+parse_bench!(
+    parse_pumpkin_byte_array,
+    byte_array,
+    documents::array_doc(Array::Byte),
+    byte_data
+);
+parse_bench!(
+    parse_pumpkin_short_list,
+    short_list,
+    documents::array_doc(Array::Short),
+    short_data
+);
+parse_bench!(
+    parse_pumpkin_int_array,
+    int_array,
+    documents::array_doc(Array::Int),
+    int_data
+);
+parse_bench!(
+    parse_pumpkin_long_array,
+    long_array,
+    documents::array_doc(Array::Long),
+    long_data
+);
 
-pub fn write(group: &mut BenchmarkGroup<'_, WallTime>, input: BenchInput) {
-    match input {
-        BenchInput::Doc(doc, bytes) => match doc {
-            Doc::Small => bench_write(
-                group,
-                "pumpkin",
-                doc.name(),
-                bytes,
-                |b: &[u8]| {
-                    let mut reader = NbtReadHelperJava::new(Cursor::new(b));
-                    Small::from_compound(&Nbt::read(&mut reader).expect("document parses").root_tag)
-                },
-                |v: &Small| Nbt::new(String::new(), v.to_compound()).write(),
-            ),
-            Doc::Player => bench_write(
-                group,
-                "pumpkin",
-                doc.name(),
-                bytes,
-                |b: &[u8]| {
-                    let mut reader = NbtReadHelperJava::new(Cursor::new(b));
-                    Player::from_compound(
-                        &Nbt::read(&mut reader).expect("document parses").root_tag,
-                    )
-                },
-                |v: &Player| Nbt::new(String::new(), v.to_compound()).write(),
-            ),
-            Doc::Chunk => bench_write(
-                group,
-                "pumpkin",
-                doc.name(),
-                bytes,
-                |b: &[u8]| {
-                    let mut reader = NbtReadHelperJava::new(Cursor::new(b));
-                    Chunk::from_compound(&Nbt::read(&mut reader).expect("document parses").root_tag)
-                },
-                |v: &Chunk| Nbt::new(String::new(), v.to_compound()).write(),
-            ),
-            Doc::ShortNames => bench_write(
-                group,
-                "pumpkin",
-                doc.name(),
-                bytes,
-                |b: &[u8]| {
-                    let mut reader = NbtReadHelperJava::new(Cursor::new(b));
-                    ShortNames::from_compound(
-                        &Nbt::read(&mut reader).expect("document parses").root_tag,
-                    )
-                },
-                |v: &ShortNames| Nbt::new(String::new(), v.to_compound()).write(),
-            ),
-            Doc::LongNames => bench_write(
-                group,
-                "pumpkin",
-                doc.name(),
-                bytes,
-                |b: &[u8]| {
-                    let mut reader = NbtReadHelperJava::new(Cursor::new(b));
-                    LongNames::from_compound(
-                        &Nbt::read(&mut reader).expect("document parses").root_tag,
-                    )
-                },
-                |v: &LongNames| Nbt::new(String::new(), v.to_compound()).write(),
-            ),
-        },
-        BenchInput::Array(kind, bytes) => match kind {
-            Array::Byte => bench_write(
-                group,
-                "pumpkin",
-                kind.name(),
-                bytes,
-                byte_data,
-                |v: &Vec<i8>| {
-                    let mut c = NbtCompound::new();
-                    c.put("data", NbtTag::ByteArray(v.clone().into()));
-                    Nbt::new(String::new(), c).write()
-                },
-            ),
-            Array::Short => bench_write(
-                group,
-                "pumpkin",
-                kind.name(),
-                bytes,
-                short_data,
-                |v: &Vec<i16>| {
-                    let mut c = NbtCompound::new();
-                    c.put(
-                        "data",
-                        NbtTag::List(v.iter().map(|value| NbtTag::Short(*value)).collect()),
-                    );
-                    Nbt::new(String::new(), c).write()
-                },
-            ),
-            Array::Int => bench_write(
-                group,
-                "pumpkin",
-                kind.name(),
-                bytes,
-                int_data,
-                |v: &Vec<i32>| {
-                    let mut c = NbtCompound::new();
-                    c.put("data", NbtTag::IntArray(v.clone()));
-                    Nbt::new(String::new(), c).write()
-                },
-            ),
-            Array::Long => bench_write(
-                group,
-                "pumpkin",
-                kind.name(),
-                bytes,
-                long_data,
-                |v: &Vec<i64>| {
-                    let mut c = NbtCompound::new();
-                    c.put("data", NbtTag::LongArray(v.clone()));
-                    Nbt::new(String::new(), c).write()
-                },
-            ),
-        },
+write_bench!(
+    write_pumpkin_byte_array,
+    setup_write_pumpkin_byte_array,
+    byte_array,
+    documents::array_doc(Array::Byte),
+    Vec<i8>,
+    byte_data,
+    |v: &Vec<i8>| {
+        let mut c = NbtCompound::new();
+        c.put("data", NbtTag::ByteArray(v.clone().into()));
+        Nbt::new(String::new(), c).write()
     }
-}
+);
+write_bench!(
+    write_pumpkin_short_list,
+    setup_write_pumpkin_short_list,
+    short_list,
+    documents::array_doc(Array::Short),
+    Vec<i16>,
+    short_data,
+    |v: &Vec<i16>| {
+        let mut c = NbtCompound::new();
+        c.put(
+            "data",
+            NbtTag::List(v.iter().map(|value| NbtTag::Short(*value)).collect()),
+        );
+        Nbt::new(String::new(), c).write()
+    }
+);
+write_bench!(
+    write_pumpkin_int_array,
+    setup_write_pumpkin_int_array,
+    int_array,
+    documents::array_doc(Array::Int),
+    Vec<i32>,
+    int_data,
+    |v: &Vec<i32>| {
+        let mut c = NbtCompound::new();
+        c.put("data", NbtTag::IntArray(v.clone()));
+        Nbt::new(String::new(), c).write()
+    }
+);
+write_bench!(
+    write_pumpkin_long_array,
+    setup_write_pumpkin_long_array,
+    long_array,
+    documents::array_doc(Array::Long),
+    Vec<i64>,
+    long_data,
+    |v: &Vec<i64>| {
+        let mut c = NbtCompound::new();
+        c.put("data", NbtTag::LongArray(v.clone()));
+        Nbt::new(String::new(), c).write()
+    }
+);
 
-/// The skip entry of one shape.
-///
-/// `pumpkin-nbt` reads a whole tree before any accessor, so this reads the
-/// document and only then looks up `kept`; the entry records what not
-/// skipping costs.
-pub fn skip(group: &mut BenchmarkGroup<'_, WallTime>, kind: Skip, bytes: &[u8]) {
-    bench_parse(group, "pumpkin", kind.name(), bytes, |b: &[u8]| {
-        let mut reader = NbtReadHelperJava::new(Cursor::new(std::hint::black_box(b)));
-        let root = Nbt::read(&mut reader).expect("document parses").root_tag;
-        std::hint::black_box(root.get_int("kept").expect("kept"));
-    });
-}
+// The eleven skip shapes. `pumpkin-nbt` reads a whole tree before any
+// accessor, so each entry reads the document and only then looks `kept` up.
+parse_bench!(
+    skip_pumpkin_byte_list,
+    byte_list,
+    documents::skip_doc(Skip::ByteList),
+    |b: &[u8]| {
+        let mut reader = NbtReadHelperJava::new(Cursor::new(b));
+        let root = Nbt::read(&mut reader)
+            .expect("the document parses")
+            .root_tag;
+        ::std::hint::black_box(root.get_int("kept").expect("kept"));
+    }
+);
+parse_bench!(
+    skip_pumpkin_short_list,
+    short_list,
+    documents::skip_doc(Skip::ShortList),
+    |b: &[u8]| {
+        let mut reader = NbtReadHelperJava::new(Cursor::new(b));
+        let root = Nbt::read(&mut reader)
+            .expect("the document parses")
+            .root_tag;
+        ::std::hint::black_box(root.get_int("kept").expect("kept"));
+    }
+);
+parse_bench!(
+    skip_pumpkin_int_list,
+    int_list,
+    documents::skip_doc(Skip::IntList),
+    |b: &[u8]| {
+        let mut reader = NbtReadHelperJava::new(Cursor::new(b));
+        let root = Nbt::read(&mut reader)
+            .expect("the document parses")
+            .root_tag;
+        ::std::hint::black_box(root.get_int("kept").expect("kept"));
+    }
+);
+parse_bench!(
+    skip_pumpkin_long_list,
+    long_list,
+    documents::skip_doc(Skip::LongList),
+    |b: &[u8]| {
+        let mut reader = NbtReadHelperJava::new(Cursor::new(b));
+        let root = Nbt::read(&mut reader)
+            .expect("the document parses")
+            .root_tag;
+        ::std::hint::black_box(root.get_int("kept").expect("kept"));
+    }
+);
+parse_bench!(
+    skip_pumpkin_float_list,
+    float_list,
+    documents::skip_doc(Skip::FloatList),
+    |b: &[u8]| {
+        let mut reader = NbtReadHelperJava::new(Cursor::new(b));
+        let root = Nbt::read(&mut reader)
+            .expect("the document parses")
+            .root_tag;
+        ::std::hint::black_box(root.get_int("kept").expect("kept"));
+    }
+);
+parse_bench!(
+    skip_pumpkin_double_list,
+    double_list,
+    documents::skip_doc(Skip::DoubleList),
+    |b: &[u8]| {
+        let mut reader = NbtReadHelperJava::new(Cursor::new(b));
+        let root = Nbt::read(&mut reader)
+            .expect("the document parses")
+            .root_tag;
+        ::std::hint::black_box(root.get_int("kept").expect("kept"));
+    }
+);
+parse_bench!(
+    skip_pumpkin_byte_array,
+    byte_array,
+    documents::skip_doc(Skip::ByteArray),
+    |b: &[u8]| {
+        let mut reader = NbtReadHelperJava::new(Cursor::new(b));
+        let root = Nbt::read(&mut reader)
+            .expect("the document parses")
+            .root_tag;
+        ::std::hint::black_box(root.get_int("kept").expect("kept"));
+    }
+);
+parse_bench!(
+    skip_pumpkin_int_array,
+    int_array,
+    documents::skip_doc(Skip::IntArray),
+    |b: &[u8]| {
+        let mut reader = NbtReadHelperJava::new(Cursor::new(b));
+        let root = Nbt::read(&mut reader)
+            .expect("the document parses")
+            .root_tag;
+        ::std::hint::black_box(root.get_int("kept").expect("kept"));
+    }
+);
+parse_bench!(
+    skip_pumpkin_long_array,
+    long_array,
+    documents::skip_doc(Skip::LongArray),
+    |b: &[u8]| {
+        let mut reader = NbtReadHelperJava::new(Cursor::new(b));
+        let root = Nbt::read(&mut reader)
+            .expect("the document parses")
+            .root_tag;
+        ::std::hint::black_box(root.get_int("kept").expect("kept"));
+    }
+);
+parse_bench!(
+    skip_pumpkin_string_list,
+    string_list,
+    documents::skip_doc(Skip::StringList),
+    |b: &[u8]| {
+        let mut reader = NbtReadHelperJava::new(Cursor::new(b));
+        let root = Nbt::read(&mut reader)
+            .expect("the document parses")
+            .root_tag;
+        ::std::hint::black_box(root.get_int("kept").expect("kept"));
+    }
+);
+parse_bench!(
+    skip_pumpkin_compound_list,
+    compound_list,
+    documents::skip_doc(Skip::CompoundList),
+    |b: &[u8]| {
+        let mut reader = NbtReadHelperJava::new(Cursor::new(b));
+        let root = Nbt::read(&mut reader)
+            .expect("the document parses")
+            .root_tag;
+        ::std::hint::black_box(root.get_int("kept").expect("kept"));
+    }
+);
+
+library_benchmark_group!(
+    name = pumpkin_entries;
+    benchmarks =
+        parse_pumpkin_small,
+        parse_pumpkin_player,
+        parse_pumpkin_chunk,
+        parse_pumpkin_short_names,
+        parse_pumpkin_long_names,
+        write_pumpkin_small,
+        write_pumpkin_player,
+        write_pumpkin_chunk,
+        write_pumpkin_short_names,
+        write_pumpkin_long_names,
+        parse_pumpkin_byte_array,
+        parse_pumpkin_short_list,
+        parse_pumpkin_int_array,
+        parse_pumpkin_long_array,
+        write_pumpkin_byte_array,
+        write_pumpkin_short_list,
+        write_pumpkin_int_array,
+        write_pumpkin_long_array,
+        skip_pumpkin_byte_list,
+        skip_pumpkin_short_list,
+        skip_pumpkin_int_list,
+        skip_pumpkin_long_list,
+        skip_pumpkin_float_list,
+        skip_pumpkin_double_list,
+        skip_pumpkin_byte_array,
+        skip_pumpkin_int_array,
+        skip_pumpkin_long_array,
+        skip_pumpkin_string_list,
+        skip_pumpkin_compound_list
+);
