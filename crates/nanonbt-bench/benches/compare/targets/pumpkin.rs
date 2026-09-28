@@ -9,12 +9,11 @@
 
 use std::io::Cursor;
 
-use iai_callgrind::library_benchmark_group;
 use pumpkin_nbt::{Nbt, NbtCompound, deserializer::NbtReadHelperJava, tag::NbtTag};
 use random_names::random_names;
 
 use crate::documents::{self, Array, Doc, Skip};
-use crate::macros::{parse_bench, write_bench};
+use crate::macros::{library_benchmark_group, parse_bench, write_bench};
 
 /// Extracts each tag of a list of compounds.
 fn compounds<T>(list: &[NbtTag], from: impl Fn(&NbtCompound) -> T) -> Vec<T> {

@@ -15,12 +15,11 @@
 
 use std::{borrow::Cow, io::Cursor};
 
-use iai_callgrind::library_benchmark_group;
 use random_names::random_names;
 use simdnbt::{Mutf8Str, Mutf8String, borrow, owned};
 
 use crate::documents::{self, Array, Doc, Skip};
-use crate::macros::{parse_bench, write_bench, write_bench_leaked};
+use crate::macros::{library_benchmark_group, parse_bench, write_bench, write_bench_leaked};
 
 // ---------------------------------------------------------------------------
 // Conversion helpers.

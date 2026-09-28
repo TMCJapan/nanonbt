@@ -25,7 +25,6 @@
 
 use std::borrow::Cow;
 
-use iai_callgrind::library_benchmark_group;
 use nanonbt::{
     F32Be, F64Be, FromNBT, I16Be, I32Be, I64Be, ToNBT, U16Be, U32Be, U64Be, serde_compat,
 };
@@ -33,7 +32,7 @@ use random_names::random_names;
 use serde::{Deserialize, Serialize};
 
 use crate::documents::{self, Array, Doc, Skip};
-use crate::macros::{parse_bench, write_bench, write_bench_leaked};
+use crate::macros::{library_benchmark_group, parse_bench, write_bench, write_bench_leaked};
 
 // ---------------------------------------------------------------------------
 // The owned model, which is also what generates the input documents.

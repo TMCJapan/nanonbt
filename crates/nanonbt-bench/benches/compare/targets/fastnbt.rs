@@ -4,12 +4,11 @@
 //! document is passed over through serde's `IgnoredAny`.
 
 use fastnbt::{ByteArray, IntArray, LongArray};
-use iai_callgrind::library_benchmark_group;
 use random_names::random_names;
 use serde::{Deserialize, Serialize};
 
 use crate::documents::{self, Array, Doc, Skip};
-use crate::macros::{parse_bench, write_bench, write_bench_leaked};
+use crate::macros::{library_benchmark_group, parse_bench, write_bench, write_bench_leaked};
 
 #[derive(Serialize, Deserialize)]
 pub struct Small {

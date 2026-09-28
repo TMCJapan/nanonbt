@@ -23,6 +23,11 @@
 //!
 //! `empty_group!` stands in for a target's group when its feature is off, so
 //! `main!` always names the same four groups; see `compare/main.rs`.
+//!
+//! `library_benchmark_group` is re-exported from `iai-callgrind` so the four
+//! `targets/*.rs` files can import every macro from one place: in this tree
+//! the group macro is the iai one, and in the portable library
+//! (`src/macros.rs`) it gathers the same entry list into the runtime registry.
 
 /// A parse benchmark: `$parse` decodes `$input` into its target on every run.
 macro_rules! parse_bench {
@@ -107,5 +112,7 @@ macro_rules! empty_group {
         }
     };
 }
+
+pub use iai_callgrind::library_benchmark_group;
 
 pub(crate) use {empty_group, parse_bench, write_bench, write_bench_leaked};
