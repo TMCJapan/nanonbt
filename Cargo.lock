@@ -263,9 +263,9 @@ dependencies = [
 
 [[package]]
 name = "hashify"
-version = "0.3.0"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ada2bbbc255310309a75c6ac1014e1a41c8ca38d7c6fc4e4d9cd0c060cb259fd"
+checksum = "66f5a65bf7824ada2de4a2cf9fa0981dabffc5392bb8550767c3c3d71ed52e4d"
 dependencies = [
  "proc-macro2",
  "quote",
