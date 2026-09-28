@@ -486,11 +486,11 @@ fn render(
     }
     writeln!(
         out,
-        "\n\nEvery platform counts its own base and pull request; a count is exact on the platform \
-         that produced it, but counts from different architectures are different instruction sets \
-         and are not comparable with each other. `{REFERENCE_TARGET}` entries are listed for \
-         reference only: their compounds are `std` hash maps, so their counts move between runs \
-         with the seed the map is built under.\n"
+        "\n\nEvery counting platform compares its own base and pull request; a count is exact on \
+         the platform that produced it, but counts from different architectures are different \
+         instruction sets and are not comparable with each other. `{REFERENCE_TARGET}` entries \
+         are listed for reference only: their compounds are `std` hash maps, so their counts move \
+         between runs with the seed the map is built under.\n"
     )?;
 
     let mut classified: Vec<Option<Classified>> = Vec::with_capacity(platforms.len());
