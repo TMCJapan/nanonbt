@@ -22,13 +22,15 @@
 //! ten percent between runs, so the report lists them for reference only.
 //!
 //! Every table stays compact enough that all platforms fit one comment: the
-//! `All entries` tables show the pull request's count and the change, not
-//! both counts (a changed entry already carries both counts in the
-//! `Improved`/`Regressed` table above, and an unchanged one's counts are
-//! equal), and no number gets thousands separators. If the whole comment
-//! would still outgrow GitHub's size limit, the tool drops the count column
-//! from the `All entries` tables rather than lose any platform or entry, and
-//! fails if even that will not fit.
+//! collapsed tables list every entry except the ones the two sides counted
+//! equal — the platform line above still counts those — and show the pull
+//! request's count and the change, not both counts (a changed entry already
+//! carries both counts in the `Improved`/`Regressed` table above, and a new
+//! or removed one has only one side to a count), and no number gets
+//! thousands separators. If the whole comment would still outgrow GitHub's
+//! size limit, the tool drops the count column from the collapsed tables
+//! rather than lose any platform or entry, and fails if even that will not
+//! fit.
 //!
 //! Usage: `cargo run --example bench-summary -- [OPTIONS]`, with
 //!
@@ -461,6 +463,17 @@ impl Classified {
         self.improved.len() + self.regressed.len() + self.unchanged
     }
 
+    /// The indices of the entries the collapsed tables list, in report order:
+    /// every entry except the ones the two sides counted equal.
+    fn listed(&self) -> Vec<usize> {
+        self.entries
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| entry.verdict() != Some(Verdict::Unchanged))
+            .map(|(index, _)| index)
+            .collect()
+    }
+
     /// The entries of one class, in order.
     fn rows(&self, indices: &[usize]) -> Vec<&Entry> {
         indices.iter().map(|&index| &self.entries[index]).collect()
@@ -584,21 +597,34 @@ fn render(
             changed_table(&mut out, &options.base_ref, &stats.rows(indices))?;
         }
 
-        writeln!(out, "\n<details>")?;
-        writeln!(out, "<summary>All {} entries</summary>\n", stats.total())?;
-        let mut groups: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
-        for (index, entry) in stats.entries.iter().enumerate() {
-            let group = entry
-                .id
-                .split_once('/')
-                .map_or(entry.id.as_str(), |(group, _)| group);
-            groups.entry(group).or_default().push(index);
+        let listed = stats.listed();
+        if !listed.is_empty() {
+            writeln!(out, "\n<details>")?;
+            if stats.unchanged == 0 {
+                writeln!(out, "<summary>All {} entries</summary>\n", stats.total())?;
+            } else {
+                writeln!(
+                    out,
+                    "<summary>All {} entries · {} unchanged omitted</summary>\n",
+                    stats.total(),
+                    stats.unchanged
+                )?;
+            }
+            let mut groups: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+            for index in listed {
+                let entry = &stats.entries[index];
+                let group = entry
+                    .id
+                    .split_once('/')
+                    .map_or(entry.id.as_str(), |(group, _)| group);
+                groups.entry(group).or_default().push(index);
+            }
+            for (group, indices) in &groups {
+                writeln!(out, "#### {group}\n")?;
+                collapsed_table(&mut out, &stats.rows(indices), compact)?;
+            }
+            writeln!(out, "</details>\n")?;
         }
-        for (group, indices) in &groups {
-            writeln!(out, "#### {group}\n")?;
-            all_table(&mut out, &stats.rows(indices), compact)?;
-        }
-        writeln!(out, "</details>\n")?;
     }
 
     writeln!(
@@ -648,14 +674,15 @@ fn changed_table(out: &mut String, base_ref: &str, rows: &[&Entry]) -> fmt::Resu
     Ok(())
 }
 
-/// Writes one all-entry table: the pull request's count and the change.
+/// Writes one collapsed entry table: the pull request's count and the change.
 ///
-/// An unchanged entry's two counts are equal and a changed one already has
-/// both counts in its `Improved` or `Regressed` table, so one count column
-/// carries every number the report has to show and the tables stay small
-/// enough for all platforms to share one comment. The compact form drops even
-/// that column when every platform together would outgrow the comment.
-fn all_table(out: &mut String, rows: &[&Entry], compact: bool) -> fmt::Result {
+/// An unchanged entry is never listed, a changed one already has both counts
+/// in its `Improved` or `Regressed` table, and a new or removed one has only
+/// one side to a count, so one count column carries every number the table
+/// has to show and it stays small enough for all platforms to share one
+/// comment. The compact form drops even that column when every platform
+/// together would outgrow the comment.
+fn collapsed_table(out: &mut String, rows: &[&Entry], compact: bool) -> fmt::Result {
     if compact {
         writeln!(out, "| Benchmark | Change |")?;
         writeln!(out, "| --- | --- |")?;
@@ -857,13 +884,46 @@ mod tests {
     }
 
     #[test]
-    fn compacts_the_all_entries_table() {
+    fn compacts_the_collapsed_tables() {
         let body = render(&small_options(), &small_platforms(), true).unwrap();
-        // The changed table keeps both counts; the all-entries table drops
-        // its count column so every platform fits one comment.
+        // The changed table keeps both counts; the collapsed table drops its
+        // count column so every platform fits one comment.
         assert!(body.contains("| `parse/nanonbt-serde/small` | 100 | 90 | 🟢 -10.0% |"));
         assert!(body.contains("| `parse/nanonbt-serde/small` | 🟢 -10.0% |"));
         assert!(!body.contains("| `parse/nanonbt-serde/small` | 90 | 🟢 -10.0% |"));
+    }
+
+    #[test]
+    fn leaves_unchanged_entries_out_of_the_collapsed_tables() {
+        let body = render(
+            &small_options(),
+            &small_platforms_with_an_unchanged_entry(),
+            false,
+        )
+        .unwrap();
+        // The unchanged entry is still counted above, but its row is left
+        // out; the reference entry, which no verdict covers, keeps its row.
+        assert!(body.contains(
+            "**1 improved · 0 regressed · 1 unchanged** of 2 entries compared — 1 reference."
+        ));
+        assert!(body.contains("<summary>All 3 entries · 1 unchanged omitted</summary>"));
+        assert!(body.contains("| `parse/nanonbt-serde/small` | 90 | 🟢 -10.0% |"));
+        assert!(body.contains("| `parse/pumpkin/small` | 401 | not compared |"));
+        assert!(!body.contains("parse/nanonbt-serde/chunk"));
+    }
+
+    #[test]
+    fn drops_the_collapsed_tables_when_no_entry_is_listed() {
+        let run: Run = [("parse/nanonbt-serde/small".to_owned(), 100)].into();
+        let platforms = [Platform::Counts {
+            name: "linux-x86_64".to_owned(),
+            kind: Kind::Callgrind,
+            base: run.clone(),
+            head: run,
+        }];
+        let body = render(&small_options(), &platforms, false).unwrap();
+        assert!(body.contains("**0 improved · 0 regressed · 1 unchanged** of 1 entries compared."));
+        assert!(!body.contains("<details>"));
     }
 
     fn small_options() -> Options {
@@ -882,6 +942,27 @@ mod tests {
     fn small_platforms() -> [Platform; 1] {
         let base: Run = [("parse/nanonbt-serde/small".to_owned(), 100)].into();
         let head: Run = [("parse/nanonbt-serde/small".to_owned(), 90)].into();
+        [Platform::Counts {
+            name: "linux-x86_64".to_owned(),
+            kind: Kind::Callgrind,
+            base,
+            head,
+        }]
+    }
+
+    fn small_platforms_with_an_unchanged_entry() -> [Platform; 1] {
+        let base: Run = [
+            ("parse/nanonbt-serde/small".to_owned(), 100),
+            ("parse/nanonbt-serde/chunk".to_owned(), 50),
+            ("parse/pumpkin/small".to_owned(), 400),
+        ]
+        .into();
+        let head: Run = [
+            ("parse/nanonbt-serde/small".to_owned(), 90),
+            ("parse/nanonbt-serde/chunk".to_owned(), 50),
+            ("parse/pumpkin/small".to_owned(), 401),
+        ]
+        .into();
         [Platform::Counts {
             name: "linux-x86_64".to_owned(),
             kind: Kind::Callgrind,
