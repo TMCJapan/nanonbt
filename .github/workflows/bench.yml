@@ -87,8 +87,13 @@ jobs:
       - name: bench the base commit
         working-directory: crates/nanonbt-bench
         # `--save-summary=json` writes one summary per entry below
-        # `target/iai`, which the summarizer pairs up afterwards.
-        run: cargo bench --locked --bench compare -- --save-summary=json
+        # `target/iai`, which the summarizer pairs up afterwards. The base
+        # commit's manifest decides its own version and dependencies, which
+        # the pull request may change, so this side cannot run with `--locked`
+        # against the pull request's lock; cargo rewrites it only as far as
+        # the base library needs and keeps every other pin (the comparison
+        # targets above all). The checkout below restores the lock.
+        run: cargo bench --bench compare -- --save-summary=json
       - name: keep the base summaries
         working-directory: crates/nanonbt-bench
         # The head run below writes `target/iai` again, so move the base's
@@ -143,11 +148,15 @@ jobs:
           git checkout --force "$HEAD_SHA" -- crates/nanonbt-bench
       - name: run the base commit on wasmi
         working-directory: crates/nanonbt-bench
+        # Not `--locked`, for the same reason as the callgrind base bench:
+        # the base commit's manifest decides its own version and
+        # dependencies, and cargo rewrites the pull request's lock only as
+        # far as they need. The checkout below restores the lock.
         run: |
           mkdir -p "$GITHUB_WORKSPACE/bench-out"
-          cargo build --locked --release --target wasm32-wasip1 --lib \
+          cargo build --release --target wasm32-wasip1 --lib \
             --no-default-features --features "$WASM_FEATURES"
-          cargo run --quiet --locked --release --no-default-features \
+          cargo run --quiet --release --no-default-features \
             --features "$WASM_FEATURES" --bin wasm-run -- \
             target/wasm32-wasip1/release/nanonbt_bench.wasm \
             "$GITHUB_WORKSPACE/bench-out/base.json"
