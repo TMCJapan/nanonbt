@@ -27,7 +27,8 @@ struct Scan<'a> {
 impl WithSimd for Scan<'_> {
     type Output = bool;
 
-    #[inline]
+    #[allow(clippy::inline_always)] // pulp only vectorizes the call when this function is inlined
+    #[inline(always)]
     fn with_simd<S: Simd>(self, simd: S) -> Self::Output {
         let zero = simd.splat_u8s(0);
         let mask = simd.splat_u8s(0b1111_1000);

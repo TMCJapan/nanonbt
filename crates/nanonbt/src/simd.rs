@@ -7,10 +7,12 @@
 //! `pulp`, which picks the widest vector the target has when it runs,
 //! whatever the optimization level and whatever the target's baseline is.
 //!
-//! [`decode_be`] copies a payload into the `Vec` it becomes and swaps the
-//! bytes there, so a payload is read with one allocation. The write side
-//! stages a chunk of elements on the stack, swaps it there and hands it to
-//! the writer, so writing one does not allocate either.
+//! [`decode_be`] reverses a payload straight into the `Vec` it becomes where
+//! the payload and the `Vec` start on the same lane boundary, and copies the
+//! payload in and swaps it there otherwise, so a payload is read with one
+//! allocation. The write side stages a chunk of elements on the stack, swaps
+//! it there and hands it to the writer, so writing one does not allocate
+//! either.
 //!
 //! Every vector path works on 32-bit lanes, the widest integral lane `pulp`
 //! can shift by a runtime amount. Two- and four-byte elements reverse within
@@ -111,7 +113,8 @@ struct SwapLanes<'a, const SIZE: usize> {
 impl<const SIZE: usize> WithSimd for SwapLanes<'_, SIZE> {
     type Output = ();
 
-    #[inline]
+    #[allow(clippy::inline_always)] // pulp only vectorizes the call when this function is inlined
+    #[inline(always)]
     fn with_simd<S: Simd>(self, simd: S) -> Self::Output {
         if S::IS_SCALAR {
             // A single lane has no other lane to exchange an eight-byte
@@ -132,22 +135,68 @@ impl<const SIZE: usize> WithSimd for SwapLanes<'_, SIZE> {
     }
 }
 
-/// Reverses each 16-bit element of the whole lanes.
-#[inline]
-fn swap_u16s_in<S: Simd>(simd: S, lanes: &mut [S::u32s]) {
-    let low = simd.splat_u32s(0x00FF_00FF);
-    let high = simd.splat_u32s(0xFF00_FF00);
-    let eight = simd.splat_u32s(8);
-    for lane in lanes {
-        *lane = simd.or_u32s(
-            simd.and_u32s(simd.wrapping_dyn_shr_u32s(*lane, eight), low),
-            simd.and_u32s(simd.wrapping_dyn_shl_u32s(*lane, eight), high),
-        );
+/// [`SwapLanes`]'s counterpart when the reversal lands in another buffer:
+/// each whole lane of `src` is read once and stored swapped to the lane of
+/// `dst` with the same index.
+struct SwapCopy<'a, 'b, const SIZE: usize> {
+    src: &'a [u32],
+    dst: &'b mut [u32],
+}
+
+impl<const SIZE: usize> WithSimd for SwapCopy<'_, '_, SIZE> {
+    type Output = ();
+
+    #[allow(clippy::inline_always)] // pulp only vectorizes the call when this function is inlined
+    #[inline(always)]
+    fn with_simd<S: Simd>(self, simd: S) -> Self::Output {
+        if S::IS_SCALAR {
+            // A single lane has no other lane to exchange an eight-byte
+            // element's halves with.
+            swap_lanes_to::<SIZE>(self.src, self.dst);
+            return;
+        }
+        let (src, src_tail) = S::as_simd_u32s(self.src);
+        let (dst, dst_tail) = S::as_mut_simd_u32s(self.dst);
+        debug_assert_eq!(src.len(), dst.len());
+        match SIZE {
+            2 => copy_u16s_in(simd, src, dst),
+            4 => copy_u32s_in(simd, src, dst),
+            8 => copy_u64s_in(simd, src, dst),
+            _ => {}
+        }
+        // Every vector width is a whole number of elements, so what is left
+        // holds whole elements, laid out the same way.
+        swap_lanes_to::<SIZE>(src_tail, dst_tail);
     }
 }
 
-/// Reverses each 32-bit element of the whole lanes.
-#[inline]
+/// [`swap_copy`] dispatched to the widest vector the target has.
+fn swap_copy<const SIZE: usize>(src: &[u32], dst: &mut [u32]) {
+    debug_assert_eq!(src.len(), dst.len());
+    Arch::new().dispatch(SwapCopy::<SIZE> { src, dst });
+}
+
+/// Reverses each 16-bit element of the whole lanes, in place.
+#[allow(clippy::inline_always)] // pulp only vectorizes the call when this function is inlined
+#[inline(always)]
+fn swap_u16s_in<S: Simd>(simd: S, lanes: &mut [S::u32s]) {
+    for lane in lanes {
+        *lane = swap_u16_lane(simd, *lane);
+    }
+}
+
+/// [`swap_u16s_in`] reading `src` and writing `dst`, lane for lane.
+#[allow(clippy::inline_always)] // pulp only vectorizes the call when this function is inlined
+#[inline(always)]
+fn copy_u16s_in<S: Simd>(simd: S, src: &[S::u32s], dst: &mut [S::u32s]) {
+    for (dst, &lane) in dst.iter_mut().zip(src) {
+        *dst = swap_u16_lane(simd, lane);
+    }
+}
+
+/// Reverses each 32-bit element of the whole lanes, in place.
+#[allow(clippy::inline_always)] // pulp only vectorizes the call when this function is inlined
+#[inline(always)]
 fn swap_u32s_in<S: Simd>(simd: S, lanes: &mut [S::u32s]) {
     let eight = simd.splat_u32s(8);
     let sixteen = simd.splat_u32s(16);
@@ -156,9 +205,21 @@ fn swap_u32s_in<S: Simd>(simd: S, lanes: &mut [S::u32s]) {
     }
 }
 
-/// Reverses each 64-bit element of the whole lanes: both 32-bit halves swap
-/// their bytes, then each pair of lanes swaps around.
-#[inline]
+/// [`swap_u32s_in`] reading `src` and writing `dst`, lane for lane.
+#[allow(clippy::inline_always)] // pulp only vectorizes the call when this function is inlined
+#[inline(always)]
+fn copy_u32s_in<S: Simd>(simd: S, src: &[S::u32s], dst: &mut [S::u32s]) {
+    let eight = simd.splat_u32s(8);
+    let sixteen = simd.splat_u32s(16);
+    for (dst, &lane) in dst.iter_mut().zip(src) {
+        *dst = swap_u32_lane(simd, lane, eight, sixteen);
+    }
+}
+
+/// Reverses each 64-bit element of the whole lanes, in place: both 32-bit
+/// halves swap their bytes, then each pair of lanes swaps around.
+#[allow(clippy::inline_always)] // pulp only vectorizes the call when this function is inlined
+#[inline(always)]
 fn swap_u64s_in<S: Simd>(simd: S, lanes: &mut [S::u32s]) {
     let even = simd.equal_u32s(
         simd.partial_load_u32s(&EVEN_LANES),
@@ -167,18 +228,61 @@ fn swap_u64s_in<S: Simd>(simd: S, lanes: &mut [S::u32s]) {
     let eight = simd.splat_u32s(8);
     let sixteen = simd.splat_u32s(16);
     for lane in lanes {
-        let swapped = swap_u32_lane(simd, *lane, eight, sixteen);
-        *lane = simd.select_u32s(
-            even,
-            simd.rotate_left_u32s(swapped, 1),
-            simd.rotate_right_u32s(swapped, 1),
-        );
+        *lane = swap_u64_lane(simd, *lane, even, eight, sixteen);
     }
+}
+
+/// [`swap_u64s_in`] reading `src` and writing `dst`, lane for lane.
+#[allow(clippy::inline_always)] // pulp only vectorizes the call when this function is inlined
+#[inline(always)]
+fn copy_u64s_in<S: Simd>(simd: S, src: &[S::u32s], dst: &mut [S::u32s]) {
+    let even = simd.equal_u32s(
+        simd.partial_load_u32s(&EVEN_LANES),
+        simd.splat_u32s(u32::MAX),
+    );
+    let eight = simd.splat_u32s(8);
+    let sixteen = simd.splat_u32s(16);
+    for (dst, &lane) in dst.iter_mut().zip(src) {
+        *dst = swap_u64_lane(simd, lane, even, eight, sixteen);
+    }
+}
+
+/// Reverses the two bytes of each 16-bit half of a lane.
+#[allow(clippy::inline_always)] // pulp only vectorizes the call when this function is inlined
+#[inline(always)]
+fn swap_u16_lane<S: Simd>(simd: S, lane: S::u32s) -> S::u32s {
+    let low = simd.splat_u32s(0x00FF_00FF);
+    let high = simd.splat_u32s(0xFF00_FF00);
+    let eight = simd.splat_u32s(8);
+    simd.or_u32s(
+        simd.and_u32s(simd.wrapping_dyn_shr_u32s(lane, eight), low),
+        simd.and_u32s(simd.wrapping_dyn_shl_u32s(lane, eight), high),
+    )
+}
+
+/// Reverses the bytes of one lane of a 64-bit element's pair: the lane's own
+/// bytes, then the pair's lanes exchange around.
+#[allow(clippy::inline_always)] // pulp only vectorizes the call when this function is inlined
+#[inline(always)]
+fn swap_u64_lane<S: Simd>(
+    simd: S,
+    lane: S::u32s,
+    even: S::m32s,
+    eight: S::u32s,
+    sixteen: S::u32s,
+) -> S::u32s {
+    let swapped = swap_u32_lane(simd, lane, eight, sixteen);
+    simd.select_u32s(
+        even,
+        simd.rotate_left_u32s(swapped, 1),
+        simd.rotate_right_u32s(swapped, 1),
+    )
 }
 
 /// Reverses the four bytes of one 32-bit lane, a shift and a mask per
 /// 16-bit half and one across them.
-#[inline]
+#[allow(clippy::inline_always)] // pulp only vectorizes the call when this function is inlined
+#[inline(always)]
 fn swap_u32_lane<S: Simd>(simd: S, lane: S::u32s, eight: S::u32s, sixteen: S::u32s) -> S::u32s {
     let low = simd.splat_u32s(0x00FF_00FF);
     let high = simd.splat_u32s(0xFF00_FF00);
@@ -224,11 +328,78 @@ const fn swap_u16s(lane: u32) -> u32 {
     (lane & 0x00FF_00FF) << 8 | (lane & 0xFF00_FF00) >> 8
 }
 
+/// [`swap_lanes`] from `src` into `dst`.
+fn swap_lanes_to<const SIZE: usize>(src: &[u32], dst: &mut [u32]) {
+    match SIZE {
+        2 => {
+            for (dst, &lane) in dst.iter_mut().zip(src) {
+                *dst = swap_u16s(lane);
+            }
+        }
+        4 => {
+            for (dst, &lane) in dst.iter_mut().zip(src) {
+                *dst = lane.swap_bytes();
+            }
+        }
+        8 => {
+            // An eight-byte element is two lanes; the pair holds them in
+            // the other order, each reversed.
+            debug_assert!(src.len().is_multiple_of(2));
+            let (src, _) = src.as_chunks::<2>();
+            for (pair, &[first, second]) in dst.as_chunks_mut::<2>().0.iter_mut().zip(src) {
+                *pair = [second.swap_bytes(), first.swap_bytes()];
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Copies `n` bytes from `src` to `dst`, a fixed block at a time.
+///
+/// A `copy_nonoverlapping` of a runtime length reaches the libc `memcpy`,
+/// which for medium sizes picks `rep movsb` on some x86 targets; that runs
+/// one instruction per byte under callgrind and shows up as a whole extra
+/// pass over the payload. A loop of fixed-size unaligned reads and writes
+/// moves the same bytes with a few instructions per block instead.
+///
+/// `n` must not exceed `isize::MAX`. A block of 64 bytes is four of the
+/// widest moves the x86-64 baseline has, and the compiler emits them inline;
+/// the remainder, under one block, still goes through `copy_nonoverlapping`,
+/// whose `memcpy` call is exact-sized there.
+///
+/// Only the targets where the libc `memcpy` is the problem use this: wasm
+/// lowers `copy_nonoverlapping` to a bulk `memory.copy`, one instruction
+/// for the whole run, which no block loop can beat.
+///
+/// # Safety
+/// `src` must be valid for `n` reads and `dst` for `n` writes; the two must
+/// not overlap.
+#[cfg(not(target_family = "wasm"))]
+const unsafe fn copy_blocks(src: *const u8, dst: *mut u8, n: usize) {
+    const BLOCK: usize = 64;
+    let mut i = 0;
+    while i + BLOCK <= n {
+        // SAFETY: the caller promises both pointers are valid up to `n`, and
+        // `i + BLOCK <= n`.
+        unsafe {
+            let block = src.add(i).cast::<[u8; BLOCK]>().read_unaligned();
+            dst.add(i).cast::<[u8; BLOCK]>().write_unaligned(block);
+        }
+        i += BLOCK;
+    }
+    // SAFETY: the rest of the range is inside the `n` bytes the caller
+    // promises, and the two buffers do not overlap.
+    unsafe { core::ptr::copy_nonoverlapping(src.add(i), dst.add(i), n - i) };
+}
+
 /// Decodes `SIZE`-byte big-endian elements into a `Vec`.
 ///
-/// The bytes are copied into the `Vec`'s buffer and swapped there, so the
-/// payload is read with one allocation and one pass over it per element. A
-/// trailing partial element is ignored, the way `as_chunks` ignores one.
+/// Where the payload and the `Vec`'s buffer start on the same four-byte lane
+/// boundary, every lane is read once and stored reversed, so the payload is
+/// read with one allocation. Otherwise the bytes are copied into the `Vec`
+/// and swapped there. A trailing partial element is ignored, the way
+/// `as_chunks` ignores one.
+#[allow(clippy::cast_ptr_alignment)] // the checks above pin the alignment the lane view needs
 pub(crate) fn decode_be<T: Copy, const SIZE: usize>(bytes: &[u8]) -> Vec<T> {
     const { assert!(SIZE == size_of::<T>()) };
     let len = bytes.len() / SIZE;
@@ -237,11 +408,47 @@ pub(crate) fn decode_be<T: Copy, const SIZE: usize>(bytes: &[u8]) -> Vec<T> {
     if head.is_empty() {
         return out;
     }
+    if !cfg!(target_endian = "big")
+        && head.as_ptr().addr().is_multiple_of(align_of::<u32>())
+        && out.as_ptr().addr().is_multiple_of(align_of::<u32>())
+    {
+        // The whole lanes, and the less-than-four bytes beyond them, which
+        // are one two-byte element and nothing else.
+        let lanes = head.len() / 4;
+        // SAFETY: both buffers start four-byte aligned, `lanes` is
+        // `head.len()/4`, and the `Vec` has room for all of `head`'s bytes;
+        // `swap_copy` fills the whole lanes and the copy fills the rest,
+        // after which every element of `out` is initialized.
+        unsafe {
+            swap_copy::<SIZE>(
+                core::slice::from_raw_parts(head.as_ptr().cast::<u32>(), lanes),
+                core::slice::from_raw_parts_mut(out.as_mut_ptr().cast::<u32>(), lanes),
+            );
+            core::ptr::copy_nonoverlapping(
+                head.as_ptr().add(lanes * 4),
+                out.as_mut_ptr().cast::<u8>().add(lanes * 4),
+                head.len() - lanes * 4,
+            );
+            out.set_len(len);
+        }
+        // The bytes after the whole lanes hold one two-byte element, whose
+        // bytes still swap.
+        for element in as_bytes_mut(&mut out)[lanes * 4..]
+            .as_chunks_mut::<SIZE>()
+            .0
+        {
+            element.reverse();
+        }
+        return out;
+    }
     // SAFETY: the `Vec` has room for `len` elements, which is exactly the
-    // bytes of `head`; every one of them is initialized, and `T` is a
-    // scalar whose every bit pattern is valid.
+    // bytes of `head`; the copy initializes every one of them, and `T`
+    // is a scalar whose every bit pattern is valid.
     unsafe {
+        #[cfg(target_family = "wasm")]
         core::ptr::copy_nonoverlapping(head.as_ptr(), out.as_mut_ptr().cast::<u8>(), head.len());
+        #[cfg(not(target_family = "wasm"))]
+        copy_blocks(head.as_ptr(), out.as_mut_ptr().cast::<u8>(), head.len());
         out.set_len(len);
     }
     swap_bytes_in_place::<SIZE>(as_bytes_mut(&mut out));
@@ -285,12 +492,16 @@ pub(crate) fn write_be<T: Copy, const SIZE: usize, W: Write + ?Sized>(
 
 #[cfg(test)]
 mod tests {
+    use alloc::vec;
+
     use pulp::{Scalar, WithSimd};
 
-    use super::SwapLanes;
+    use super::{SwapCopy, SwapLanes, decode_be};
+    use crate::be::as_bytes;
 
     /// The scalar backend, the one that runs where no vector is available,
-    /// must reverse the elements exactly as the dispatched backends do.
+    /// must reverse the elements exactly as the dispatched backends do, in
+    /// place and into another buffer.
     #[test]
     fn the_scalar_backend_reverses_every_element_width() {
         // Whole lanes of each width, covering both byte ends of every half.
@@ -298,35 +509,99 @@ mod tests {
         scalar_swap_matches::<2>(words);
         scalar_swap_matches::<4>(words);
         scalar_swap_matches::<8>(words);
+        scalar_copy_matches::<2>(words);
+        scalar_copy_matches::<4>(words);
+        scalar_copy_matches::<8>(words);
     }
 
     /// [`SwapLanes`] over `Scalar` in place, against reversing the bytes of
     /// each `SIZE`-byte element by hand.
     #[track_caller]
     fn scalar_swap_matches<const SIZE: usize>(words: [u32; 4]) {
-        let mut native = [0u8; 16];
-        for (lane, bytes) in words.iter().zip(native.as_chunks_mut::<4>().0) {
-            bytes.copy_from_slice(&lane.to_ne_bytes());
+        let mut lanes = words;
+        SwapLanes::<SIZE> { lanes: &mut lanes }.with_simd(Scalar);
+        assert_eq!(
+            lane_bytes(lanes),
+            reversed_bytes::<SIZE>(words),
+            "size {SIZE}"
+        );
+    }
+
+    /// [`SwapCopy`] over `Scalar` into another buffer, against the same.
+    #[track_caller]
+    fn scalar_copy_matches<const SIZE: usize>(words: [u32; 4]) {
+        let mut got = [0u32; 4];
+        SwapCopy::<SIZE> {
+            src: &words,
+            dst: &mut got,
         }
-        let mut expected = [0u8; 16];
-        for (from, to) in native
+        .with_simd(Scalar);
+        assert_eq!(
+            lane_bytes(got),
+            reversed_bytes::<SIZE>(words),
+            "size {SIZE}"
+        );
+    }
+
+    /// The bytes of four lanes.
+    fn lane_bytes(lanes: [u32; 4]) -> [u8; 16] {
+        let mut bytes = [0u8; 16];
+        for (lane, chunk) in lanes.iter().zip(bytes.as_chunks_mut::<4>().0) {
+            chunk.copy_from_slice(&lane.to_ne_bytes());
+        }
+        bytes
+    }
+
+    /// The bytes of `words` with each `SIZE`-byte element reversed.
+    fn reversed_bytes<const SIZE: usize>(words: [u32; 4]) -> [u8; 16] {
+        let mut reversed = [0u8; 16];
+        for (from, to) in lane_bytes(words)
             .as_chunks::<SIZE>()
             .0
             .iter()
-            .zip(expected.as_chunks_mut::<SIZE>().0)
+            .zip(reversed.as_chunks_mut::<SIZE>().0)
         {
             for (to, from) in to.iter_mut().zip(from.iter().rev()) {
                 *to = *from;
             }
         }
+        reversed
+    }
 
-        let mut lanes = words;
-        SwapLanes::<SIZE> { lanes: &mut lanes }.with_simd(Scalar);
-
-        let mut got = [0u8; 16];
-        for (lane, bytes) in lanes.iter().zip(got.as_chunks_mut::<4>().0) {
-            bytes.copy_from_slice(&lane.to_ne_bytes());
+    /// [`decode_be`] reverses each element the way `from_be_bytes` would,
+    /// through the lane copy where the payload is lane aligned and the staged
+    /// path where it is not, and leaves a trailing partial element out.
+    #[test]
+    fn decode_reverses_at_every_alignment() {
+        for offset in 0..4usize {
+            for len in 0..20usize {
+                let mut buffer = vec![0u8; offset];
+                // Three bytes past the elements, a partial one to ignore.
+                buffer.extend((0..len * 8 + 3).map(|i| u8::try_from(i % 251).expect("below 251")));
+                let payload = &buffer[offset..];
+                decoded_bytes_match::<u16, 2>(payload);
+                decoded_bytes_match::<u32, 4>(payload);
+                decoded_bytes_match::<u64, 8>(payload);
+            }
         }
-        assert_eq!(got, expected, "size {SIZE}");
+    }
+
+    /// The bytes of a decoded payload against the payload's own bytes, each
+    /// `SIZE`-byte element reversed.
+    #[track_caller]
+    fn decoded_bytes_match<T: Copy, const SIZE: usize>(payload: &[u8]) {
+        let got = decode_be::<T, SIZE>(payload);
+        let got = as_bytes(&got);
+        assert_eq!(got.len(), payload.len() / SIZE * SIZE);
+        for (from, to) in payload
+            .as_chunks::<SIZE>()
+            .0
+            .iter()
+            .zip(got.as_chunks::<SIZE>().0)
+        {
+            let mut reversed = *from;
+            reversed.reverse();
+            assert_eq!(*to, reversed);
+        }
     }
 }
