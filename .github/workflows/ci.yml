@@ -182,7 +182,9 @@ jobs:
   # The comparison bench lives in its own workspace, `crates/nanonbt-bench`,
   # because `simdnbt` needs nightly. Compiling and linting it here keeps it
   # from rotting without moving the jobs above off the pinned stable
-  # toolchain. The bench itself is not run: a shared runner times noise.
+  # toolchain. This job keeps no numbers; `bench.yml` benches both revisions
+  # under callgrind in one job and posts their instruction counts as a
+  # comment.
   bench:
     runs-on: ubuntu-24.04
     steps:

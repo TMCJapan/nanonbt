@@ -18,18 +18,21 @@
 //! holding `kept`, the one field [`Sparse`] declares, and `skipped`, one huge
 //! entry of that shape. Everything past `kept` is passed over, the serde side
 //! through `IgnoredAny` and the derive through `Read::skip`.
+//!
+//! Every entry is one `#[bench]` function named `<kind>_<target>_<id>`; the
+//! four macros just above the entries pair each struct with its parse and
+//! write functions. See `crate::macros` for the naming contract.
 
 use std::borrow::Cow;
 
-use criterion::{BenchmarkGroup, measurement::WallTime};
 use nanonbt::{
     F32Be, F64Be, FromNBT, I16Be, I32Be, I64Be, ToNBT, U16Be, U32Be, U64Be, serde_compat,
 };
 use random_names::random_names;
 use serde::{Deserialize, Serialize};
 
-use crate::documents::{Array, BenchInput, Doc, Skip};
-use crate::{bench_parse, bench_write};
+use crate::documents::{self, Array, Doc, Skip};
+use crate::macros::{library_benchmark_group, parse_bench, write_bench, write_bench_leaked};
 
 // ---------------------------------------------------------------------------
 // The owned model, which is also what generates the input documents.
@@ -546,57 +549,6 @@ macro_rules! array_kinds {
                     ::nanonbt::to_bytes(&value).expect("the document writes")
                 }
 
-                /// The parse entries of this kind.
-                pub fn parse(group: &mut BenchmarkGroup<'_, WallTime>, kind: Array, bytes: &[u8]) {
-                    bench_parse(group, "nanonbt-derive", kind.name(), bytes, |b| {
-                        ::nanonbt::from_bytes::<OwnedU>(b).expect("the document parses")
-                    });
-                    bench_parse(group, "nanonbt-derive-signed", kind.name(), bytes, |b| {
-                        ::nanonbt::from_bytes::<OwnedS>(b).expect("the document parses")
-                    });
-                    bench_parse(group, "nanonbt-borrow", kind.name(), bytes, |b| {
-                        ::nanonbt::from_bytes::<BorrowedU<'_>>(b).expect("the document parses")
-                    });
-                    bench_parse(group, "nanonbt-borrow-signed", kind.name(), bytes, |b| {
-                        ::nanonbt::from_bytes::<BorrowedS<'_>>(b).expect("the document parses")
-                    });
-                }
-
-                /// The write entries of this kind.
-                pub fn write(group: &mut BenchmarkGroup<'_, WallTime>, kind: Array, bytes: &[u8]) {
-                    bench_write(
-                        group,
-                        "nanonbt-derive",
-                        kind.name(),
-                        bytes,
-                        |b| ::nanonbt::from_bytes::<OwnedU>(b).expect("the document parses"),
-                        |v: &OwnedU| ::nanonbt::to_bytes(v).expect("the document writes"),
-                    );
-                    bench_write(
-                        group,
-                        "nanonbt-derive-signed",
-                        kind.name(),
-                        bytes,
-                        |b| ::nanonbt::from_bytes::<OwnedS>(b).expect("the document parses"),
-                        |v: &OwnedS| ::nanonbt::to_bytes(v).expect("the document writes"),
-                    );
-                    bench_write(
-                        group,
-                        "nanonbt-borrow",
-                        kind.name(),
-                        bytes,
-                        |b| ::nanonbt::from_bytes::<BorrowedU<'_>>(b).expect("the document parses"),
-                        |v: &BorrowedU<'_>| ::nanonbt::to_bytes(v).expect("the document writes"),
-                    );
-                    bench_write(
-                        group,
-                        "nanonbt-borrow-signed",
-                        kind.name(),
-                        bytes,
-                        |b| ::nanonbt::from_bytes::<BorrowedS<'_>>(b).expect("the document parses"),
-                        |v: &BorrowedS<'_>| ::nanonbt::to_bytes(v).expect("the document writes"),
-                    );
-                }
             }
         )*
     };
@@ -768,199 +720,6 @@ pub fn skip_document(kind: Skip, len: usize) -> Vec<u8> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// The entries.
-// ---------------------------------------------------------------------------
-
-pub fn parse(group: &mut BenchmarkGroup<'_, WallTime>, input: BenchInput) {
-    match input {
-        BenchInput::Doc(doc, bytes) => match doc {
-            Doc::Small => {
-                bench_parse(group, "nanonbt-serde", doc.name(), bytes, |b: &[u8]| {
-                    serde_compat::from_bytes::<Small>(b).expect("document parses")
-                });
-                bench_parse(group, "nanonbt-derive", doc.name(), bytes, |b: &[u8]| {
-                    nanonbt::from_bytes::<Small>(b).expect("document parses")
-                });
-                bench_parse(group, "nanonbt-borrow", doc.name(), bytes, |b: &[u8]| {
-                    nanonbt::from_bytes::<SmallRef<'_>>(b).expect("document parses")
-                });
-            }
-            Doc::Player => {
-                bench_parse(group, "nanonbt-serde", doc.name(), bytes, |b: &[u8]| {
-                    serde_compat::from_bytes::<Player>(b).expect("document parses")
-                });
-                bench_parse(group, "nanonbt-derive", doc.name(), bytes, |b: &[u8]| {
-                    nanonbt::from_bytes::<Player>(b).expect("document parses")
-                });
-                bench_parse(group, "nanonbt-borrow", doc.name(), bytes, |b: &[u8]| {
-                    nanonbt::from_bytes::<PlayerRef<'_>>(b).expect("document parses")
-                });
-            }
-            Doc::Chunk => {
-                bench_parse(group, "nanonbt-serde", doc.name(), bytes, |b: &[u8]| {
-                    serde_compat::from_bytes::<Chunk>(b).expect("document parses")
-                });
-                bench_parse(group, "nanonbt-derive", doc.name(), bytes, |b: &[u8]| {
-                    nanonbt::from_bytes::<Chunk>(b).expect("document parses")
-                });
-                bench_parse(group, "nanonbt-borrow", doc.name(), bytes, |b: &[u8]| {
-                    nanonbt::from_bytes::<ChunkRef<'_>>(b).expect("document parses")
-                });
-            }
-            Doc::ShortNames => {
-                bench_parse(group, "nanonbt-serde", doc.name(), bytes, |b: &[u8]| {
-                    serde_compat::from_bytes::<ShortNames>(b).expect("document parses")
-                });
-                bench_parse(group, "nanonbt-derive", doc.name(), bytes, |b: &[u8]| {
-                    nanonbt::from_bytes::<ShortNames>(b).expect("document parses")
-                });
-            }
-            Doc::LongNames => {
-                bench_parse(group, "nanonbt-serde", doc.name(), bytes, |b: &[u8]| {
-                    serde_compat::from_bytes::<LongNames>(b).expect("document parses")
-                });
-                bench_parse(group, "nanonbt-derive", doc.name(), bytes, |b: &[u8]| {
-                    nanonbt::from_bytes::<LongNames>(b).expect("document parses")
-                });
-            }
-        },
-        BenchInput::Array(kind, bytes) => match kind {
-            Array::Byte => byte::parse(group, kind, bytes),
-            Array::Short => short::parse(group, kind, bytes),
-            Array::Int => int::parse(group, kind, bytes),
-            Array::Long => long::parse(group, kind, bytes),
-        },
-    }
-}
-
-pub fn write(group: &mut BenchmarkGroup<'_, WallTime>, input: BenchInput) {
-    match input {
-        BenchInput::Doc(doc, bytes) => match doc {
-            Doc::Small => {
-                bench_write(
-                    group,
-                    "nanonbt-serde",
-                    doc.name(),
-                    bytes,
-                    |b: &[u8]| serde_compat::from_bytes::<Small>(b).expect("document parses"),
-                    |v: &Small| serde_compat::to_bytes(v).expect("struct writes"),
-                );
-                bench_write(
-                    group,
-                    "nanonbt-derive",
-                    doc.name(),
-                    bytes,
-                    |b: &[u8]| nanonbt::from_bytes::<Small>(b).expect("document parses"),
-                    |v: &Small| nanonbt::to_bytes(v).expect("struct writes"),
-                );
-                bench_write(
-                    group,
-                    "nanonbt-borrow",
-                    doc.name(),
-                    bytes,
-                    |b: &[u8]| nanonbt::from_bytes::<SmallRef<'_>>(b).expect("document parses"),
-                    |v: &SmallRef<'_>| nanonbt::to_bytes(v).expect("struct writes"),
-                );
-            }
-            Doc::Player => {
-                bench_write(
-                    group,
-                    "nanonbt-serde",
-                    doc.name(),
-                    bytes,
-                    |b: &[u8]| serde_compat::from_bytes::<Player>(b).expect("document parses"),
-                    |v: &Player| serde_compat::to_bytes(v).expect("struct writes"),
-                );
-                bench_write(
-                    group,
-                    "nanonbt-derive",
-                    doc.name(),
-                    bytes,
-                    |b: &[u8]| nanonbt::from_bytes::<Player>(b).expect("document parses"),
-                    |v: &Player| nanonbt::to_bytes(v).expect("struct writes"),
-                );
-                bench_write(
-                    group,
-                    "nanonbt-borrow",
-                    doc.name(),
-                    bytes,
-                    |b: &[u8]| nanonbt::from_bytes::<PlayerRef<'_>>(b).expect("document parses"),
-                    |v: &PlayerRef<'_>| nanonbt::to_bytes(v).expect("struct writes"),
-                );
-            }
-            Doc::Chunk => {
-                bench_write(
-                    group,
-                    "nanonbt-serde",
-                    doc.name(),
-                    bytes,
-                    |b: &[u8]| serde_compat::from_bytes::<Chunk>(b).expect("document parses"),
-                    |v: &Chunk| serde_compat::to_bytes(v).expect("struct writes"),
-                );
-                bench_write(
-                    group,
-                    "nanonbt-derive",
-                    doc.name(),
-                    bytes,
-                    |b: &[u8]| nanonbt::from_bytes::<Chunk>(b).expect("document parses"),
-                    |v: &Chunk| nanonbt::to_bytes(v).expect("struct writes"),
-                );
-                bench_write(
-                    group,
-                    "nanonbt-borrow",
-                    doc.name(),
-                    bytes,
-                    |b: &[u8]| nanonbt::from_bytes::<ChunkRef<'_>>(b).expect("document parses"),
-                    |v: &ChunkRef<'_>| nanonbt::to_bytes(v).expect("struct writes"),
-                );
-            }
-            Doc::ShortNames => {
-                bench_write(
-                    group,
-                    "nanonbt-serde",
-                    doc.name(),
-                    bytes,
-                    |b: &[u8]| serde_compat::from_bytes::<ShortNames>(b).expect("document parses"),
-                    |v: &ShortNames| serde_compat::to_bytes(v).expect("struct writes"),
-                );
-                bench_write(
-                    group,
-                    "nanonbt-derive",
-                    doc.name(),
-                    bytes,
-                    |b: &[u8]| nanonbt::from_bytes::<ShortNames>(b).expect("document parses"),
-                    |v: &ShortNames| nanonbt::to_bytes(v).expect("struct writes"),
-                );
-            }
-            Doc::LongNames => {
-                bench_write(
-                    group,
-                    "nanonbt-serde",
-                    doc.name(),
-                    bytes,
-                    |b: &[u8]| serde_compat::from_bytes::<LongNames>(b).expect("document parses"),
-                    |v: &LongNames| serde_compat::to_bytes(v).expect("struct writes"),
-                );
-                bench_write(
-                    group,
-                    "nanonbt-derive",
-                    doc.name(),
-                    bytes,
-                    |b: &[u8]| nanonbt::from_bytes::<LongNames>(b).expect("document parses"),
-                    |v: &LongNames| nanonbt::to_bytes(v).expect("struct writes"),
-                );
-            }
-        },
-        BenchInput::Array(kind, bytes) => match kind {
-            Array::Byte => byte::write(group, kind, bytes),
-            Array::Short => short::write(group, kind, bytes),
-            Array::Int => int::write(group, kind, bytes),
-            Array::Long => long::write(group, kind, bytes),
-        },
-    }
-}
-
 /// The skip target: it declares `kept` alone, so the big `skipped` entry is
 /// passed over, the serde side through `IgnoredAny` and the derive through
 /// `Read::skip`.
@@ -971,12 +730,493 @@ pub struct Sparse {
     pub kept: i32,
 }
 
-/// The skip entries of one shape.
-pub fn skip(group: &mut BenchmarkGroup<'_, WallTime>, kind: Skip, bytes: &[u8]) {
-    bench_parse(group, "nanonbt-serde", kind.name(), bytes, |b: &[u8]| {
-        serde_compat::from_bytes::<Sparse>(b).expect("the document parses")
-    });
-    bench_parse(group, "nanonbt-derive", kind.name(), bytes, |b: &[u8]| {
-        nanonbt::from_bytes::<Sparse>(b).expect("the document parses")
-    });
+// ---------------------------------------------------------------------------
+// The entries, one `#[bench]` function per target and document.
+// ---------------------------------------------------------------------------
+//
+// The macros below pair each spelling with its parse and write entry. A
+// function is named `<kind>_<target>_<id>`, with `_` where the report id has
+// `-` and `/`: `parse_nanonbt_serde_small` is `parse/nanonbt-serde/small`.
+// `examples/bench-summary.rs` recovers the id from the function's name plus
+// its `#[bench]` id, so the two must stay in step; see `crate::macros`.
+
+/// The `nanonbt-serde` parse and write entries of one owned document.
+macro_rules! serde_entry {
+    ($ty:ty, $input:expr, $id:ident, $parse:ident, $setup:ident, $write:ident) => {
+        parse_bench!($parse, $id, $input, |b: &[u8]| {
+            serde_compat::from_bytes::<$ty>(b).expect("the document parses")
+        });
+        write_bench!(
+            $write,
+            $setup,
+            $id,
+            $input,
+            $ty,
+            |b: &[u8]| serde_compat::from_bytes::<$ty>(b).expect("the document parses"),
+            |v: &$ty| serde_compat::to_bytes(v).expect("the document writes")
+        );
+    };
 }
+
+/// The `nanonbt-derive` parse and write entries of one owned document or
+/// array.
+macro_rules! derive_entry {
+    ($ty:ty, $input:expr, $id:ident, $parse:ident, $setup:ident, $write:ident) => {
+        parse_bench!($parse, $id, $input, |b: &[u8]| {
+            nanonbt::from_bytes::<$ty>(b).expect("the document parses")
+        });
+        write_bench!(
+            $write,
+            $setup,
+            $id,
+            $input,
+            $ty,
+            |b: &[u8]| nanonbt::from_bytes::<$ty>(b).expect("the document parses"),
+            |v: &$ty| nanonbt::to_bytes(v).expect("the document writes")
+        );
+    };
+}
+
+/// The `nanonbt-borrow` parse and write entries of one borrowed document or
+/// array.
+///
+/// `$ty` is the borrowed type with the input's lifetime in it and `$static`
+/// the same type fixed to `'static`; the write setup leaks the document bytes
+/// to hold that borrow for the whole run.
+macro_rules! borrow_entry {
+    ($ty:ty, $static:ty, $input:expr, $id:ident, $parse:ident, $setup:ident, $write:ident) => {
+        parse_bench!($parse, $id, $input, |b: &[u8]| {
+            let _ =
+                ::std::hint::black_box(nanonbt::from_bytes::<$ty>(b).expect("the document parses"));
+        });
+        write_bench_leaked!(
+            $write,
+            $setup,
+            $id,
+            $input,
+            $static,
+            |b: &'static [u8]| nanonbt::from_bytes::<$static>(b).expect("the document parses"),
+            |v: &$static| nanonbt::to_bytes(v).expect("the document writes")
+        );
+    };
+}
+
+/// The `nanonbt-serde` and `nanonbt-derive` skip entries of one shape.
+macro_rules! skip_entry {
+    ($input:expr, $id:ident, $serde:ident, $derive:ident) => {
+        parse_bench!($serde, $id, $input, |b: &[u8]| {
+            serde_compat::from_bytes::<Sparse>(b).expect("the document parses")
+        });
+        parse_bench!($derive, $id, $input, |b: &[u8]| {
+            nanonbt::from_bytes::<Sparse>(b).expect("the document parses")
+        });
+    };
+}
+
+// The five documents of the `parse` and `write` groups. The name pair carries
+// only `i32` fields, so it has no `nanonbt-borrow` entry: with nothing to
+// borrow, its borrowed struct would compile to the owned one.
+serde_entry!(
+    Small,
+    documents::doc(Doc::Small),
+    small,
+    parse_nanonbt_serde_small,
+    setup_nanonbt_serde_small,
+    write_nanonbt_serde_small
+);
+serde_entry!(
+    Player,
+    documents::doc(Doc::Player),
+    player,
+    parse_nanonbt_serde_player,
+    setup_nanonbt_serde_player,
+    write_nanonbt_serde_player
+);
+serde_entry!(
+    Chunk,
+    documents::doc(Doc::Chunk),
+    chunk,
+    parse_nanonbt_serde_chunk,
+    setup_nanonbt_serde_chunk,
+    write_nanonbt_serde_chunk
+);
+serde_entry!(
+    ShortNames,
+    documents::doc(Doc::ShortNames),
+    short_names,
+    parse_nanonbt_serde_short_names,
+    setup_nanonbt_serde_short_names,
+    write_nanonbt_serde_short_names
+);
+serde_entry!(
+    LongNames,
+    documents::doc(Doc::LongNames),
+    long_names,
+    parse_nanonbt_serde_long_names,
+    setup_nanonbt_serde_long_names,
+    write_nanonbt_serde_long_names
+);
+
+derive_entry!(
+    Small,
+    documents::doc(Doc::Small),
+    small,
+    parse_nanonbt_derive_small,
+    setup_nanonbt_derive_small,
+    write_nanonbt_derive_small
+);
+derive_entry!(
+    Player,
+    documents::doc(Doc::Player),
+    player,
+    parse_nanonbt_derive_player,
+    setup_nanonbt_derive_player,
+    write_nanonbt_derive_player
+);
+derive_entry!(
+    Chunk,
+    documents::doc(Doc::Chunk),
+    chunk,
+    parse_nanonbt_derive_chunk,
+    setup_nanonbt_derive_chunk,
+    write_nanonbt_derive_chunk
+);
+derive_entry!(
+    ShortNames,
+    documents::doc(Doc::ShortNames),
+    short_names,
+    parse_nanonbt_derive_short_names,
+    setup_nanonbt_derive_short_names,
+    write_nanonbt_derive_short_names
+);
+derive_entry!(
+    LongNames,
+    documents::doc(Doc::LongNames),
+    long_names,
+    parse_nanonbt_derive_long_names,
+    setup_nanonbt_derive_long_names,
+    write_nanonbt_derive_long_names
+);
+
+borrow_entry!(
+    SmallRef<'_>,
+    SmallRef<'static>,
+    documents::doc(Doc::Small),
+    small,
+    parse_nanonbt_borrow_small,
+    setup_nanonbt_borrow_small,
+    write_nanonbt_borrow_small
+);
+borrow_entry!(
+    PlayerRef<'_>,
+    PlayerRef<'static>,
+    documents::doc(Doc::Player),
+    player,
+    parse_nanonbt_borrow_player,
+    setup_nanonbt_borrow_player,
+    write_nanonbt_borrow_player
+);
+borrow_entry!(
+    ChunkRef<'_>,
+    ChunkRef<'static>,
+    documents::doc(Doc::Chunk),
+    chunk,
+    parse_nanonbt_borrow_chunk,
+    setup_nanonbt_borrow_chunk,
+    write_nanonbt_borrow_chunk
+);
+
+// The four array documents, each spelled owned and borrowed, unsigned and
+// signed. `short` has no NBT array, so its borrowed slice writes a list.
+derive_entry!(
+    byte::OwnedU,
+    documents::array_doc(Array::Byte),
+    byte_array,
+    parse_nanonbt_derive_byte_array,
+    setup_nanonbt_derive_byte_array,
+    write_nanonbt_derive_byte_array
+);
+derive_entry!(
+    byte::OwnedS,
+    documents::array_doc(Array::Byte),
+    byte_array,
+    parse_nanonbt_derive_signed_byte_array,
+    setup_nanonbt_derive_signed_byte_array,
+    write_nanonbt_derive_signed_byte_array
+);
+borrow_entry!(
+    byte::BorrowedU<'_>,
+    byte::BorrowedU<'static>,
+    documents::array_doc(Array::Byte),
+    byte_array,
+    parse_nanonbt_borrow_byte_array,
+    setup_nanonbt_borrow_byte_array,
+    write_nanonbt_borrow_byte_array
+);
+borrow_entry!(
+    byte::BorrowedS<'_>,
+    byte::BorrowedS<'static>,
+    documents::array_doc(Array::Byte),
+    byte_array,
+    parse_nanonbt_borrow_signed_byte_array,
+    setup_nanonbt_borrow_signed_byte_array,
+    write_nanonbt_borrow_signed_byte_array
+);
+
+derive_entry!(
+    short::OwnedU,
+    documents::array_doc(Array::Short),
+    short_list,
+    parse_nanonbt_derive_short_list,
+    setup_nanonbt_derive_short_list,
+    write_nanonbt_derive_short_list
+);
+derive_entry!(
+    short::OwnedS,
+    documents::array_doc(Array::Short),
+    short_list,
+    parse_nanonbt_derive_signed_short_list,
+    setup_nanonbt_derive_signed_short_list,
+    write_nanonbt_derive_signed_short_list
+);
+borrow_entry!(
+    short::BorrowedU<'_>,
+    short::BorrowedU<'static>,
+    documents::array_doc(Array::Short),
+    short_list,
+    parse_nanonbt_borrow_short_list,
+    setup_nanonbt_borrow_short_list,
+    write_nanonbt_borrow_short_list
+);
+borrow_entry!(
+    short::BorrowedS<'_>,
+    short::BorrowedS<'static>,
+    documents::array_doc(Array::Short),
+    short_list,
+    parse_nanonbt_borrow_signed_short_list,
+    setup_nanonbt_borrow_signed_short_list,
+    write_nanonbt_borrow_signed_short_list
+);
+
+derive_entry!(
+    int::OwnedU,
+    documents::array_doc(Array::Int),
+    int_array,
+    parse_nanonbt_derive_int_array,
+    setup_nanonbt_derive_int_array,
+    write_nanonbt_derive_int_array
+);
+derive_entry!(
+    int::OwnedS,
+    documents::array_doc(Array::Int),
+    int_array,
+    parse_nanonbt_derive_signed_int_array,
+    setup_nanonbt_derive_signed_int_array,
+    write_nanonbt_derive_signed_int_array
+);
+borrow_entry!(
+    int::BorrowedU<'_>,
+    int::BorrowedU<'static>,
+    documents::array_doc(Array::Int),
+    int_array,
+    parse_nanonbt_borrow_int_array,
+    setup_nanonbt_borrow_int_array,
+    write_nanonbt_borrow_int_array
+);
+borrow_entry!(
+    int::BorrowedS<'_>,
+    int::BorrowedS<'static>,
+    documents::array_doc(Array::Int),
+    int_array,
+    parse_nanonbt_borrow_signed_int_array,
+    setup_nanonbt_borrow_signed_int_array,
+    write_nanonbt_borrow_signed_int_array
+);
+
+derive_entry!(
+    long::OwnedU,
+    documents::array_doc(Array::Long),
+    long_array,
+    parse_nanonbt_derive_long_array,
+    setup_nanonbt_derive_long_array,
+    write_nanonbt_derive_long_array
+);
+derive_entry!(
+    long::OwnedS,
+    documents::array_doc(Array::Long),
+    long_array,
+    parse_nanonbt_derive_signed_long_array,
+    setup_nanonbt_derive_signed_long_array,
+    write_nanonbt_derive_signed_long_array
+);
+borrow_entry!(
+    long::BorrowedU<'_>,
+    long::BorrowedU<'static>,
+    documents::array_doc(Array::Long),
+    long_array,
+    parse_nanonbt_borrow_long_array,
+    setup_nanonbt_borrow_long_array,
+    write_nanonbt_borrow_long_array
+);
+borrow_entry!(
+    long::BorrowedS<'_>,
+    long::BorrowedS<'static>,
+    documents::array_doc(Array::Long),
+    long_array,
+    parse_nanonbt_borrow_signed_long_array,
+    setup_nanonbt_borrow_signed_long_array,
+    write_nanonbt_borrow_signed_long_array
+);
+
+// The eleven skip shapes, serde and derive each.
+skip_entry!(
+    documents::skip_doc(Skip::ByteList),
+    byte_list,
+    skip_nanonbt_serde_byte_list,
+    skip_nanonbt_derive_byte_list
+);
+skip_entry!(
+    documents::skip_doc(Skip::ShortList),
+    short_list,
+    skip_nanonbt_serde_short_list,
+    skip_nanonbt_derive_short_list
+);
+skip_entry!(
+    documents::skip_doc(Skip::IntList),
+    int_list,
+    skip_nanonbt_serde_int_list,
+    skip_nanonbt_derive_int_list
+);
+skip_entry!(
+    documents::skip_doc(Skip::LongList),
+    long_list,
+    skip_nanonbt_serde_long_list,
+    skip_nanonbt_derive_long_list
+);
+skip_entry!(
+    documents::skip_doc(Skip::FloatList),
+    float_list,
+    skip_nanonbt_serde_float_list,
+    skip_nanonbt_derive_float_list
+);
+skip_entry!(
+    documents::skip_doc(Skip::DoubleList),
+    double_list,
+    skip_nanonbt_serde_double_list,
+    skip_nanonbt_derive_double_list
+);
+skip_entry!(
+    documents::skip_doc(Skip::ByteArray),
+    byte_array,
+    skip_nanonbt_serde_byte_array,
+    skip_nanonbt_derive_byte_array
+);
+skip_entry!(
+    documents::skip_doc(Skip::IntArray),
+    int_array,
+    skip_nanonbt_serde_int_array,
+    skip_nanonbt_derive_int_array
+);
+skip_entry!(
+    documents::skip_doc(Skip::LongArray),
+    long_array,
+    skip_nanonbt_serde_long_array,
+    skip_nanonbt_derive_long_array
+);
+skip_entry!(
+    documents::skip_doc(Skip::StringList),
+    string_list,
+    skip_nanonbt_serde_string_list,
+    skip_nanonbt_derive_string_list
+);
+skip_entry!(
+    documents::skip_doc(Skip::CompoundList),
+    compound_list,
+    skip_nanonbt_serde_compound_list,
+    skip_nanonbt_derive_compound_list
+);
+
+library_benchmark_group!(
+    name = nanonbt_entries;
+    benchmarks =
+        parse_nanonbt_serde_small,
+        parse_nanonbt_serde_player,
+        parse_nanonbt_serde_chunk,
+        parse_nanonbt_serde_short_names,
+        parse_nanonbt_serde_long_names,
+        parse_nanonbt_derive_small,
+        parse_nanonbt_derive_player,
+        parse_nanonbt_derive_chunk,
+        parse_nanonbt_derive_short_names,
+        parse_nanonbt_derive_long_names,
+        parse_nanonbt_borrow_small,
+        parse_nanonbt_borrow_player,
+        parse_nanonbt_borrow_chunk,
+        write_nanonbt_serde_small,
+        write_nanonbt_serde_player,
+        write_nanonbt_serde_chunk,
+        write_nanonbt_serde_short_names,
+        write_nanonbt_serde_long_names,
+        write_nanonbt_derive_small,
+        write_nanonbt_derive_player,
+        write_nanonbt_derive_chunk,
+        write_nanonbt_derive_short_names,
+        write_nanonbt_derive_long_names,
+        write_nanonbt_borrow_small,
+        write_nanonbt_borrow_player,
+        write_nanonbt_borrow_chunk,
+        parse_nanonbt_derive_byte_array,
+        parse_nanonbt_derive_signed_byte_array,
+        parse_nanonbt_borrow_byte_array,
+        parse_nanonbt_borrow_signed_byte_array,
+        parse_nanonbt_derive_short_list,
+        parse_nanonbt_derive_signed_short_list,
+        parse_nanonbt_borrow_short_list,
+        parse_nanonbt_borrow_signed_short_list,
+        parse_nanonbt_derive_int_array,
+        parse_nanonbt_derive_signed_int_array,
+        parse_nanonbt_borrow_int_array,
+        parse_nanonbt_borrow_signed_int_array,
+        parse_nanonbt_derive_long_array,
+        parse_nanonbt_derive_signed_long_array,
+        parse_nanonbt_borrow_long_array,
+        parse_nanonbt_borrow_signed_long_array,
+        write_nanonbt_derive_byte_array,
+        write_nanonbt_derive_signed_byte_array,
+        write_nanonbt_borrow_byte_array,
+        write_nanonbt_borrow_signed_byte_array,
+        write_nanonbt_derive_short_list,
+        write_nanonbt_derive_signed_short_list,
+        write_nanonbt_borrow_short_list,
+        write_nanonbt_borrow_signed_short_list,
+        write_nanonbt_derive_int_array,
+        write_nanonbt_derive_signed_int_array,
+        write_nanonbt_borrow_int_array,
+        write_nanonbt_borrow_signed_int_array,
+        write_nanonbt_derive_long_array,
+        write_nanonbt_derive_signed_long_array,
+        write_nanonbt_borrow_long_array,
+        write_nanonbt_borrow_signed_long_array,
+        skip_nanonbt_serde_byte_list,
+        skip_nanonbt_derive_byte_list,
+        skip_nanonbt_serde_short_list,
+        skip_nanonbt_derive_short_list,
+        skip_nanonbt_serde_int_list,
+        skip_nanonbt_derive_int_list,
+        skip_nanonbt_serde_long_list,
+        skip_nanonbt_derive_long_list,
+        skip_nanonbt_serde_float_list,
+        skip_nanonbt_derive_float_list,
+        skip_nanonbt_serde_double_list,
+        skip_nanonbt_derive_double_list,
+        skip_nanonbt_serde_byte_array,
+        skip_nanonbt_derive_byte_array,
+        skip_nanonbt_serde_int_array,
+        skip_nanonbt_derive_int_array,
+        skip_nanonbt_serde_long_array,
+        skip_nanonbt_derive_long_array,
+        skip_nanonbt_serde_string_list,
+        skip_nanonbt_derive_string_list,
+        skip_nanonbt_serde_compound_list,
+        skip_nanonbt_derive_compound_list
+);

@@ -10,17 +10,33 @@ version = "0.1.0"
 [workspace]
 resolver = "2"
 
+# The portable registry, the smoke runner and the wasm fuel runner share this
+# library; the iai entry files are also compiled into it, with the portable
+# macro backend in `src/macros.rs` instead of the `iai-callgrind` one.
+[lib]
+crate-type = ["rlib", "cdylib"]
+
 [dependencies]
-# All three are in `default`, so all benchmarks run out of the box.
+# The three comparison targets, all in `default`, so all benchmarks run out of
+# the box.
 fastnbt = { version = "2.6.3", optional = true }
 pumpkin-nbt = { git = "https://github.com/Pumpkin-MC/Pumpkin.git", rev = "218a7fe46767235a917f94ba1120afbd33e7ef8c", optional = true }
 simdnbt = { version = "0.10", optional = true }
-
-[dev-dependencies]
-criterion = "0.8"
+# The library under test, the document builder and the name generator; the
+# entry files compile against these in every backend.
 nanonbt = { path = "../nanonbt", features = ["serde"] }
 random-names = { path = "random-names" }
 serde = { version = "1", features = ["derive"] }
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+# The host side of the wasm fuel runner. The wasm module itself never links
+# this.
+wasmi = { version = "0.51", features = ["std"] }
+# The fuel runner and the summary example read and write JSON.
+serde_json = "1"
+
+[dev-dependencies]
+iai-callgrind = "0.16.1"
 
 [features]
 default = ["fastnbt", "hashify", "pumpkin-nbt", "simdnbt"]
@@ -31,7 +47,8 @@ fastnbt = ["dep:fastnbt"]
 hashify = ["nanonbt/hashify"]
 # Enable the pumpkin-nbt benchmarks (always listed last).
 pumpkin-nbt = ["dep:pumpkin-nbt"]
-# Enable the simdnbt benchmarks.
+# Enable the simdnbt benchmarks. simdnbt does not build for wasm32, so the
+# wasm fuel runner leaves this off.
 simdnbt = ["dep:simdnbt"]
 # Enable nanonbt's `simd` feature, to compare the vector decode.
 simd = ["nanonbt/simd"]
@@ -44,3 +61,8 @@ harness = false
 [profile.release]
 lto = true
 codegen-units = 1
+
+# Iai-Callgrind needs debug symbols to match the names callgrind reports, so
+# the measurement collects the benchmark function and nothing else around it.
+[profile.bench]
+debug = true

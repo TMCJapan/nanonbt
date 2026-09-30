@@ -3,13 +3,12 @@
 //! The skip target at the end declares `kept` alone, so the rest of a skip
 //! document is passed over through serde's `IgnoredAny`.
 
-use criterion::{BenchmarkGroup, measurement::WallTime};
 use fastnbt::{ByteArray, IntArray, LongArray};
 use random_names::random_names;
 use serde::{Deserialize, Serialize};
 
-use crate::documents::{Array, BenchInput, Doc, Skip};
-use crate::{bench_parse, bench_write};
+use crate::documents::{self, Array, Doc, Skip};
+use crate::macros::{library_benchmark_group, parse_bench, write_bench, write_bench_leaked};
 
 #[derive(Serialize, Deserialize)]
 pub struct Small {
@@ -242,173 +241,152 @@ pub struct LongBorrowed<'a> {
     pub data: fastnbt::borrow::LongArray<'a>,
 }
 
-/// Runs the parse entries of one array kind.
-pub fn parse(group: &mut BenchmarkGroup<'_, WallTime>, input: BenchInput) {
-    match input {
-        BenchInput::Doc(doc, bytes) => match doc {
-            Doc::Small => bench_parse(group, "fastnbt", doc.name(), bytes, |b: &[u8]| {
-                fastnbt::from_bytes::<Small>(b).expect("the document parses")
-            }),
-            Doc::Player => bench_parse(group, "fastnbt", doc.name(), bytes, |b: &[u8]| {
-                fastnbt::from_bytes::<Player>(b).expect("the document parses")
-            }),
-            Doc::Chunk => bench_parse(group, "fastnbt", doc.name(), bytes, |b: &[u8]| {
-                fastnbt::from_bytes::<Chunk>(b).expect("the document parses")
-            }),
-            Doc::ShortNames => bench_parse(group, "fastnbt", doc.name(), bytes, |b: &[u8]| {
-                fastnbt::from_bytes::<ShortNames>(b).expect("the document parses")
-            }),
-            Doc::LongNames => bench_parse(group, "fastnbt", doc.name(), bytes, |b: &[u8]| {
-                fastnbt::from_bytes::<LongNames>(b).expect("the document parses")
-            }),
-        },
-        BenchInput::Array(kind, bytes) => match kind {
-            Array::Byte => {
-                bench_parse(group, "fastnbt", kind.name(), bytes, |b| {
-                    fastnbt::from_bytes::<ByteOwned>(b).expect("the document parses")
-                });
-                bench_parse(group, "fastnbt-borrow", kind.name(), bytes, |b| {
-                    fastnbt::from_bytes::<ByteBorrowed<'_>>(b).expect("the document parses")
-                });
-            }
-            Array::Short => {
-                bench_parse(group, "fastnbt", kind.name(), bytes, |b| {
-                    fastnbt::from_bytes::<ShortOwned>(b).expect("the document parses")
-                });
-            }
-            Array::Int => {
-                bench_parse(group, "fastnbt", kind.name(), bytes, |b| {
-                    fastnbt::from_bytes::<IntOwned>(b).expect("the document parses")
-                });
-                bench_parse(group, "fastnbt-borrow", kind.name(), bytes, |b| {
-                    fastnbt::from_bytes::<IntBorrowed<'_>>(b).expect("the document parses")
-                });
-            }
-            Array::Long => {
-                bench_parse(group, "fastnbt", kind.name(), bytes, |b| {
-                    fastnbt::from_bytes::<LongOwned>(b).expect("the document parses")
-                });
-                bench_parse(group, "fastnbt-borrow", kind.name(), bytes, |b| {
-                    fastnbt::from_bytes::<LongBorrowed<'_>>(b).expect("the document parses")
-                });
-            }
-        },
-    }
+// ---------------------------------------------------------------------------
+// The entries, one `#[bench]` function per document or array.
+// ---------------------------------------------------------------------------
+//
+// A function is named `<kind>_<target>_<id>` — `parse_fastnbt_borrow_int_array`
+// is `parse/fastnbt-borrow/int-array` — and `examples/bench-summary.rs`
+// recovers the id from the name plus the `#[bench]` id; see `crate::macros`.
+
+/// The parse and write entries of one owned document or array.
+macro_rules! owned_entry {
+    ($ty:ty, $input:expr, $id:ident, $parse:ident, $setup:ident, $write:ident) => {
+        parse_bench!($parse, $id, $input, |b: &[u8]| {
+            fastnbt::from_bytes::<$ty>(b).expect("the document parses")
+        });
+        write_bench!(
+            $write,
+            $setup,
+            $id,
+            $input,
+            $ty,
+            |b: &[u8]| fastnbt::from_bytes::<$ty>(b).expect("the document parses"),
+            |v: &$ty| fastnbt::to_bytes(v).expect("the document writes")
+        );
+    };
 }
 
-/// Runs the write entries of one array kind.
-pub fn write(group: &mut BenchmarkGroup<'_, WallTime>, input: BenchInput) {
-    match input {
-        BenchInput::Doc(doc, bytes) => match doc {
-            Doc::Small => bench_write(
-                group,
-                "fastnbt",
-                doc.name(),
-                bytes,
-                |b: &[u8]| fastnbt::from_bytes::<Small>(b).expect("the document parses"),
-                |v: &Small| fastnbt::to_bytes(v).expect("the document writes"),
-            ),
-            Doc::Player => bench_write(
-                group,
-                "fastnbt",
-                doc.name(),
-                bytes,
-                |b: &[u8]| fastnbt::from_bytes::<Player>(b).expect("the document parses"),
-                |v: &Player| fastnbt::to_bytes(v).expect("the document writes"),
-            ),
-            Doc::Chunk => bench_write(
-                group,
-                "fastnbt",
-                doc.name(),
-                bytes,
-                |b: &[u8]| fastnbt::from_bytes::<Chunk>(b).expect("the document parses"),
-                |v: &Chunk| fastnbt::to_bytes(v).expect("the document writes"),
-            ),
-            Doc::ShortNames => bench_write(
-                group,
-                "fastnbt",
-                doc.name(),
-                bytes,
-                |b: &[u8]| fastnbt::from_bytes::<ShortNames>(b).expect("the document parses"),
-                |v: &ShortNames| fastnbt::to_bytes(v).expect("the document writes"),
-            ),
-            Doc::LongNames => bench_write(
-                group,
-                "fastnbt",
-                doc.name(),
-                bytes,
-                |b: &[u8]| fastnbt::from_bytes::<LongNames>(b).expect("the document parses"),
-                |v: &LongNames| fastnbt::to_bytes(v).expect("the document writes"),
-            ),
-        },
-        BenchInput::Array(kind, bytes) => match kind {
-            Array::Byte => {
-                bench_write(
-                    group,
-                    "fastnbt",
-                    kind.name(),
-                    bytes,
-                    |b| fastnbt::from_bytes::<ByteOwned>(b).expect("the document parses"),
-                    |v: &ByteOwned| fastnbt::to_bytes(v).expect("the document writes"),
-                );
-                bench_write(
-                    group,
-                    "fastnbt-borrow",
-                    kind.name(),
-                    bytes,
-                    |b| fastnbt::from_bytes::<ByteBorrowed<'_>>(b).expect("the document parses"),
-                    |v: &ByteBorrowed<'_>| fastnbt::to_bytes(v).expect("the document writes"),
-                );
-            }
-            Array::Short => {
-                bench_write(
-                    group,
-                    "fastnbt",
-                    kind.name(),
-                    bytes,
-                    |b| fastnbt::from_bytes::<ShortOwned>(b).expect("the document parses"),
-                    |v: &ShortOwned| fastnbt::to_bytes(v).expect("the document writes"),
-                );
-            }
-            Array::Int => {
-                bench_write(
-                    group,
-                    "fastnbt",
-                    kind.name(),
-                    bytes,
-                    |b| fastnbt::from_bytes::<IntOwned>(b).expect("the document parses"),
-                    |v: &IntOwned| fastnbt::to_bytes(v).expect("the document writes"),
-                );
-                bench_write(
-                    group,
-                    "fastnbt-borrow",
-                    kind.name(),
-                    bytes,
-                    |b| fastnbt::from_bytes::<IntBorrowed<'_>>(b).expect("the document parses"),
-                    |v: &IntBorrowed<'_>| fastnbt::to_bytes(v).expect("the document writes"),
-                );
-            }
-            Array::Long => {
-                bench_write(
-                    group,
-                    "fastnbt",
-                    kind.name(),
-                    bytes,
-                    |b| fastnbt::from_bytes::<LongOwned>(b).expect("the document parses"),
-                    |v: &LongOwned| fastnbt::to_bytes(v).expect("the document writes"),
-                );
-                bench_write(
-                    group,
-                    "fastnbt-borrow",
-                    kind.name(),
-                    bytes,
-                    |b| fastnbt::from_bytes::<LongBorrowed<'_>>(b).expect("the document parses"),
-                    |v: &LongBorrowed<'_>| fastnbt::to_bytes(v).expect("the document writes"),
-                );
-            }
-        },
-    }
+/// The parse and write entries of one borrowed array, whose value holds the
+/// document bytes; the write setup leaks them to keep that borrow.
+macro_rules! borrowed_entry {
+    ($ty:ty, $static:ty, $input:expr, $id:ident, $parse:ident, $setup:ident, $write:ident) => {
+        parse_bench!($parse, $id, $input, |b: &[u8]| {
+            let _ =
+                ::std::hint::black_box(fastnbt::from_bytes::<$ty>(b).expect("the document parses"));
+        });
+        write_bench_leaked!(
+            $write,
+            $setup,
+            $id,
+            $input,
+            $static,
+            |b: &'static [u8]| fastnbt::from_bytes::<$static>(b).expect("the document parses"),
+            |v: &$static| fastnbt::to_bytes(v).expect("the document writes")
+        );
+    };
 }
+
+owned_entry!(
+    Small,
+    documents::doc(Doc::Small),
+    small,
+    parse_fastnbt_small,
+    setup_fastnbt_small,
+    write_fastnbt_small
+);
+owned_entry!(
+    Player,
+    documents::doc(Doc::Player),
+    player,
+    parse_fastnbt_player,
+    setup_fastnbt_player,
+    write_fastnbt_player
+);
+owned_entry!(
+    Chunk,
+    documents::doc(Doc::Chunk),
+    chunk,
+    parse_fastnbt_chunk,
+    setup_fastnbt_chunk,
+    write_fastnbt_chunk
+);
+owned_entry!(
+    ShortNames,
+    documents::doc(Doc::ShortNames),
+    short_names,
+    parse_fastnbt_short_names,
+    setup_fastnbt_short_names,
+    write_fastnbt_short_names
+);
+owned_entry!(
+    LongNames,
+    documents::doc(Doc::LongNames),
+    long_names,
+    parse_fastnbt_long_names,
+    setup_fastnbt_long_names,
+    write_fastnbt_long_names
+);
+
+owned_entry!(
+    ByteOwned,
+    documents::array_doc(Array::Byte),
+    byte_array,
+    parse_fastnbt_byte_array,
+    setup_fastnbt_byte_array,
+    write_fastnbt_byte_array
+);
+borrowed_entry!(
+    ByteBorrowed<'_>,
+    ByteBorrowed<'static>,
+    documents::array_doc(Array::Byte),
+    byte_array,
+    parse_fastnbt_borrow_byte_array,
+    setup_fastnbt_borrow_byte_array,
+    write_fastnbt_borrow_byte_array
+);
+owned_entry!(
+    ShortOwned,
+    documents::array_doc(Array::Short),
+    short_list,
+    parse_fastnbt_short_list,
+    setup_fastnbt_short_list,
+    write_fastnbt_short_list
+);
+owned_entry!(
+    IntOwned,
+    documents::array_doc(Array::Int),
+    int_array,
+    parse_fastnbt_int_array,
+    setup_fastnbt_int_array,
+    write_fastnbt_int_array
+);
+borrowed_entry!(
+    IntBorrowed<'_>,
+    IntBorrowed<'static>,
+    documents::array_doc(Array::Int),
+    int_array,
+    parse_fastnbt_borrow_int_array,
+    setup_fastnbt_borrow_int_array,
+    write_fastnbt_borrow_int_array
+);
+owned_entry!(
+    LongOwned,
+    documents::array_doc(Array::Long),
+    long_array,
+    parse_fastnbt_long_array,
+    setup_fastnbt_long_array,
+    write_fastnbt_long_array
+);
+borrowed_entry!(
+    LongBorrowed<'_>,
+    LongBorrowed<'static>,
+    documents::array_doc(Array::Long),
+    long_array,
+    parse_fastnbt_borrow_long_array,
+    setup_fastnbt_borrow_long_array,
+    write_fastnbt_borrow_long_array
+);
 
 /// The skip target: it declares `kept` alone, so the big `skipped` entry is
 /// passed over through fastnbt's `IgnoredAny`.
@@ -419,9 +397,110 @@ pub struct Sparse {
     pub kept: i32,
 }
 
-/// The skip entry of one shape.
-pub fn skip(group: &mut BenchmarkGroup<'_, WallTime>, kind: Skip, bytes: &[u8]) {
-    bench_parse(group, "fastnbt", kind.name(), bytes, |b: &[u8]| {
-        fastnbt::from_bytes::<Sparse>(b).expect("the document parses")
-    });
-}
+// The eleven skip shapes, through `IgnoredAny`.
+parse_bench!(
+    skip_fastnbt_byte_list,
+    byte_list,
+    documents::skip_doc(Skip::ByteList),
+    |b: &[u8]| fastnbt::from_bytes::<Sparse>(b).expect("the document parses")
+);
+parse_bench!(
+    skip_fastnbt_short_list,
+    short_list,
+    documents::skip_doc(Skip::ShortList),
+    |b: &[u8]| fastnbt::from_bytes::<Sparse>(b).expect("the document parses")
+);
+parse_bench!(
+    skip_fastnbt_int_list,
+    int_list,
+    documents::skip_doc(Skip::IntList),
+    |b: &[u8]| fastnbt::from_bytes::<Sparse>(b).expect("the document parses")
+);
+parse_bench!(
+    skip_fastnbt_long_list,
+    long_list,
+    documents::skip_doc(Skip::LongList),
+    |b: &[u8]| fastnbt::from_bytes::<Sparse>(b).expect("the document parses")
+);
+parse_bench!(
+    skip_fastnbt_float_list,
+    float_list,
+    documents::skip_doc(Skip::FloatList),
+    |b: &[u8]| fastnbt::from_bytes::<Sparse>(b).expect("the document parses")
+);
+parse_bench!(
+    skip_fastnbt_double_list,
+    double_list,
+    documents::skip_doc(Skip::DoubleList),
+    |b: &[u8]| fastnbt::from_bytes::<Sparse>(b).expect("the document parses")
+);
+parse_bench!(
+    skip_fastnbt_byte_array,
+    byte_array,
+    documents::skip_doc(Skip::ByteArray),
+    |b: &[u8]| fastnbt::from_bytes::<Sparse>(b).expect("the document parses")
+);
+parse_bench!(
+    skip_fastnbt_int_array,
+    int_array,
+    documents::skip_doc(Skip::IntArray),
+    |b: &[u8]| fastnbt::from_bytes::<Sparse>(b).expect("the document parses")
+);
+parse_bench!(
+    skip_fastnbt_long_array,
+    long_array,
+    documents::skip_doc(Skip::LongArray),
+    |b: &[u8]| fastnbt::from_bytes::<Sparse>(b).expect("the document parses")
+);
+parse_bench!(
+    skip_fastnbt_string_list,
+    string_list,
+    documents::skip_doc(Skip::StringList),
+    |b: &[u8]| fastnbt::from_bytes::<Sparse>(b).expect("the document parses")
+);
+parse_bench!(
+    skip_fastnbt_compound_list,
+    compound_list,
+    documents::skip_doc(Skip::CompoundList),
+    |b: &[u8]| fastnbt::from_bytes::<Sparse>(b).expect("the document parses")
+);
+
+library_benchmark_group!(
+    name = fastnbt_entries;
+    benchmarks =
+        parse_fastnbt_small,
+        parse_fastnbt_player,
+        parse_fastnbt_chunk,
+        parse_fastnbt_short_names,
+        parse_fastnbt_long_names,
+        write_fastnbt_small,
+        write_fastnbt_player,
+        write_fastnbt_chunk,
+        write_fastnbt_short_names,
+        write_fastnbt_long_names,
+        parse_fastnbt_byte_array,
+        parse_fastnbt_borrow_byte_array,
+        parse_fastnbt_short_list,
+        parse_fastnbt_int_array,
+        parse_fastnbt_borrow_int_array,
+        parse_fastnbt_long_array,
+        parse_fastnbt_borrow_long_array,
+        write_fastnbt_byte_array,
+        write_fastnbt_borrow_byte_array,
+        write_fastnbt_short_list,
+        write_fastnbt_int_array,
+        write_fastnbt_borrow_int_array,
+        write_fastnbt_long_array,
+        write_fastnbt_borrow_long_array,
+        skip_fastnbt_byte_list,
+        skip_fastnbt_short_list,
+        skip_fastnbt_int_list,
+        skip_fastnbt_long_list,
+        skip_fastnbt_float_list,
+        skip_fastnbt_double_list,
+        skip_fastnbt_byte_array,
+        skip_fastnbt_int_array,
+        skip_fastnbt_long_array,
+        skip_fastnbt_string_list,
+        skip_fastnbt_compound_list
+);
