@@ -111,7 +111,7 @@ jobs:
           mkdir -p bench-out/base bench-out/head
           cp -r "$RUNNER_TEMP/base-iai/." bench-out/base/
           cp -r crates/nanonbt-bench/target/iai/. bench-out/head/
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         with:
           name: bench-${{ matrix.name }}
           path: bench-out
@@ -173,7 +173,7 @@ jobs:
             target/wasm32-wasip1/release/nanonbt_bench.wasm \
             "$GITHUB_WORKSPACE/bench-out/head.json"
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         with:
           name: bench-wasm32
           path: bench-out
@@ -216,7 +216,7 @@ jobs:
           mkdir -p "smoke-$NAME"
           cd crates/nanonbt-bench
           cargo run --locked --release --bin smoke | tee "../../smoke-$NAME/$NAME.txt"
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         with:
           name: smoke-${{ matrix.name }}
           path: smoke-${{ matrix.name }}
