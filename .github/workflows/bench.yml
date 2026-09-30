@@ -243,13 +243,13 @@ jobs:
           workspaces: crates/nanonbt-bench
       - name: download the bench artifacts
         continue-on-error: true
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           pattern: bench-*
           path: artifacts
       - name: download the smoke artifacts
         continue-on-error: true
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           pattern: smoke-*
           path: artifacts
