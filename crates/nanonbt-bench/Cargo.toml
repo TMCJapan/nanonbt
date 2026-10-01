@@ -30,8 +30,9 @@ serde = { version = "1", features = ["derive"] }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 # The host side of the wasm fuel runner. The wasm module itself never links
-# this.
-wasmi = { version = "0.51", features = ["std"] }
+# this. `simd` lets it load a module built for the wasm SIMD target feature,
+# which is what the runner builds when it benches the library's `simd`.
+wasmi = { version = "0.51", features = ["std", "simd"] }
 # The fuel runner and the summary example read and write JSON.
 serde_json = "1"
 

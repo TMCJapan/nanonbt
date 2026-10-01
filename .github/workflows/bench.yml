@@ -93,7 +93,10 @@ jobs:
         # against the pull request's lock; cargo rewrites it only as far as
         # the base library needs and keeps every other pin (the comparison
         # targets above all). The checkout below restores the lock.
-        run: cargo bench --bench compare -- --save-summary=json
+        # Both sides enable the library's `simd` feature, so the comparison
+        # covers the vector decode; with it off the two revisions build the
+        # same scalar code and the report reads as all-unchanged.
+        run: cargo bench --features simd --bench compare -- --save-summary=json
       - name: keep the base summaries
         working-directory: crates/nanonbt-bench
         # The head run below writes `target/iai` again, so move the base's
@@ -104,7 +107,7 @@ jobs:
         run: git checkout --force --detach "${{ github.event.pull_request.head.sha }}"
       - name: bench the pull request
         working-directory: crates/nanonbt-bench
-        run: cargo bench --locked --bench compare -- --save-summary=json
+        run: cargo bench --features simd --locked --bench compare -- --save-summary=json
 
       - name: stage the summaries
         run: |
@@ -120,6 +123,10 @@ jobs:
   # wasm32 has no valgrind, so the same registry runs under wasmi, which
   # counts wasm instructions as fuel. `simdnbt` does not build for wasm32, so
   # the module and the host both leave it off and walk the same 144 entries.
+  # Both module builds carry the library's `simd` feature and the wasm SIMD
+  # target feature, the way the callgrind job carries `simd`: `pulp` only
+  # vectorizes wasm when `simd128` is on, and the runner's wasmi needs its
+  # own `simd` feature to load the resulting instructions.
   wasm:
     name: wasm32-wasip1
     runs-on: ubuntu-24.04
@@ -127,7 +134,7 @@ jobs:
     env:
       # Both the module and the host must be built with these; the host
       # checks that its registry and the module's agree.
-      WASM_FEATURES: fastnbt,hashify,pumpkin-nbt
+      WASM_FEATURES: fastnbt,hashify,pumpkin-nbt,simd
     steps:
       - uses: actions/checkout@v7
         with:
@@ -154,7 +161,8 @@ jobs:
         # far as they need. The checkout below restores the lock.
         run: |
           mkdir -p "$GITHUB_WORKSPACE/bench-out"
-          cargo build --release --target wasm32-wasip1 --lib \
+          RUSTFLAGS="-C target-feature=+simd128" cargo build --release \
+            --target wasm32-wasip1 --lib \
             --no-default-features --features "$WASM_FEATURES"
           cargo run --quiet --release --no-default-features \
             --features "$WASM_FEATURES" --bin wasm-run -- \
@@ -166,7 +174,8 @@ jobs:
       - name: run the pull request on wasmi
         working-directory: crates/nanonbt-bench
         run: |
-          cargo build --locked --release --target wasm32-wasip1 --lib \
+          RUSTFLAGS="-C target-feature=+simd128" cargo build --locked --release \
+            --target wasm32-wasip1 --lib \
             --no-default-features --features "$WASM_FEATURES"
           cargo run --quiet --locked --release --no-default-features \
             --features "$WASM_FEATURES" --bin wasm-run -- \
