@@ -20,9 +20,10 @@ env:
   RUST_NIGHTLY_TOOLCHAIN: nightly-2026-09-17
 
 jobs:
-  # One callgrind run per architecture. Callgrind counts instructions, so a
-  # count depends on neither the machine nor the run and the two revisions of
-  # one platform compare exactly; counts are different instruction sets across
+  # One callgrind run per architecture, counting both the comparison suite and
+  # the nanocesu8 suite. Callgrind counts instructions, so a count depends on
+  # neither the machine nor the run and the two revisions of one platform
+  # compare exactly; counts are different instruction sets across
   # architectures, which is why every platform gets its own report section.
   compare:
     name: compare (${{ matrix.name }})
@@ -68,8 +69,8 @@ jobs:
           tool: iai-callgrind-runner@${{ steps.runner.outputs.version }}
 
       # Both sides of the comparison run the pull request's bench crate, so
-      # the two revisions are measured by the same suite over their own
-      # library sources; the base commit may not even carry this suite yet.
+      # the two revisions are measured by the same suites over their own
+      # library sources; the base commit may not even carry them yet.
       - name: check out the base commit with the pull request's bench
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
@@ -93,10 +94,11 @@ jobs:
         # against the pull request's lock; cargo rewrites it only as far as
         # the base library needs and keeps every other pin (the comparison
         # targets above all). The checkout below restores the lock.
-        # Both sides enable the library's `simd` feature, so the comparison
-        # covers the vector decode; with it off the two revisions build the
-        # same scalar code and the report reads as all-unchanged.
-        run: cargo bench --features simd --bench compare -- --save-summary=json
+        # Both targets run here, and both sides enable the libraries' `simd`
+        # features, so the counts cover the vector decode and the CESU-8
+        # scans; with them off the two revisions build the same scalar code
+        # and the report reads as all-unchanged.
+        run: cargo bench --features simd --bench compare --bench nanocesu8 -- --save-summary=json
       - name: keep the base summaries
         working-directory: crates/nanonbt-bench
         # The head run below writes `target/iai` again, so move the base's
@@ -107,7 +109,7 @@ jobs:
         run: git checkout --force --detach "${{ github.event.pull_request.head.sha }}"
       - name: bench the pull request
         working-directory: crates/nanonbt-bench
-        run: cargo bench --features simd --locked --bench compare -- --save-summary=json
+        run: cargo bench --features simd --locked --bench compare --bench nanocesu8 -- --save-summary=json
 
       - name: stage the summaries
         run: |
