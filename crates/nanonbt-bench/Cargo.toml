@@ -1,6 +1,6 @@
 [package]
 name = "nanonbt-bench"
-description = "Comparison benchmarks: nanonbt against fastnbt, simdnbt and pumpkin-nbt"
+description = "Benchmarks: nanonbt against fastnbt, simdnbt and pumpkin-nbt, and nanocesu8 under callgrind"
 publish = false
 edition = "2024"
 version = "0.1.0"
@@ -22,8 +22,11 @@ crate-type = ["rlib", "cdylib"]
 fastnbt = { version = "2.6.3", optional = true }
 pumpkin-nbt = { git = "https://github.com/Pumpkin-MC/Pumpkin.git", rev = "218a7fe46767235a917f94ba1120afbd33e7ef8c", optional = true }
 simdnbt = { version = "0.10", optional = true }
-# The library under test, the document builder and the name generator; the
-# entry files compile against these in every backend.
+# The libraries under test, the document builder and the name generator; the
+# entry files compile against these in every backend. `nanocesu8` is a direct
+# edge for the callgrind target `benches/nanocesu8.rs`; the comparison suite
+# reaches it through `nanonbt`.
+nanocesu8 = { path = "../nanocesu8" }
 nanonbt = { path = "../nanonbt", features = ["serde"] }
 random-names = { path = "random-names" }
 serde = { version = "1", features = ["derive"] }
@@ -51,11 +54,17 @@ pumpkin-nbt = ["dep:pumpkin-nbt"]
 # Enable the simdnbt benchmarks. simdnbt does not build for wasm32, so the
 # wasm fuel runner leaves this off.
 simdnbt = ["dep:simdnbt"]
-# Enable nanonbt's `simd` feature, to compare the vector decode.
-simd = ["nanonbt/simd"]
+# Enable nanonbt's and nanocesu8's `simd` features, to compare the vector
+# decode and the CESU-8 scans.
+simd = ["nanocesu8/simd", "nanonbt/simd"]
 
 [[bench]]
 name = "compare"
+harness = false
+
+# The nanocesu8 entries, measured alone under callgrind; see the file's docs.
+[[bench]]
+name = "nanocesu8"
 harness = false
 
 # Mirrors the root workspace, so the numbers describe the same build.
