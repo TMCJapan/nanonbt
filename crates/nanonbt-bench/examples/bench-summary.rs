@@ -1,4 +1,4 @@
-//! Renders the `compare` suite's per-platform results as the pull request
+//! Renders the bench suites' per-platform results as the pull request
 //! comment the `Bench` workflow posts.
 //!
 //! Each platform job benches both revisions and uploads what it measured:
