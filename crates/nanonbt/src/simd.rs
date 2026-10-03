@@ -27,6 +27,11 @@
 //! runs. The aarch64 and wasm paths need no run-time choice: NEON is part of
 //! the aarch64 baseline, and the wasm backend is compiled only where
 //! `simd128` is enabled.
+//!
+//! Where the dispatch does detect at run time, it detects once: a payload
+//! too short to amortize the one-off detection reverses through `pulp`'s
+//! scalar backend with no dispatch at all, and the write side hands its
+//! whole chunk loop to a single dispatch instead of one per chunk.
 
 use alloc::vec::Vec;
 
@@ -129,6 +134,14 @@ const fn swap_u16s(lane: u32) -> u32 {
 }
 
 /// [`swap_lanes`] from `src` into `dst`.
+///
+/// Only the portable backend reads and writes two buffers lane by lane; the
+/// aarch64 and wasm copies stage their tail through the aligned destination
+/// instead, where their loads need no aligned source.
+#[cfg(not(any(
+    target_arch = "aarch64",
+    all(target_arch = "wasm32", target_feature = "simd128")
+)))]
 fn swap_lanes_to<const SIZE: usize>(src: &[u32], dst: &mut [u32]) {
     match SIZE {
         2 => {
@@ -159,10 +172,15 @@ fn swap_lanes_to<const SIZE: usize>(src: &[u32], dst: &mut [u32]) {
 mod backend {
     use pulp::core_arch::aarch64::Neon;
 
-    use super::{swap_lanes, swap_lanes_to};
+    use super::{CHUNK, Stage, swap_lanes};
+    use crate::{error::Result, write::Write};
 
     /// The 32-bit lanes one NEON register holds.
     const LANES: usize = 4;
+
+    /// The byte loads take any alignment, so the fused decode copy needs
+    /// none of the payload.
+    pub(super) const NEEDS_ALIGNED_PAYLOAD: bool = false;
 
     /// Reverses each whole 16-byte block with the `rev` for the element
     /// width, then the lanes the blocks do not cover with the scalar loop.
@@ -190,33 +208,63 @@ mod backend {
     }
 
     /// [`swap`] reading `src` and writing `dst`, block for block.
-    pub(super) fn copy<const SIZE: usize>(src: &[u32], dst: &mut [u32]) {
-        debug_assert_eq!(src.len(), dst.len());
+    ///
+    /// # Safety
+    ///
+    /// `src` and `dst` must each be valid for `lanes * 4` bytes, `dst`
+    /// four-byte aligned and the two ranges must not overlap. `src` needs no
+    /// alignment of its own: the loads are byte loads.
+    #[allow(clippy::cast_ptr_alignment)] // the destination is aligned; the caller pins it
+    pub(super) unsafe fn copy<const SIZE: usize>(src: *const u8, dst: *mut u8, lanes: usize) {
         // SAFETY: as in [`swap`].
         let neon = unsafe { Neon::new_unchecked() };
-        let whole = src.len() / LANES * LANES;
-        let (src, src_tail) = src.split_at(whole);
-        let (dst, dst_tail) = dst.split_at_mut(whole);
-        for (src, dst) in src
-            .as_chunks::<LANES>()
-            .0
-            .iter()
-            .zip(dst.as_chunks_mut::<LANES>().0.iter_mut())
-        {
-            // SAFETY: each pair is one 16-byte NEON register on either
-            // side, which the load and store read and write exactly.
-            unsafe {
-                let block = neon.vld1q_u8(src.as_ptr().cast::<u8>());
+        let whole = lanes / LANES * LANES;
+        // SAFETY: the caller promises both ranges, and a block is one
+        // 16-byte NEON register on either side, which the load and store
+        // read and write exactly.
+        unsafe {
+            let mut lane = 0;
+            while lane < whole {
+                let block = neon.vld1q_u8(src.add(lane * 4));
                 let swapped = match SIZE {
                     2 => neon.vrev16q_u8(block),
                     4 => neon.vrev32q_u8(block),
                     8 => neon.vrev64q_u8(block),
                     _ => block,
                 };
-                neon.vst1q_u8(dst.as_mut_ptr().cast::<u8>(), swapped);
+                neon.vst1q_u8(dst.add(lane * 4), swapped);
+                lane += LANES;
             }
+            // The lanes past the whole blocks are fewer than a register:
+            // they ride along to the destination, which the alignment the
+            // caller promises makes a lane view, and swap there.
+            let tail = lanes - whole;
+            core::ptr::copy_nonoverlapping(src.add(whole * 4), dst.add(whole * 4), tail * 4);
+            swap_lanes::<SIZE>(core::slice::from_raw_parts_mut(
+                dst.add(whole * 4).cast::<u32>(),
+                tail,
+            ));
         }
-        swap_lanes_to::<SIZE>(src_tail, dst_tail);
+    }
+
+    /// Stages the payload a chunk at a time, swaps the chunk and hands it to
+    /// the writer, so writing a numeric payload never allocates.
+    pub(super) fn write_swapped<const SIZE: usize, W: Write + ?Sized>(
+        bytes: &[u8],
+        writer: &mut W,
+    ) -> Result<()> {
+        let mut stage = Stage([0; CHUNK]);
+        for part in bytes.chunks(CHUNK) {
+            debug_assert!(part.len().is_multiple_of(SIZE));
+            let staged = &mut stage.0[..part.len()];
+            staged.copy_from_slice(part);
+            // The stage is aligned, and never empty, so it can go straight
+            // to the lane loop without the checks a caller-owned buffer
+            // needs.
+            super::swap_aligned::<SIZE>(staged);
+            writer.write_bytes(staged)?;
+        }
+        Ok(())
     }
 }
 
@@ -225,10 +273,15 @@ mod backend {
 mod backend {
     use pulp::core_arch::wasm::Simd128;
 
-    use super::{swap_lanes, swap_lanes_to};
+    use super::{CHUNK, Stage, swap_lanes};
+    use crate::{error::Result, write::Write};
 
     /// The 32-bit lanes one `v128` holds.
     const LANES: usize = 4;
+
+    /// The `v128` loads take any alignment, so the fused decode copy needs
+    /// none of the payload.
+    pub(super) const NEEDS_ALIGNED_PAYLOAD: bool = false;
 
     /// Reverses each whole 16-byte block with the `shuffle` for the element
     /// width, then the lanes the blocks do not cover with the scalar loop.
@@ -263,22 +316,22 @@ mod backend {
     }
 
     /// [`swap`] reading `src` and writing `dst`, block for block.
-    pub(super) fn copy<const SIZE: usize>(src: &[u32], dst: &mut [u32]) {
-        debug_assert_eq!(src.len(), dst.len());
+    ///
+    /// # Safety
+    ///
+    /// `src` and `dst` must each be valid for `lanes * 4` bytes, `dst`
+    /// four-byte aligned and the two ranges must not overlap. `src` needs no
+    /// alignment of its own: the loads are byte loads.
+    #[allow(clippy::cast_ptr_alignment)] // the destination is aligned; the caller pins it
+    pub(super) unsafe fn copy<const SIZE: usize>(src: *const u8, dst: *mut u8, lanes: usize) {
         let simd = Simd128::new_unchecked();
-        let whole = src.len() / LANES * LANES;
-        let (src, src_tail) = src.split_at(whole);
-        let (dst, dst_tail) = dst.split_at_mut(whole);
-        for (src, dst) in src
-            .as_chunks::<LANES>()
-            .0
-            .iter()
-            .zip(dst.as_chunks_mut::<LANES>().0.iter_mut())
-        {
-            // SAFETY: each pair is one `v128` on either side, which the
-            // load and store read and write exactly.
-            unsafe {
-                let block = simd.v128_load(src.as_ptr().cast());
+        let whole = lanes / LANES * LANES;
+        // SAFETY: the caller promises both ranges, and a block is one `v128`
+        // on either side, which the load and store read and write exactly.
+        unsafe {
+            let mut lane = 0;
+            while lane < whole {
+                let block = simd.v128_load(src.add(lane * 4).cast());
                 let swapped = match SIZE {
                     2 => simd
                         .i8x16_shuffle::<1, 0, 3, 2, 5, 4, 7, 6, 9, 8, 11, 10, 13, 12, 15, 14>(
@@ -294,10 +347,39 @@ mod backend {
                         ),
                     _ => block,
                 };
-                simd.v128_store(dst.as_mut_ptr().cast(), swapped);
+                simd.v128_store(dst.add(lane * 4).cast(), swapped);
+                lane += LANES;
             }
+            // The lanes past the whole blocks are fewer than a register:
+            // they ride along to the destination, which the alignment the
+            // caller promises makes a lane view, and swap there.
+            let tail = lanes - whole;
+            core::ptr::copy_nonoverlapping(src.add(whole * 4), dst.add(whole * 4), tail * 4);
+            swap_lanes::<SIZE>(core::slice::from_raw_parts_mut(
+                dst.add(whole * 4).cast::<u32>(),
+                tail,
+            ));
         }
-        swap_lanes_to::<SIZE>(src_tail, dst_tail);
+    }
+
+    /// Stages the payload a chunk at a time, swaps the chunk and hands it to
+    /// the writer, so writing a numeric payload never allocates.
+    pub(super) fn write_swapped<const SIZE: usize, W: Write + ?Sized>(
+        bytes: &[u8],
+        writer: &mut W,
+    ) -> Result<()> {
+        let mut stage = Stage([0; CHUNK]);
+        for part in bytes.chunks(CHUNK) {
+            debug_assert!(part.len().is_multiple_of(SIZE));
+            let staged = &mut stage.0[..part.len()];
+            staged.copy_from_slice(part);
+            // The stage is aligned, and never empty, so it can go straight
+            // to the lane loop without the checks a caller-owned buffer
+            // needs.
+            super::swap_aligned::<SIZE>(staged);
+            writer.write_bytes(staged)?;
+        }
+        Ok(())
     }
 }
 
@@ -308,9 +390,10 @@ mod backend {
     all(target_arch = "wasm32", target_feature = "simd128")
 )))]
 mod backend {
-    use pulp::{Arch, Simd, WithSimd};
+    use pulp::{Arch, Scalar, Simd, WithSimd};
 
-    use super::{swap_lanes, swap_lanes_to};
+    use super::{CHUNK, Stage, swap_lanes, swap_lanes_to};
+    use crate::{error::Result, write::Write};
 
     /// The most 32-bit lanes a vector register can hold, `pulp`'s register
     /// size bound in lanes.
@@ -328,15 +411,65 @@ mod backend {
         lanes
     };
 
+    /// The generic vector views read the payload as 32-bit lanes, which its
+    /// start has to be aligned for.
+    pub(super) const NEEDS_ALIGNED_PAYLOAD: bool = true;
+
+    /// The payload bytes at which a dispatch starts to pay for itself: the
+    /// first dispatch of a process detects the widest vector the CPU has,
+    /// which costs a few hundred instructions, and every dispatch goes
+    /// through a call the target-feature boundary keeps out of line. Below
+    /// the threshold the scalar loop reverses the same bytes for less; the
+    /// dispatch runs from `pulp`'s scalar backend where it has no vector.
+    const DISPATCH_THRESHOLD: usize = 512;
+
+    /// Runs `op` through the dispatch, or straight through the scalar
+    /// backend where the payload is too short to amortize it.
+    #[allow(clippy::inline_always)] // pulp only vectorizes the call when this function is inlined
+    #[inline(always)]
+    fn dispatch_or_scalar<Op: WithSimd>(bytes: usize, op: Op) -> Op::Output {
+        if bytes < DISPATCH_THRESHOLD {
+            op.with_simd(Scalar)
+        } else {
+            Arch::new().dispatch(op)
+        }
+    }
+
     /// Reverses the whole lanes with the widest vector the target has.
     pub(super) fn swap<const SIZE: usize>(lanes: &mut [u32]) {
-        Arch::new().dispatch(SwapLanes::<SIZE> { lanes });
+        dispatch_or_scalar(lanes.len() * 4, SwapLanes::<SIZE> { lanes });
     }
 
     /// [`swap`] from `src` into `dst`, lane for lane.
-    pub(super) fn copy<const SIZE: usize>(src: &[u32], dst: &mut [u32]) {
-        debug_assert_eq!(src.len(), dst.len());
-        Arch::new().dispatch(SwapCopy::<SIZE> { src, dst });
+    ///
+    /// # Safety
+    ///
+    /// `src` and `dst` must each be valid for `lanes * 4` bytes and
+    /// four-byte aligned — this backend's lane views need both — and the two
+    /// ranges must not overlap.
+    #[allow(clippy::cast_ptr_alignment)] // the checks below pin the alignment the lane views need
+    pub(super) unsafe fn copy<const SIZE: usize>(src: *const u8, dst: *mut u8, lanes: usize) {
+        debug_assert!(src.addr().is_multiple_of(align_of::<u32>()));
+        debug_assert!(dst.addr().is_multiple_of(align_of::<u32>()));
+        // SAFETY: the caller promises both aligned ranges of `lanes` whole
+        // 32-bit lanes, every byte of them initialized.
+        let (src, dst) = unsafe {
+            (
+                core::slice::from_raw_parts(src.cast::<u32>(), lanes),
+                core::slice::from_raw_parts_mut(dst.cast::<u32>(), lanes),
+            )
+        };
+        dispatch_or_scalar(lanes * 4, SwapCopy::<SIZE> { src, dst });
+    }
+
+    /// Stages the payload a chunk at a time, swaps the chunk and hands it to
+    /// the writer, so writing a numeric payload never allocates — under one
+    /// dispatch for the whole loop, not one per chunk.
+    pub(super) fn write_swapped<const SIZE: usize, W: Write + ?Sized>(
+        bytes: &[u8],
+        writer: &mut W,
+    ) -> Result<()> {
+        dispatch_or_scalar(bytes.len(), WriteSwapped::<SIZE, W> { bytes, writer })
     }
 
     /// The vector loop over the whole 32-bit lanes of a buffer and the
@@ -403,6 +536,63 @@ mod backend {
             // left holds whole elements, laid out the same way.
             swap_lanes_to::<SIZE>(src_tail, dst_tail);
         }
+    }
+
+    /// The write side's chunk loop, under the one dispatch that settles the
+    /// vector width for all of it.
+    pub(super) struct WriteSwapped<'a, 'b, const SIZE: usize, W: Write + ?Sized> {
+        bytes: &'a [u8],
+        writer: &'b mut W,
+    }
+
+    impl<const SIZE: usize, W: Write + ?Sized> WithSimd for WriteSwapped<'_, '_, SIZE, W> {
+        type Output = Result<()>;
+
+        #[allow(clippy::inline_always)] // pulp only vectorizes the call when this function is inlined
+        #[inline(always)]
+        fn with_simd<S: Simd>(self, simd: S) -> Self::Output {
+            let mut stage = Stage([0; CHUNK]);
+            for part in self.bytes.chunks(CHUNK) {
+                debug_assert!(part.len().is_multiple_of(SIZE));
+                let staged = &mut stage.0[..part.len()];
+                staged.copy_from_slice(part);
+                swap_staged::<S, SIZE>(simd, staged);
+                self.writer.write_bytes(staged)?;
+            }
+            Ok(())
+        }
+    }
+
+    /// Swaps one staged chunk: the whole 32-bit lanes with the vector the
+    /// dispatch settled, the lanes a vector block does not cover and the
+    /// less-than-four bytes beyond them — one two-byte element and nothing
+    /// else — with the scalar loop and a reversal.
+    #[allow(clippy::inline_always)] // pulp only vectorizes the call when this function is inlined
+    #[allow(clippy::cast_ptr_alignment)] // the stage is aligned; the check below pins it
+    #[inline(always)]
+    fn swap_staged<S: Simd, const SIZE: usize>(simd: S, staged: &mut [u8]) {
+        debug_assert!(staged.as_ptr().cast::<u32>().is_aligned());
+        let (whole, tail) = staged.split_at_mut(staged.len() / 4 * 4);
+        // SAFETY: the stage is four-byte aligned and the lanes are a whole
+        // number of four-byte lanes, every byte of them initialized.
+        let lanes = unsafe {
+            core::slice::from_raw_parts_mut(whole.as_mut_ptr().cast::<u32>(), whole.len() / 4)
+        };
+        if S::IS_SCALAR {
+            // A single lane has no other lane to exchange an eight-byte
+            // element's halves with.
+            swap_lanes::<SIZE>(lanes);
+        } else {
+            let (lanes, lane_tail) = S::as_mut_simd_u32s(lanes);
+            match SIZE {
+                2 => swap_u16s_in(simd, lanes),
+                4 => swap_u32s_in(simd, lanes),
+                8 => swap_u64s_in(simd, lanes),
+                _ => {}
+            }
+            swap_lanes::<SIZE>(lane_tail);
+        }
+        tail.reverse();
     }
 
     /// Reverses each 16-bit element of the whole lanes, in place.
@@ -566,12 +756,13 @@ const unsafe fn copy_blocks(src: *const u8, dst: *mut u8, n: usize) {
 
 /// Decodes `SIZE`-byte big-endian elements into a `Vec`.
 ///
-/// Where the payload and the `Vec`'s buffer start on the same four-byte lane
-/// boundary, every lane is read once and stored reversed, so the payload is
-/// read with one allocation. Otherwise the bytes are copied into the `Vec`
-/// and swapped there. A trailing partial element is ignored, the way
-/// `as_chunks` ignores one.
-#[allow(clippy::cast_ptr_alignment)] // the checks above pin the alignment the lane view needs
+/// Where the payload can go through the backend's lane view — always on the
+/// backends whose loads are byte loads, and only where the payload starts
+/// on a four-byte lane boundary on the rest — every lane is read once and
+/// stored reversed, so the payload is read with one allocation. Otherwise
+/// the bytes are copied into the `Vec` and swapped there. A trailing
+/// partial element is ignored, the way `as_chunks` ignores one.
+#[allow(clippy::cast_ptr_alignment)] // the checks below pin the alignment the lane view needs
 pub(crate) fn decode_be<T: Copy, const SIZE: usize>(bytes: &[u8]) -> Vec<T> {
     const { assert!(SIZE == size_of::<T>()) };
     let len = bytes.len() / SIZE;
@@ -581,21 +772,19 @@ pub(crate) fn decode_be<T: Copy, const SIZE: usize>(bytes: &[u8]) -> Vec<T> {
         return out;
     }
     if !cfg!(target_endian = "big")
-        && head.as_ptr().addr().is_multiple_of(align_of::<u32>())
         && out.as_ptr().addr().is_multiple_of(align_of::<u32>())
+        && (!backend::NEEDS_ALIGNED_PAYLOAD
+            || head.as_ptr().addr().is_multiple_of(align_of::<u32>()))
     {
         // The whole lanes, and the less-than-four bytes beyond them, which
         // are one two-byte element and nothing else.
         let lanes = head.len() / 4;
-        // SAFETY: both buffers start four-byte aligned, `lanes` is
-        // `head.len()/4`, and the `Vec` has room for all of `head`'s bytes;
-        // `backend::copy` fills the whole lanes and the copy fills the rest,
-        // after which every element of `out` is initialized.
+        // SAFETY: the `Vec`'s buffer is four-byte aligned and has room for
+        // all of `head`'s bytes; `backend::copy` fills the whole lanes and
+        // the copy fills the rest, after which every element of `out` is
+        // initialized.
         unsafe {
-            backend::copy::<SIZE>(
-                core::slice::from_raw_parts(head.as_ptr().cast::<u32>(), lanes),
-                core::slice::from_raw_parts_mut(out.as_mut_ptr().cast::<u32>(), lanes),
-            );
+            backend::copy::<SIZE>(head.as_ptr(), out.as_mut_ptr().cast::<u8>(), lanes);
             core::ptr::copy_nonoverlapping(
                 head.as_ptr().add(lanes * 4),
                 out.as_mut_ptr().cast::<u8>().add(lanes * 4),
@@ -645,23 +834,16 @@ pub(crate) fn read_be_elements<'de, T: Copy, const SIZE: usize, R: Read<'de>>(
 
 /// Writes native-order `SIZE`-byte elements as big-endian, in as few writes
 /// as the writer takes them.
+///
+/// The payload is staged and swapped a chunk at a time so no write
+/// allocates; the backend settles the vector width once for the whole loop
+/// where settling it means a run-time dispatch.
 pub(crate) fn write_be<T: Copy, const SIZE: usize, W: Write + ?Sized>(
     elements: &[T],
     writer: &mut W,
 ) -> Result<()> {
     const { assert!(SIZE == size_of::<T>()) };
-    let bytes = as_bytes(elements);
-    let mut stage = Stage([0; CHUNK]);
-    for part in bytes.chunks(CHUNK) {
-        debug_assert!(part.len().is_multiple_of(SIZE));
-        let staged = &mut stage.0[..part.len()];
-        staged.copy_from_slice(part);
-        // The stage is aligned, and never empty, so it can go straight to
-        // the lane loop without the checks a caller-owned buffer needs.
-        swap_aligned::<SIZE>(staged);
-        writer.write_bytes(staged)?;
-    }
-    Ok(())
+    backend::write_swapped::<SIZE, W>(as_bytes(elements), writer)
 }
 
 #[cfg(test)]
@@ -679,7 +861,12 @@ mod tests {
         all(target_arch = "wasm32", target_feature = "simd128")
     )))]
     use super::backend::{SwapCopy, SwapLanes};
-    use super::{decode_be, swap_lanes, swap_lanes_to};
+    #[cfg(not(any(
+        target_arch = "aarch64",
+        all(target_arch = "wasm32", target_feature = "simd128")
+    )))]
+    use super::swap_lanes_to;
+    use super::{decode_be, swap_lanes};
     use crate::be::as_bytes;
 
     /// The portable backend's scalar path, the one that runs where no vector
@@ -709,9 +896,15 @@ mod tests {
         tail_swap_matches::<2>(words);
         tail_swap_matches::<4>(words);
         tail_swap_matches::<8>(words);
-        tail_copy_matches::<2>(words);
-        tail_copy_matches::<4>(words);
-        tail_copy_matches::<8>(words);
+        #[cfg(not(any(
+            target_arch = "aarch64",
+            all(target_arch = "wasm32", target_feature = "simd128")
+        )))]
+        {
+            tail_copy_matches::<2>(words);
+            tail_copy_matches::<4>(words);
+            tail_copy_matches::<8>(words);
+        }
     }
 
     /// [`SwapLanes`] over `Scalar` in place, against reversing the bytes of
@@ -764,6 +957,10 @@ mod tests {
     }
 
     /// [`swap_lanes_to`] into another buffer against the same.
+    #[cfg(not(any(
+        target_arch = "aarch64",
+        all(target_arch = "wasm32", target_feature = "simd128")
+    )))]
     #[track_caller]
     fn tail_copy_matches<const SIZE: usize>(words: [u32; 4]) {
         let mut got = [0u32; 4];
