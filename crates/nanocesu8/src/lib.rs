@@ -19,9 +19,11 @@
 //!
 //! The `simd` feature vectorizes the two hot scans: the accept fast path
 //! checks UTF-8 with `simdutf8` and looks for what UTF-8 does not spell the
-//! modified way with `wide`, and deciding whether encoding can borrow runs
-//! 32 bytes at a time through `wide` as well. What is accepted, borrowed and
-//! decoded does not change.
+//! modified way with a vector loop, and deciding whether encoding can borrow
+//! runs that loop as well — on the target's own vector where the compiler
+//! already has it, and through `pulp`'s run-time dispatch where the widest
+//! vector is a choice. What is accepted, borrowed and decoded does not
+//! change.
 //!
 //! ```
 //! use nanocesu8::Cesu8;

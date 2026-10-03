@@ -147,6 +147,19 @@ pub(crate) const fn as_bytes<T: Copy>(elements: &[T]) -> &[u8] {
     }
 }
 
+/// [`as_bytes`] with the ability to change them.
+#[cfg(feature = "simd")]
+pub(crate) const fn as_bytes_mut<T: Copy>(elements: &mut [T]) -> &mut [u8] {
+    // SAFETY: the slice is contiguous, `size_of_val` is the length of the
+    // bytes it covers, and every one of them is initialized.
+    unsafe {
+        core::slice::from_raw_parts_mut(
+            elements.as_mut_ptr().cast::<u8>(),
+            core::mem::size_of_val(elements),
+        )
+    }
+}
+
 /// The bytes of big-endian ints, as NBT stores them.
 pub(crate) const fn i32be_as_bytes(values: &[I32Be]) -> &[u8] {
     unsafe { core::slice::from_raw_parts(values.as_ptr().cast(), core::mem::size_of_val(values)) }

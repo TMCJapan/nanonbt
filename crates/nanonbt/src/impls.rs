@@ -70,7 +70,7 @@ impl<'de> FromNBT<'de> for i16 {
     #[cfg(feature = "simd")]
     fn read_elements<R: Read<'de>>(element: u8, len: usize, reader: &mut R) -> Result<Vec<Self>> {
         expect(element, TAG_SHORT)?;
-        crate::simd::read_be_elements::<Self, 2, R>(len, reader, <Self>::from_be_bytes)
+        crate::simd::read_be_elements::<Self, 2, R>(len, reader)
     }
 }
 impl ToNBT for i32 {
@@ -93,7 +93,7 @@ impl<'de> FromNBT<'de> for i32 {
     #[cfg(feature = "simd")]
     fn read_elements<R: Read<'de>>(element: u8, len: usize, reader: &mut R) -> Result<Vec<Self>> {
         expect(element, TAG_INT)?;
-        crate::simd::read_be_elements::<Self, 4, R>(len, reader, <Self>::from_be_bytes)
+        crate::simd::read_be_elements::<Self, 4, R>(len, reader)
     }
 }
 impl ToNBT for i64 {
@@ -116,7 +116,7 @@ impl<'de> FromNBT<'de> for i64 {
     #[cfg(feature = "simd")]
     fn read_elements<R: Read<'de>>(element: u8, len: usize, reader: &mut R) -> Result<Vec<Self>> {
         expect(element, TAG_LONG)?;
-        crate::simd::read_be_elements::<Self, 8, R>(len, reader, <Self>::from_be_bytes)
+        crate::simd::read_be_elements::<Self, 8, R>(len, reader)
     }
 }
 impl ToNBT for f32 {
@@ -139,7 +139,7 @@ impl<'de> FromNBT<'de> for f32 {
     #[cfg(feature = "simd")]
     fn read_elements<R: Read<'de>>(element: u8, len: usize, reader: &mut R) -> Result<Vec<Self>> {
         expect(element, TAG_FLOAT)?;
-        crate::simd::read_be_elements::<Self, 4, R>(len, reader, <Self>::from_be_bytes)
+        crate::simd::read_be_elements::<Self, 4, R>(len, reader)
     }
 }
 impl ToNBT for f64 {
@@ -162,7 +162,7 @@ impl<'de> FromNBT<'de> for f64 {
     #[cfg(feature = "simd")]
     fn read_elements<R: Read<'de>>(element: u8, len: usize, reader: &mut R) -> Result<Vec<Self>> {
         expect(element, TAG_DOUBLE)?;
-        crate::simd::read_be_elements::<Self, 8, R>(len, reader, <Self>::from_be_bytes)
+        crate::simd::read_be_elements::<Self, 8, R>(len, reader)
     }
 }
 impl ToNBT for u8 {
@@ -213,7 +213,7 @@ impl<'de> FromNBT<'de> for u16 {
     #[cfg(feature = "simd")]
     fn read_elements<R: Read<'de>>(element: u8, len: usize, reader: &mut R) -> Result<Vec<Self>> {
         expect(element, TAG_SHORT)?;
-        crate::simd::read_be_elements::<Self, 2, R>(len, reader, <Self>::from_be_bytes)
+        crate::simd::read_be_elements::<Self, 2, R>(len, reader)
     }
 }
 impl ToNBT for u32 {
@@ -236,7 +236,7 @@ impl<'de> FromNBT<'de> for u32 {
     #[cfg(feature = "simd")]
     fn read_elements<R: Read<'de>>(element: u8, len: usize, reader: &mut R) -> Result<Vec<Self>> {
         expect(element, TAG_INT)?;
-        crate::simd::read_be_elements::<Self, 4, R>(len, reader, <Self>::from_be_bytes)
+        crate::simd::read_be_elements::<Self, 4, R>(len, reader)
     }
 }
 impl ToNBT for u64 {
@@ -259,7 +259,7 @@ impl<'de> FromNBT<'de> for u64 {
     #[cfg(feature = "simd")]
     fn read_elements<R: Read<'de>>(element: u8, len: usize, reader: &mut R) -> Result<Vec<Self>> {
         expect(element, TAG_LONG)?;
-        crate::simd::read_be_elements::<Self, 8, R>(len, reader, <Self>::from_be_bytes)
+        crate::simd::read_be_elements::<Self, 8, R>(len, reader)
     }
 }
 impl ToNBT for bool {

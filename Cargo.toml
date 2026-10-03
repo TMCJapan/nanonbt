@@ -16,6 +16,10 @@ nanocesu8 = { path = "crates/nanocesu8" }
 nanonbt = { path = "crates/nanonbt" }
 nanonbt-derive = { path = "crates/nanonbt-derive" }
 hashify = "0.3"
+# `x86-v3` (AVX2) is opt-in dispatch; without it every x86 target falls back
+# to `pulp`'s scalar backend. `default-features = false` keeps its no_std
+# build, and leaves out the wasm `relaxed-simd` requirements.
+pulp = { version = "0.22.3", default-features = false, features = ["x86-v3"] }
 proc-macro2 = "1"
 quote = "1"
 syn = { version = "3", features = ["full"] }

@@ -40,7 +40,10 @@ wasmi = { version = "0.51", features = ["std", "simd"] }
 serde_json = "1"
 
 [dev-dependencies]
-iai-callgrind = "0.16.1"
+# `client_requests` lets the nanocesu8 entries toggle callgrind collection
+# themselves; see `benches/nanocesu8.rs` for why the name-based toggle is
+# not enough there.
+iai-callgrind = { version = "0.16.1", features = ["client_requests"] }
 
 [features]
 default = ["fastnbt", "hashify", "pumpkin-nbt", "simdnbt"]
