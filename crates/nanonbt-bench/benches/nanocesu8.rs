@@ -23,10 +23,22 @@
 //! `cd crates/nanonbt-bench && cargo +nightly bench --bench nanocesu8`; a
 //! recent valgrind and a matching `iai-callgrind-runner` must be on the
 //! path.
+//!
+//! Every entry brackets its measured call with callgrind's
+//! `toggle_collect` client request instead of relying on iai-callgrind's
+//! default `--toggle-collect` name matching. The name-based window closes
+//! on what callgrind believes are entries and exits of the benchmark
+//! function, and on aarch64 it lost track of that function in the `main`
+//! revision's binary: the entries whose validation takes the scalar path
+//! measured a decode below the validate it contains, tens of times short
+//! of the passes that provably ran. The client request toggles the
+//! collection state where the code says to, with no name, symbol or stack
+//! tracking in between, and both revisions measure the same window.
 
 use std::hint::black_box;
 
-use iai_callgrind::{Callgrind, LibraryBenchmarkConfig, library_benchmark_group, main};
+use iai_callgrind::client_requests::callgrind::toggle_collect;
+use iai_callgrind::{Callgrind, EntryPoint, LibraryBenchmarkConfig, library_benchmark_group, main};
 use nanocesu8::{Cesu8, Cesu8Buf};
 
 /// `small` is a typical `NBT` string; `large` is past where SIMD pays off.
@@ -99,7 +111,9 @@ macro_rules! decode_bench {
         #[::iai_callgrind::library_benchmark]
         #[bench::$id(args = (bytes($shape, $len)))]
         fn $name(bytes: Vec<u8>) {
+            toggle_collect();
             let _ = black_box(Cesu8::new(&bytes).unwrap().decode());
+            toggle_collect();
         }
     };
 }
@@ -110,7 +124,9 @@ macro_rules! encode_bench {
         #[::iai_callgrind::library_benchmark]
         #[bench::$id(args = (repeat($shape, $len)))]
         fn $name(text: String) {
+            toggle_collect();
             let _ = black_box(Cesu8::from_str(&text));
+            toggle_collect();
         }
     };
 }
@@ -121,7 +137,9 @@ macro_rules! reject_bench {
         #[::iai_callgrind::library_benchmark]
         #[bench::$id(args = (invalid($len)))]
         fn $name(bytes: Vec<u8>) {
+            toggle_collect();
             let _ = black_box(Cesu8::new(&bytes).ok());
+            toggle_collect();
         }
     };
 }
@@ -132,7 +150,9 @@ macro_rules! validate_bench {
         #[::iai_callgrind::library_benchmark]
         #[bench::$id(args = (bytes($shape, $len)))]
         fn $name(bytes: Vec<u8>) {
+            toggle_collect();
             let _ = black_box(Cesu8::new(&bytes));
+            toggle_collect();
         }
     };
 }
@@ -299,10 +319,16 @@ library_benchmark_group!(
 
 /// `--cache-sim=no` turns off callgrind's cache simulation, which the report
 /// does not use: the instruction count stays exact and the run gets much
-/// faster. The same config as the comparison bench.
+/// faster. `EntryPoint::None` drops iai-callgrind's name-based
+/// `--toggle-collect`, which the `toggle_collect` client requests in the
+/// entries above replace; without it callgrind would collect from program
+/// start, so `--collect-atstart=no` hands the window entirely to the
+/// requests.
 fn config() -> LibraryBenchmarkConfig {
     let mut config = LibraryBenchmarkConfig::default();
-    config.tool(Callgrind::with_args(["--cache-sim=no"]));
+    let mut callgrind = Callgrind::with_args(["--cache-sim=no", "--collect-atstart=no"]);
+    callgrind.entry_point(EntryPoint::None);
+    config.tool(callgrind);
     config
 }
 
