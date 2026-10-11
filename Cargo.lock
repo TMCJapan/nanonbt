@@ -250,6 +250,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "hashify"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "66f5a65bf7824ada2de4a2cf9fa0981dabffc5392bb8550767c3c3d71ed52e4d"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.7",
+]
+
+[[package]]
 name = "itertools"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -309,6 +320,7 @@ dependencies = [
 name = "nanonbt"
 version = "0.1.0"
 dependencies = [
+ "hashify",
  "nanocesu8",
  "nanonbt-derive",
 ]

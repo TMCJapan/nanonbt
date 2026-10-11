@@ -19,6 +19,12 @@
 //! * `#[nbt(skip)]` — omit the field when writing and fill it with
 //!   [`Default::default()`] when reading.
 //!
+//! With the `hashify` feature (enable `nanonbt/hashify`), a read dispatches
+//! the names it sees through
+//! [`hashify`](https://crates.io/crates/hashify)'s perfect hash lookups
+//! instead of a `match`. The arms are the same expressions either way, so
+//! an arm can still `?` its error.
+//!
 //! # Borrowed fields
 //!
 //! A struct with a borrowed field such as `&'de [u8]`, `&'de [I32Be]`,
@@ -550,6 +556,33 @@ fn expand_deserialize(input: &DeriveInput) -> syn::Result<TokenStream2> {
     build_decode_impl(input, fields, &infos, borrow_lifetime.as_ref(), borrowed)
 }
 
+/// The lookup that finds the arm for the name a read sees.
+///
+/// Plainly the names are match arms whose patterns are their bytes. With the
+/// `hashify` feature they become the keys of a perfect hash lookup instead,
+/// reached through `nanonbt`'s re-export so the user's crate needs no
+/// dependency of its own. Either way the arms and the default stay
+/// expressions in the function that reads, so an arm can `?` its error.
+fn name_dispatch(arms: &[TokenStream2]) -> TokenStream2 {
+    let default = quote!(::nanonbt::skip_nbt(__r, __nbt_tag)?);
+    if cfg!(feature = "hashify") {
+        quote! {
+            ::nanonbt::__private::hashify::fnc_map!(
+                &__nbt_name[..__nbt_len],
+                #(#arms)*
+                _ => #default
+            )
+        }
+    } else {
+        quote! {
+            match &__nbt_name[..__nbt_len] {
+                #(#arms)*
+                _ => #default,
+            }
+        }
+    }
+}
+
 fn build_decode_impl(
     input: &DeriveInput,
     fields: &Fields,
@@ -601,6 +634,8 @@ fn build_decode_impl(
                 declarations.push(quote! {
                     let mut #var: ::core::option::Option<#ty> = ::core::option::Option::None;
                 });
+                // The comma matters to both dispatches: a plain `match` lets
+                // a block arm go without one, `hashify`'s parser does not.
                 arms.push(quote! {
                     #name_bytes => {
                         if __nbt_tag != #expected {
@@ -610,13 +645,14 @@ fn build_decode_impl(
                             });
                         }
                         #var = ::core::option::Option::Some(#decode);
-                    }
+                    },
                 });
                 inits.push(quote! {
                     #ident: #var.ok_or(::nanonbt::Error::MissingField(#key))?,
                 });
             }
 
+            let dispatch = name_dispatch(&arms);
             let construct = if matches!(fields, Fields::Unit) {
                 quote!(::core::result::Result::Ok(Self))
             } else {
@@ -633,10 +669,7 @@ fn build_decode_impl(
                     if let ::core::option::Option::Some(__nbt_len) =
                         ::nanonbt::read_name_into(__r, &mut __nbt_name)?
                     {
-                        match &__nbt_name[..__nbt_len] {
-                            #(#arms)*
-                            _ => ::nanonbt::skip_nbt(__r, __nbt_tag)?,
-                        }
+                        #dispatch
                     } else {
                         ::nanonbt::skip_nbt(__r, __nbt_tag)?;
                     }
@@ -826,6 +859,35 @@ mod tests {
         );
         assert!(!generated.contains("read_string_into"), "{generated}");
         assert!(!generated.contains(".as_str()"), "{generated}");
+    }
+
+    /// The feature must change the tokens, not just compile: a plain `match`
+    /// would pass every round trip just as well.
+    #[test]
+    fn dispatch_is_hashified_exactly_when_asked() {
+        let dispatch = name_dispatch(&[quote!(b"one" => (),)]);
+        let text = dispatch.to_string();
+        assert_eq!(
+            text.contains("fnc_map"),
+            cfg!(feature = "hashify"),
+            "{text}"
+        );
+    }
+
+    /// A derived read reaches that dispatch the same way.
+    #[test]
+    fn derived_reads_follow_the_feature() {
+        let input: DeriveInput = parse_quote! {
+            struct S {
+                one: i32,
+            }
+        };
+        let generated = expand_deserialize(&input).unwrap().to_string();
+        assert_eq!(
+            generated.contains("fnc_map"),
+            cfg!(feature = "hashify"),
+            "{generated}"
+        );
     }
 
     /// A write must emit the same bytes the macro encoded.

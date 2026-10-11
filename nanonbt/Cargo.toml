@@ -13,7 +13,12 @@ std = ["alloc"]
 # (rust-lang/rust#154046), at which point this feature can be updated.
 # See: https://github.com/rust-lang/rust/issues/154046#issuecomment-4416678427
 
+# Dispatches the names a derived read sees through hashify's perfect hash
+# lookups instead of a `match`.
+hashify = ["nanonbt-derive/hashify", "dep:hashify"]
+
 [dependencies]
+hashify = { workspace = true, optional = true }
 nanocesu8 = { workspace = true }
 nanonbt-derive = { workspace = true }
 
@@ -26,6 +31,10 @@ required-features = ["alloc"]
 
 [[test]]
 name = "errors"
+required-features = ["alloc"]
+
+[[test]]
+name = "hashify"
 required-features = ["alloc"]
 
 [[test]]

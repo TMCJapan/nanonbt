@@ -17,6 +17,12 @@
 //!    the input. Readers that only implement [`Read`] (such as
 //!    [`VecReader`]) are restricted to owned decoding at compile time.
 //!
+//! With the `hashify` feature (enable `nanonbt/hashify`), a derived read
+//! dispatches the names it sees through
+//! [hashify](https://crates.io/crates/hashify)'s perfect hash lookups
+//! instead of a `match`, which pays off for types with many fields; it too
+//! stays `no_std`.
+//!
 //! # Example
 //!
 //! ```
@@ -105,6 +111,16 @@ pub use tag::Tag;
 pub use wire::{I32Be, I64Be, Wire};
 
 pub use nanonbt_derive::{DeserializeNbt, SerializeNbt};
+
+/// Implementation details the derive macros rely on.
+///
+/// Nothing here is stable; it follows what the generated code needs.
+#[doc(hidden)]
+pub mod __private {
+    /// The macro the `hashify` feature's generated reads call.
+    #[cfg(feature = "hashify")]
+    pub use hashify;
+}
 
 fn read_root_header<R: Read + ?Sized>(reader: &mut R, expected: Tag) -> Result<()> {
     let actual = Tag::from_u8(reader.read_u8()?)?;
