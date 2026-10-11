@@ -9,11 +9,15 @@ rust-version = "1.93"
 license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
+nanocesu8 = { path = "nanocesu8" }
 nanonbt = { path = "nanonbt", version = "0.1.0" }
 nanonbt-derive = { path = "nanonbt-derive", version = "0.1.0" }
+hashify = "0.3"
+pulp = { version = "0.22.3", default-features = false, features = ["x86-v3"] }
 proc-macro2 = "1"
 quote = "1"
-syn = { version = "2", features = ["full", "visit"] }
+syn = { version = "3", features = ["full", "visit"] }
+testkit = { path = "testkit" }
 
 
 [workspace.lints.clippy]

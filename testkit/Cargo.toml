@@ -1,0 +1,11 @@
+[package]
+name = "testkit"
+description = "Seeded property-test harness and generators shared by the nanonbt and nanocesu8 suites"
+publish = false
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
