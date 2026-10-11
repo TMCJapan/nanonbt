@@ -128,6 +128,26 @@ impl SerializeNbt for nanocesu8::Cesu8Buf {
     }
 }
 
+#[cfg(feature = "alloc")]
+impl<T: SerializeNbt + ?Sized> SerializeNbt for alloc::boxed::Box<T> {
+    const TAG: Tag = T::TAG;
+
+    #[inline]
+    fn serialize_nbt<W: Write + ?Sized>(&self, writer: &mut W) -> Result<()> {
+        (**self).serialize_nbt(writer)
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl<T: SerializeNbt + ?Sized> SerializeNbt for alloc::sync::Arc<T> {
+    const TAG: Tag = T::TAG;
+
+    #[inline]
+    fn serialize_nbt<W: Write + ?Sized>(&self, writer: &mut W) -> Result<()> {
+        (**self).serialize_nbt(writer)
+    }
+}
+
 impl<T: SerializeNbt + ?Sized> SerializeNbt for &T {
     const TAG: Tag = T::TAG;
 

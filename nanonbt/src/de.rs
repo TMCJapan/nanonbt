@@ -113,6 +113,26 @@ impl DeserializeNbt for nanocesu8::Cesu8Buf {
     }
 }
 
+#[cfg(feature = "alloc")]
+impl<T: DeserializeNbt> DeserializeNbt for alloc::boxed::Box<T> {
+    const TAG: Tag = T::TAG;
+
+    #[inline]
+    fn deserialize_nbt<R: Read + ?Sized>(reader: &mut R) -> Result<Self> {
+        Ok(Self::new(T::deserialize_nbt(reader)?))
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl<T: DeserializeNbt> DeserializeNbt for alloc::sync::Arc<T> {
+    const TAG: Tag = T::TAG;
+
+    #[inline]
+    fn deserialize_nbt<R: Read + ?Sized>(reader: &mut R) -> Result<Self> {
+        Ok(Self::new(T::deserialize_nbt(reader)?))
+    }
+}
+
 /// `Vec<T>` is a `TAG_List<T>` by default; see the [`SerializeNbt`]
 /// implementation for details.
 ///
