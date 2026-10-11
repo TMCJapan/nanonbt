@@ -8,7 +8,7 @@ use alloc::vec::Vec;
 use crate::codec::{write_count, write_string};
 use crate::route::{ArrayRoute, ByteArray, IntArray, LongArray};
 use crate::wire::{I32Be, I64Be, Wire};
-use crate::{Result, Tag, Write};
+use crate::{Error, Result, Tag, Write};
 
 /// Serializes a value as an NBT tag.
 ///
@@ -100,6 +100,31 @@ impl SerializeNbt for String {
     #[inline]
     fn serialize_nbt<W: Write + ?Sized>(&self, writer: &mut W) -> Result<()> {
         write_string(writer, self)
+    }
+}
+
+impl SerializeNbt for nanocesu8::Cesu8 {
+    const TAG: Tag = Tag::String;
+
+    #[inline]
+    fn serialize_nbt<W: Write + ?Sized>(&self, writer: &mut W) -> Result<()> {
+        let len = u16::try_from(self.len()).map_err(|_| Error::InvalidLength)?;
+        writer.write_u16_be(len);
+        writer.write_bytes(self.as_bytes());
+        Ok(())
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl SerializeNbt for nanocesu8::Cesu8Buf {
+    const TAG: Tag = Tag::String;
+
+    #[inline]
+    fn serialize_nbt<W: Write + ?Sized>(&self, writer: &mut W) -> Result<()> {
+        let len = u16::try_from(self.len()).map_err(|_| Error::InvalidLength)?;
+        writer.write_u16_be(len);
+        writer.write_bytes(self.as_bytes());
+        Ok(())
     }
 }
 

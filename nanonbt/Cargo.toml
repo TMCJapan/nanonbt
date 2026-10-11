@@ -14,6 +14,7 @@ std = ["alloc"]
 # See: https://github.com/rust-lang/rust/issues/154046#issuecomment-4416678427
 
 [dependencies]
+nanocesu8 = { workspace = true }
 nanonbt-derive = { workspace = true }
 
 [lints]

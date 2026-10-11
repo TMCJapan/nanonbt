@@ -25,7 +25,7 @@ pub enum Error {
     /// The payload violated an NBT invariant (for example a non-empty list
     /// declaring the `End` element tag).
     InvalidData(&'static str),
-    /// A string was not valid UTF-8.
+    /// A string was not valid modified UTF-8 (CESU-8).
     InvalidUtf8,
     /// A required compound field was missing.
     MissingField(&'static str),
@@ -44,7 +44,7 @@ impl fmt::Display for Error {
             }
             Self::InvalidLength => formatter.write_str("invalid NBT length"),
             Self::InvalidData(reason) => write!(formatter, "invalid NBT data: {reason}"),
-            Self::InvalidUtf8 => formatter.write_str("NBT string is not valid UTF-8"),
+            Self::InvalidUtf8 => formatter.write_str("NBT string is not valid modified UTF-8"),
             Self::MissingField(name) => {
                 write!(formatter, "missing NBT compound field `{name}`")
             }

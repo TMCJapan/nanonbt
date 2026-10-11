@@ -6,6 +6,8 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 #[cfg(feature = "alloc")]
+use crate::Error;
+#[cfg(feature = "alloc")]
 use crate::codec::read_count;
 #[cfg(feature = "alloc")]
 use crate::codec::read_string;
@@ -14,8 +16,6 @@ use crate::route::ArrayRoute;
 use crate::route::{ByteArray, IntArray, LongArray};
 #[cfg(feature = "alloc")]
 use crate::wire::{I32Be, I64Be, Wire};
-#[cfg(feature = "alloc")]
-use crate::Error;
 use crate::{Read, Result, Tag};
 
 /// Decodes an owned value from the payload of an NBT tag.
@@ -97,6 +97,19 @@ impl DeserializeNbt for String {
     #[inline]
     fn deserialize_nbt<R: Read + ?Sized>(reader: &mut R) -> Result<Self> {
         read_string(reader)
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl DeserializeNbt for nanocesu8::Cesu8Buf {
+    const TAG: Tag = Tag::String;
+
+    #[inline]
+    fn deserialize_nbt<R: Read + ?Sized>(reader: &mut R) -> Result<Self> {
+        let len = reader.read_u16_be()? as usize;
+        let mut buffer = alloc::vec![0; len];
+        reader.read_exact(&mut buffer)?;
+        Self::from_vec(buffer).map_err(|_| Error::InvalidUtf8)
     }
 }
 

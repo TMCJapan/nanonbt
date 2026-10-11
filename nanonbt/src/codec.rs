@@ -27,7 +27,7 @@ pub fn write_count<W: Write + ?Sized>(writer: &mut W, len: usize) -> Result<()> 
 }
 
 #[cfg(feature = "alloc")]
-/// Reads a UTF-8 string: a `u16` byte length followed by the bytes.
+/// Reads a modified UTF-8 (CESU-8) string: a `u16` byte length followed by the bytes.
 pub fn read_string<R: Read + ?Sized>(reader: &mut R) -> Result<String> {
     let mut out = String::new();
     read_string_into(reader, &mut out)?;
@@ -35,7 +35,7 @@ pub fn read_string<R: Read + ?Sized>(reader: &mut R) -> Result<String> {
 }
 
 #[cfg(feature = "alloc")]
-/// Reads a UTF-8 string into `out`, reusing its allocation.
+/// Reads a modified UTF-8 (CESU-8) string into `out`, reusing its allocation.
 ///
 /// This is what the derive macro uses to match compound field names without
 /// allocating per field.
@@ -49,22 +49,23 @@ pub fn read_string_into<R: Read + ?Sized>(reader: &mut R, out: &mut String) -> R
     if len <= INLINE {
         let mut buffer = [0u8; INLINE];
         reader.read_exact(&mut buffer[..len])?;
-        let text = core::str::from_utf8(&buffer[..len]).map_err(|_| Error::InvalidUtf8)?;
-        out.push_str(text);
+        let cesu8 = nanocesu8::Cesu8::new(&buffer[..len]).map_err(|_| Error::InvalidUtf8)?;
+        out.push_str(&cesu8.decode());
     } else {
         let mut buffer = vec![0u8; len];
         reader.read_exact(&mut buffer)?;
-        let text = core::str::from_utf8(&buffer).map_err(|_| Error::InvalidUtf8)?;
-        out.push_str(text);
+        let cesu8 = nanocesu8::Cesu8::new(&buffer).map_err(|_| Error::InvalidUtf8)?;
+        out.push_str(&cesu8.decode());
     }
     Ok(())
 }
 
-/// Writes a UTF-8 string: a `u16` byte length followed by the bytes.
+/// Writes a modified UTF-8 (CESU-8) string: a `u16` byte length followed by the bytes.
 pub fn write_string<W: Write + ?Sized>(writer: &mut W, value: &str) -> Result<()> {
-    let len = u16::try_from(value.len()).map_err(|_| Error::InvalidLength)?;
+    let encoded = nanocesu8::Cesu8::from_str(value);
+    let len = u16::try_from(encoded.len()).map_err(|_| Error::InvalidLength)?;
     writer.write_u16_be(len);
-    writer.write_bytes(value.as_bytes());
+    writer.write_bytes(encoded.as_bytes());
     Ok(())
 }
 

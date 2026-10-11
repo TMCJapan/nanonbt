@@ -309,6 +309,7 @@ dependencies = [
 name = "nanonbt"
 version = "0.1.0"
 dependencies = [
+ "nanocesu8",
  "nanonbt-derive",
 ]
 

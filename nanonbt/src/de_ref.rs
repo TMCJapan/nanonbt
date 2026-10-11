@@ -76,3 +76,27 @@ impl_borrowed_array!(ByteArray, u8);
 impl_borrowed_array!(ByteArray, i8);
 impl_borrowed_array!(IntArray, I32Be);
 impl_borrowed_array!(LongArray, I64Be);
+
+impl<'de> DeserializeNbtRef<'de> for &'de nanocesu8::Cesu8 {
+    const TAG: Tag = Tag::String;
+
+    #[inline]
+    fn deserialize_nbt_ref<R: ReadRef<'de> + ?Sized>(reader: &mut R) -> Result<Self> {
+        let len = reader.read_u16_be()? as usize;
+        let bytes = reader.read_borrowed(len)?;
+        nanocesu8::Cesu8::new(bytes).map_err(|_| Error::InvalidUtf8)
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl<'de> DeserializeNbtRef<'de> for Cow<'de, nanocesu8::Cesu8> {
+    const TAG: Tag = Tag::String;
+
+    #[inline]
+    fn deserialize_nbt_ref<R: ReadRef<'de> + ?Sized>(reader: &mut R) -> Result<Self> {
+        let len = reader.read_u16_be()? as usize;
+        let bytes = reader.read_borrowed(len)?;
+        let cesu8 = nanocesu8::Cesu8::new(bytes).map_err(|_| Error::InvalidUtf8)?;
+        Ok(Cow::Borrowed(cesu8))
+    }
+}

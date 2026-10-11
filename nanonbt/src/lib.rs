@@ -58,8 +58,9 @@
 //! * `Vec<T>` is a `TAG_List<T>`, including `Vec<u8>`; annotate with
 //!   `#[nbt(array = byte)]` to get a `TAG_Byte_Array`. Empty lists are written
 //!   with the `End` element tag.
-//! * Strings are written as standard UTF-8. Java's modified UTF-8 is not
-//!   produced, and its overlong/surrogate forms are rejected on read.
+//! * Strings are written as Java modified UTF-8 (CESU-8). Raw NUL bytes or
+//!   four-byte UTF-8 sequences are rejected on read, and their correct
+//!   modified spelling (`C0 80` and surrogate pairs) is produced on write.
 //! * [`to_bytes`] frames the root tag with an empty root name, matching
 //!   Minecraft's file format; [`from_bytes`] reads and ignores the root name.
 //! * Integers keep their signed NBT tags: `i8`/`i16`/`i32`/`i64` map to
