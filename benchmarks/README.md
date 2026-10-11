@@ -167,6 +167,11 @@ Install the CLI:
 curl --proto '=https' --tlsv1.2 -sSfL https://bencher.dev/download/install-cli.sh | sh
 ```
 
+Bencher's own quickstart uses `bencher run ... bencher mock`, which uploads
+synthetic sample data to verify your setup. To track *this* suite, use the
+script below (or the equivalent raw command), which runs the criterion
+benchmarks with the `rust_criterion` adapter.
+
 Then track a run from your machine:
 
 ```sh
