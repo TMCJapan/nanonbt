@@ -5,12 +5,18 @@ use alloc::string::String;
 #[cfg(feature = "alloc")]
 use alloc::vec::Vec;
 
+#[cfg(feature = "alloc")]
 use crate::codec::read_count;
 #[cfg(feature = "alloc")]
 use crate::codec::read_string;
-use crate::route::{ArrayRoute, ByteArray, IntArray, LongArray};
+use crate::route::ArrayRoute;
+#[cfg(feature = "alloc")]
+use crate::route::{ByteArray, IntArray, LongArray};
+#[cfg(feature = "alloc")]
 use crate::wire::{I32Be, I64Be, Wire};
-use crate::{Error, Read, Result, Tag};
+#[cfg(feature = "alloc")]
+use crate::Error;
+use crate::{Read, Result, Tag};
 
 /// Decodes an owned value from the payload of an NBT tag.
 ///
@@ -147,6 +153,7 @@ fn reserve<T>(len: usize) -> Result<Vec<T>> {
 ///
 /// This runs before any allocation so a short document cannot request a huge
 /// buffer for elements it does not contain.
+#[cfg(feature = "alloc")]
 fn check_array_len<R: Read + ?Sized>(reader: &R, len: usize, element_size: usize) -> Result<()> {
     let byte_len = len.checked_mul(element_size).ok_or(Error::InvalidLength)?;
     if byte_len > reader.remaining() {
@@ -167,6 +174,7 @@ impl DeserializeNbtArray<ByteArray> for Vec<u8> {
     }
 }
 
+#[cfg(feature = "alloc")]
 macro_rules! impl_wire_array_decode {
     ($route:ty, $elem:ty) => {
         impl DeserializeNbtArray<$route> for Vec<$elem> {
@@ -199,6 +207,7 @@ impl_wire_array_decode!(IntArray, I32Be);
 #[cfg(feature = "alloc")]
 impl_wire_array_decode!(LongArray, I64Be);
 
+#[cfg(feature = "alloc")]
 macro_rules! impl_native_array_decode {
     ($route:ty, $native:ty, $wire:ty) => {
         impl DeserializeNbtArray<$route> for Vec<$native> {
