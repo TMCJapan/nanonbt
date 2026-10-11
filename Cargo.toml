@@ -5,6 +5,7 @@ members = ["nanocesu8", "nanonbt", "nanonbt-derive"]
 [workspace.package]
 edition = "2024"
 version = "0.1.0"
+rust-version = "1.93"
 license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
