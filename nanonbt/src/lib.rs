@@ -95,9 +95,9 @@ pub use codec::{read_string, read_string_into};
 pub use de::{DeserializeNbt, DeserializeNbtArray};
 pub use de_ref::{DeserializeNbtArrayRef, DeserializeNbtRef};
 pub use error::{Error, Result};
-pub use io::{Read, ReadRef, SliceReader, Write};
 #[cfg(feature = "alloc")]
 pub use io::VecReader;
+pub use io::{Read, ReadRef, SliceReader, Write};
 pub use route::{ArrayElem, ArrayRoute, ArrayRouteFor};
 pub use ser::{SerializeNbt, SerializeNbtArray};
 pub use tag::Tag;

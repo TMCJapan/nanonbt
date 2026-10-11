@@ -5,7 +5,7 @@ use alloc::string::String;
 #[cfg(feature = "alloc")]
 use alloc::vec::Vec;
 
-use crate::codec::{read_count};
+use crate::codec::read_count;
 #[cfg(feature = "alloc")]
 use crate::codec::read_string;
 use crate::route::{ArrayRoute, ByteArray, IntArray, LongArray};

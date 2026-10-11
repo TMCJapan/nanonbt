@@ -433,7 +433,8 @@ impl<R: std::io::Read + ?Sized> crate::Read for R {
         let mut tmp = [0u8; 1024];
         while remaining > 0 {
             let chunk = std::cmp::min(remaining, tmp.len());
-            std::io::Read::read_exact(self, &mut tmp[..chunk]).map_err(|_| crate::Error::UnexpectedEof)?;
+            std::io::Read::read_exact(self, &mut tmp[..chunk])
+                .map_err(|_| crate::Error::UnexpectedEof)?;
             remaining -= chunk;
         }
         Ok(())
