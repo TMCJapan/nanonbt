@@ -19,6 +19,12 @@ quote = "1"
 syn = { version = "3", features = ["full", "visit"] }
 testkit = { path = "testkit" }
 
+# `codegen-units = 1` and `lto` keep the release build of the `pulp`-backed
+# `simd` code compiling for the bare-metal `x86_64-unknown-none` target, which
+# the no-std CI job builds.
+[profile.release]
+lto = true
+codegen-units = 1
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
