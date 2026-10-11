@@ -100,3 +100,15 @@ impl<'de> DeserializeNbtRef<'de> for Cow<'de, nanocesu8::Cesu8> {
         Ok(Cow::Borrowed(cesu8))
     }
 }
+
+impl<'de> DeserializeNbtRef<'de> for &'de str {
+    const TAG: Tag = Tag::String;
+
+    #[inline]
+    fn deserialize_nbt_ref<R: ReadRef<'de> + ?Sized>(reader: &mut R) -> Result<Self> {
+        let len = reader.read_u16_be()? as usize;
+        let bytes = reader.read_borrowed(len)?;
+        let cesu8 = nanocesu8::Cesu8::new(bytes).map_err(|_| Error::InvalidUtf8)?;
+        cesu8.try_decode().ok_or(Error::InvalidUtf8)
+    }
+}
