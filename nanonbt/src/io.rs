@@ -382,6 +382,30 @@ impl Read for VecReader {
     }
 }
 
+#[cfg(feature = "std")]
+impl<R: std::io::Read + ?Sized> crate::Read for R {
+    fn read_exact(&mut self, buf: &mut [u8]) -> crate::Result<()> {
+        std::io::Read::read_exact(self, buf).map_err(|_| crate::Error::UnexpectedEof)
+    }
+
+    fn skip(&mut self, len: usize) -> crate::Result<()> {
+        let mut remaining = len;
+        let mut tmp = [0u8; 1024];
+        while remaining > 0 {
+            let chunk = std::cmp::min(remaining, tmp.len());
+            std::io::Read::read_exact(self, &mut tmp[..chunk])
+                .map_err(|_| crate::Error::UnexpectedEof)?;
+            remaining -= chunk;
+        }
+        Ok(())
+    }
+
+    fn remaining(&self) -> usize {
+        // std::io::Read does not expose remaining bytes; treat as unknown.
+        usize::MAX
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -419,29 +443,5 @@ mod tests {
         let mut reader = VecReader::new(vec![0, 0, 0, 42]);
         assert_eq!(reader.read_i32_be().unwrap(), 42);
         assert_eq!(reader.remaining(), 0);
-    }
-}
-
-#[cfg(feature = "std")]
-impl<R: std::io::Read + ?Sized> crate::Read for R {
-    fn read_exact(&mut self, buf: &mut [u8]) -> crate::Result<()> {
-        std::io::Read::read_exact(self, buf).map_err(|_| crate::Error::UnexpectedEof)
-    }
-
-    fn skip(&mut self, len: usize) -> crate::Result<()> {
-        let mut remaining = len;
-        let mut tmp = [0u8; 1024];
-        while remaining > 0 {
-            let chunk = std::cmp::min(remaining, tmp.len());
-            std::io::Read::read_exact(self, &mut tmp[..chunk])
-                .map_err(|_| crate::Error::UnexpectedEof)?;
-            remaining -= chunk;
-        }
-        Ok(())
-    }
-
-    fn remaining(&self) -> usize {
-        // std::io::Read does not expose remaining bytes; treat as unknown.
-        usize::MAX
     }
 }
