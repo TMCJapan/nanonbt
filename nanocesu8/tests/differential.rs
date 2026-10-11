@@ -1,3 +1,4 @@
+#![cfg(feature = "alloc")]
 //! Seeded random inputs, checked against the `cesu8` crate.
 
 use nanocesu8::{Cesu8, Cesu8Buf};

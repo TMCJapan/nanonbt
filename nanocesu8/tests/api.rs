@@ -1,3 +1,4 @@
+#![cfg(feature = "alloc")]
 //! The `Cesu8`, `Cesu8Buf` and `Chars` API.
 
 use std::{borrow::Cow, collections::HashMap, mem};

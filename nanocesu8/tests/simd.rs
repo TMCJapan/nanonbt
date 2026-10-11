@@ -1,3 +1,4 @@
+#![cfg(feature = "alloc")]
 //! Long inputs and chunk boundaries, where the `simd` fast paths take over.
 //!
 //! Under the `simd` feature, UTF-8 validation is delegated to `simdutf8`

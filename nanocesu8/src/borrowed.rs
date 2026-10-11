@@ -1,9 +1,12 @@
 //! The borrowed, validated [`Cesu8`] type and its iterator.
 
+#[cfg(feature = "alloc")]
 use alloc::borrow::{Cow, ToOwned};
-use core::{fmt, hash::Hash, iter::FusedIterator, str};
+use core::{fmt, fmt::Write, hash::Hash, iter::FusedIterator, str};
 
-use crate::{DecodeError, from_java_cesu8, modified, owned::Cesu8Buf, to_java_cesu8, utf8};
+#[cfg(feature = "alloc")]
+use crate::owned::Cesu8Buf;
+use crate::{DecodeError, modified, utf8};
 
 /// Modified UTF-8 bytes, validated once and borrowed from their owner.
 ///
@@ -46,13 +49,18 @@ impl Cesu8 {
         clippy::should_implement_trait,
         reason = "a NUL or a non-BMP character forces an owned buffer, which `FromStr` cannot express"
     )]
+    #[cfg(feature = "alloc")]
     pub fn from_str(text: &str) -> Cow<'_, Self> {
-        match to_java_cesu8(text) {
+        match modified::encode(text) {
             // SAFETY: `encode` lends the text's bytes only when they are
             // already modified UTF-8.
             Cow::Borrowed(bytes) => Cow::Borrowed(unsafe { Self::from_bytes_unchecked(bytes) }),
             Cow::Owned(bytes) => Cow::Owned(Cesu8Buf::from_validated(bytes)),
         }
+    }
+
+    pub fn try_from_str(text: &str) -> Option<&Self> {
+        modified::try_encode(text).map(|bytes| unsafe { Self::from_bytes_unchecked(bytes) })
     }
 
     /// Borrows `bytes` without checking that they are modified UTF-8.
@@ -95,14 +103,22 @@ impl Cesu8 {
     }
 
     /// Decodes into UTF-8, borrowing when the bytes already are UTF-8.
+    #[cfg(feature = "alloc")]
     pub fn decode(&self) -> Cow<'_, str> {
-        from_java_cesu8(&self.0)
+        utf8::to_str(&self.0).map_or_else(|| Cow::Owned(modified::decode(&self.0)), Cow::Borrowed)
+    }
+
+    pub fn try_decode(&self) -> Option<&str> {
+        utf8::to_str(&self.0).map_or_else(|| None, Some)
     }
 }
 
 impl fmt::Display for Cesu8 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.decode())
+        for c in self.chars() {
+            f.write_char(c)?;
+        }
+        Ok(())
     }
 }
 
@@ -156,6 +172,7 @@ impl AsRef<[u8]> for Cesu8 {
     }
 }
 
+#[cfg(feature = "alloc")]
 impl ToOwned for Cesu8 {
     type Owned = Cesu8Buf;
 

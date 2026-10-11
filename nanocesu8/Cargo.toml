@@ -7,9 +7,11 @@ license.workspace = true
 rust-version.workspace = true
 
 [features]
+default = ["alloc", "simd"]
 # Vectorizes the encode fast-path scan with `pulp` and UTF-8 validation with
 # `simdutf8`.
 simd = ["dep:simdutf8", "dep:pulp"]
+alloc = []
 
 [dependencies]
 pulp = { workspace = true, optional = true, default-features = false }

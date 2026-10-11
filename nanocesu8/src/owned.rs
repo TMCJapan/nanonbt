@@ -1,9 +1,9 @@
 //! The owned, growable counterpart of [`Cesu8`].
 
-use alloc::{borrow::Cow, string::String, vec::Vec};
+use alloc::{string::String, vec::Vec};
 use core::{borrow::Borrow, fmt, ops::Deref};
 
-use crate::{Cesu8, DecodeError, to_java_cesu8};
+use crate::{Cesu8, DecodeError};
 
 /// Owned modified UTF-8 bytes, the [`String`] to [`Cesu8`]'s [`str`](prim@str).
 ///
@@ -35,7 +35,7 @@ impl Cesu8Buf {
 
     /// Appends `text`, encoding it as modified UTF-8.
     pub fn push_str(&mut self, text: &str) {
-        self.0.extend_from_slice(&to_java_cesu8(text));
+        self.0.extend_from_slice(Cesu8::from_str(text).as_bytes());
     }
 
     /// The bytes as written, without decoding them.
@@ -90,7 +90,7 @@ impl AsRef<[u8]> for Cesu8Buf {
 impl From<&str> for Cesu8Buf {
     /// Encodes `text` as modified UTF-8.
     fn from(text: &str) -> Self {
-        Self::from_validated(to_java_cesu8(text).into_owned())
+        Cesu8::from_str(text).into_owned()
     }
 }
 
@@ -98,10 +98,7 @@ impl From<String> for Cesu8Buf {
     /// Encodes `text` as modified UTF-8, keeping its bytes when they are
     /// already spelled that way.
     fn from(text: String) -> Self {
-        match to_java_cesu8(&text) {
-            Cow::Borrowed(_) => Self::from_validated(text.into_bytes()),
-            Cow::Owned(bytes) => Self::from_validated(bytes),
-        }
+        Cesu8::from_str(&text).into_owned()
     }
 }
 

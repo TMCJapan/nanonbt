@@ -1,3 +1,4 @@
+#![cfg(feature = "alloc")]
 //! `nanocesu8` against the `cesu8` crate fastnbt is built on.
 //!
 //! The `cesu8` crate accepts plain UTF-8 with a raw NUL or a four-byte

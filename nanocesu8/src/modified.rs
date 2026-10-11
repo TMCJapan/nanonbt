@@ -1,5 +1,6 @@
 //! The modified UTF-8 grammar, shared by validation, decoding and iteration.
 
+#[cfg(feature = "alloc")]
 use alloc::{borrow::Cow, string::String, vec::Vec};
 
 use crate::DecodeError;
@@ -109,6 +110,7 @@ pub(crate) fn validate(bytes: &[u8]) -> Result<(), DecodeError> {
 ///
 /// Only called with bytes [`validate`] accepted, where the error branch is
 /// unreachable; on malformed input it stops rather than panicking.
+#[cfg(feature = "alloc")]
 pub(crate) fn decode(bytes: &[u8]) -> String {
     let mut out = String::with_capacity(bytes.len());
     let mut cursor = Modified::new(bytes);
@@ -122,6 +124,7 @@ pub(crate) fn decode(bytes: &[u8]) -> String {
 }
 
 /// Encodes `text`, borrowing it when it is already valid modified UTF-8.
+#[cfg(feature = "alloc")]
 pub(crate) fn encode(text: &str) -> Cow<'_, [u8]> {
     if !needs_encoding(text.as_bytes()) {
         return Cow::Borrowed(text.as_bytes());
@@ -143,6 +146,13 @@ pub(crate) fn encode(text: &str) -> Cow<'_, [u8]> {
         }
     }
     Cow::Owned(out)
+}
+
+pub(crate) fn try_encode(text: &str) -> Option<&[u8]> {
+    if !needs_encoding(text.as_bytes()) {
+        return Some(text.as_bytes());
+    }
+    None
 }
 
 /// Whether a `str`'s UTF-8 bytes are not already modified UTF-8: only a NUL,
@@ -168,6 +178,7 @@ pub(crate) fn needs_encoding(bytes: &[u8]) -> bool {
 }
 
 /// The three-byte form of a lone surrogate code unit.
+#[cfg(feature = "alloc")]
 const fn encode_surrogate(unit: u16) -> [u8; 3] {
     [
         0xe0 | (unit >> 12) as u8,
