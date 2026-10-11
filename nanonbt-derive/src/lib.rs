@@ -3,6 +3,12 @@
 //! Named-field structs become `TAG_Compound`s. On decode, fields are matched
 //! by name, so field order does not matter and unknown fields are skipped.
 //!
+//! Field names, renamed or not, are encoded as Java's modified UTF-8
+//! (CESU-8) while the macro runs. Generated writes emit those bytes and
+//! generated matches compare them as they were read, so a name holding a NUL
+//! or a non-BMP character — whose modified spelling is not its UTF-8 — costs
+//! no conversion and allocates nothing at run time.
+//!
 //! # Field attributes
 //!
 //! * `#[nbt(array)]` — encode/decode the field as an NBT array, inferring the
@@ -28,6 +34,7 @@
 
 use std::collections::{BTreeSet, HashSet};
 
+use nanocesu8::Cesu8;
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote, quote_spanned};
@@ -37,7 +44,7 @@ use syn::spanned::Spanned;
 use syn::visit::Visit;
 use syn::{
     Data, DeriveInput, Field, Fields, FieldsUnnamed, GenericParam, Generics, Ident, Lifetime,
-    LitStr, PathArguments, Token, Type, TypeParamBound, parse_macro_input,
+    LitByteStr, LitStr, PathArguments, Token, Type, TypeParamBound, parse_macro_input,
 };
 
 /// Derives `nanonbt::SerializeNbt` for a struct.
@@ -146,6 +153,27 @@ fn field_key(ident: &Ident, attrs: &FieldAttrs) -> LitStr {
         || LitStr::new(&ident.unraw().to_string(), ident.span()),
         |name| LitStr::new(name, ident.span()),
     )
+}
+
+/// A field name's exact modified UTF-8 (CESU-8) bytes and NBT byte length.
+///
+/// The encoding happens while the macro runs, so generated code writes these
+/// bytes and matches them without converting anything at run time: a name
+/// holding a NUL or a non-BMP character, whose modified spelling is not its
+/// UTF-8, costs no conversion and no allocation. The length is the `u16`
+/// prefix NBT puts before a name, checked here so an over-long name is a
+/// compile error rather than a write-time failure.
+fn encode_name(key: &LitStr) -> syn::Result<(u16, LitByteStr)> {
+    let span = key.span();
+    let name = key.value();
+    let bytes = Cesu8::from_str(&name);
+    let len = u16::try_from(bytes.len()).map_err(|_| {
+        syn::Error::new(
+            span,
+            "NBT field names are limited to 65535 modified UTF-8 bytes",
+        )
+    })?;
+    Ok((len, LitByteStr::new(bytes.as_bytes(), span)))
 }
 
 // ---------------------------------------------------------------- helpers
@@ -344,12 +372,13 @@ fn expand_serialize(input: &DeriveInput) -> syn::Result<TokenStream2> {
                 let ident = field.ident.as_ref().expect("named field");
                 let ty = &field.ty;
                 used_types.push(ty.clone());
-                let key = field_key(ident, &attrs);
+                let (name_len, name_bytes) = encode_name(&field_key(ident, &attrs))?;
                 let value = quote!(&self.#ident);
                 let (tag_byte, payload) = serialize_field(ty, &attrs, &value);
                 writes.push(quote! {
                     __w.write_bytes(&[#tag_byte]);
-                    ::nanonbt::write_string(__w, #key)?;
+                    __w.write_u16_be(#name_len);
+                    __w.write_bytes(#name_bytes);
                     #payload
                 });
             }
@@ -539,6 +568,10 @@ fn build_decode_impl(
             let mut declarations = Vec::new();
             let mut arms = Vec::new();
             let mut inits = Vec::new();
+            // The longest field name bounds the stack buffer a read matches
+            // against: a wire name that does not fit is longer than every
+            // name the struct knows, so it cannot match and is skipped.
+            let mut name_max = 0usize;
 
             for info in infos {
                 let Some(ident) = &info.ident else {
@@ -555,6 +588,8 @@ fn build_decode_impl(
                 let var = format_ident!("__nbt_field_{}", info.index);
                 let ty = &info.ty;
                 let key = field_key(ident, &info.attrs);
+                let (name_len, name_bytes) = encode_name(&key)?;
+                name_max = name_max.max(usize::from(name_len));
                 let (expected, decode) = decode_parts(info, borrow_lifetime);
 
                 match info.mode {
@@ -567,7 +602,7 @@ fn build_decode_impl(
                     let mut #var: ::core::option::Option<#ty> = ::core::option::Option::None;
                 });
                 arms.push(quote! {
-                    #key => {
+                    #name_bytes => {
                         if __nbt_tag != #expected {
                             return ::core::result::Result::Err(::nanonbt::Error::InvalidTag {
                                 expected: #expected,
@@ -589,16 +624,21 @@ fn build_decode_impl(
             };
             body = quote! {
                 #(#declarations)*
-                let mut __nbt_name = ::alloc::string::String::new();
+                let mut __nbt_name = [0u8; #name_max];
                 loop {
                     let __nbt_tag = ::nanonbt::Tag::from_u8(__r.read_u8()?)?;
                     if __nbt_tag == ::nanonbt::Tag::End {
                         break;
                     }
-                    ::nanonbt::read_string_into(__r, &mut __nbt_name)?;
-                    match __nbt_name.as_str() {
-                        #(#arms)*
-                        _ => ::nanonbt::skip_nbt(__r, __nbt_tag)?,
+                    if let ::core::option::Option::Some(__nbt_len) =
+                        ::nanonbt::read_name_into(__r, &mut __nbt_name)?
+                    {
+                        match &__nbt_name[..__nbt_len] {
+                            #(#arms)*
+                            _ => ::nanonbt::skip_nbt(__r, __nbt_tag)?,
+                        }
+                    } else {
+                        ::nanonbt::skip_nbt(__r, __nbt_tag)?;
                     }
                 }
                 #construct
@@ -739,5 +779,69 @@ fn decode_parts(
                 quote_spanned!(span=> <#ty as ::nanonbt::DeserializeNbtRef<#lifetime>>::deserialize_nbt_ref(__r)?),
             )
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use proc_macro2::Span;
+
+    use super::*;
+
+    /// A name takes its NBT spelling while the macro runs, not at run time,
+    /// and the byte length becomes the `u16` prefix.
+    #[test]
+    fn names_are_encoded_when_the_macro_runs() {
+        let key = LitStr::new("名前\0\u{1f600}", Span::call_site());
+        let (len, bytes) = encode_name(&key).unwrap();
+        assert_eq!(
+            bytes.value(),
+            b"\xe5\x90\x8d\xe5\x89\x8d\xc0\x80\xed\xa0\xbd\xed\xb8\x80"
+        );
+        assert_eq!(usize::from(len), bytes.value().len());
+    }
+
+    /// A name NBT cannot length-prefix is refused at compile time instead of
+    /// failing a write later.
+    #[test]
+    fn over_long_names_are_refused() {
+        let key = LitStr::new(&"a".repeat(usize::from(u16::MAX) + 1), Span::call_site());
+        assert!(encode_name(&key).is_err());
+    }
+
+    /// A read must compare the bytes the name was written as; decoding it
+    /// into a `String` would put the conversion back.
+    #[test]
+    fn reads_match_names_as_bytes() {
+        let input: DeriveInput = parse_quote! {
+            struct S {
+                #[nbt(rename = "😀")]
+                face: i32,
+            }
+        };
+        let generated = expand_deserialize(&input).unwrap().to_string();
+        assert!(
+            generated.contains(r#"b"\xED\xA0\xBD\xED\xB8\x80""#),
+            "{generated}"
+        );
+        assert!(!generated.contains("read_string_into"), "{generated}");
+        assert!(!generated.contains(".as_str()"), "{generated}");
+    }
+
+    /// A write must emit the same bytes the macro encoded.
+    #[test]
+    fn writes_emit_names_as_bytes() {
+        let input: DeriveInput = parse_quote! {
+            struct S {
+                #[nbt(rename = "😀")]
+                face: i32,
+            }
+        };
+        let generated = expand_serialize(&input).unwrap().to_string();
+        assert!(
+            generated.contains(r#"b"\xED\xA0\xBD\xED\xB8\x80""#),
+            "{generated}"
+        );
+        assert!(!generated.contains("write_string"), "{generated}");
     }
 }

@@ -90,7 +90,7 @@ mod ser;
 mod tag;
 mod wire;
 
-pub use codec::{read_count, skip_nbt, write_count, write_string};
+pub use codec::{read_count, read_name_into, skip_nbt, write_count, write_string};
 #[cfg(feature = "alloc")]
 pub use codec::{read_string, read_string_into};
 pub use de::{DeserializeNbt, DeserializeNbtArray};

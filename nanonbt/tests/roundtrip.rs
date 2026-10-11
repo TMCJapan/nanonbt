@@ -1,7 +1,7 @@
 extern crate alloc;
 use nanonbt::route::{ByteArray, IntArray};
 use nanonbt::{
-    DeserializeNbt, DeserializeNbtArray, DeserializeNbtArrayRef, I32Be, Read, SerializeNbt,
+    DeserializeNbt, DeserializeNbtArray, DeserializeNbtArrayRef, Error, I32Be, Read, SerializeNbt,
     SliceReader, Tag, VecReader, from_bytes, to_bytes,
 };
 
@@ -131,6 +131,47 @@ fn skip_and_rename_work() {
             name: "abc".to_owned(),
         }
     );
+}
+
+#[derive(SerializeNbt, DeserializeNbt, Debug, PartialEq)]
+struct Renamed {
+    #[nbt(rename = "名前\0\u{1f600}")]
+    mixed: i8,
+}
+
+#[test]
+fn renamed_names_use_modified_utf8_on_the_wire() {
+    let value = Renamed { mixed: -1 };
+    let bytes = to_bytes(&value).unwrap();
+    // "名前" is its UTF-8 bytes, a NUL is the two bytes C0 80 and U+1F600 is
+    // the surrogate pair ED A0 BD ED B8 80, as modified UTF-8 spells them.
+    let name = b"\xe5\x90\x8d\xe5\x89\x8d\xc0\x80\xed\xa0\xbd\xed\xb8\x80";
+    assert!(
+        bytes.windows(name.len()).any(|window| window == name),
+        "the name must be written as modified UTF-8"
+    );
+    assert!(
+        !bytes.windows(4).any(|window| window == b"\xf0\x9f\x98\x80"),
+        "the name must not be written as UTF-8"
+    );
+    assert_eq!(from_bytes::<Renamed>(&bytes).unwrap(), value);
+}
+
+#[derive(DeserializeNbt, Debug, PartialEq)]
+struct Face {
+    #[nbt(rename = "😀")]
+    face: i32,
+}
+
+#[test]
+fn names_that_are_not_modified_utf8_are_rejected() {
+    // The emoji written as its plain UTF-8, which modified UTF-8 refuses.
+    // The rename is longer than it, so the name is read and validated
+    // rather than skipped.
+    let mut bytes = vec![Tag::Compound.as_u8(), 0, 0, Tag::Int.as_u8(), 0, 4];
+    bytes.extend_from_slice("\u{1f600}".as_bytes());
+    bytes.extend_from_slice(&[0, 0, 0, 1, Tag::End.as_u8()]);
+    assert_eq!(from_bytes::<Face>(&bytes), Err(Error::InvalidUtf8));
 }
 
 #[derive(SerializeNbt, DeserializeNbt, Debug, PartialEq)]

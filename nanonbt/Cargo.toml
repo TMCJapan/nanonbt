@@ -29,6 +29,10 @@ name = "errors"
 required-features = ["alloc"]
 
 [[test]]
+name = "no_alloc"
+required-features = ["alloc"]
+
+[[test]]
 name = "roundtrip"
 required-features = ["alloc"]
 

@@ -37,8 +37,8 @@ pub fn read_string<R: Read + ?Sized>(reader: &mut R) -> Result<String> {
 #[cfg(feature = "alloc")]
 /// Reads a modified UTF-8 (CESU-8) string into `out`, reusing its allocation.
 ///
-/// This is what the derive macro uses to match compound field names without
-/// allocating per field.
+/// [`read_string`] is the shorthand when the allocation is not already there
+/// to reuse.
 #[cfg(feature = "alloc")]
 pub fn read_string_into<R: Read + ?Sized>(reader: &mut R, out: &mut String) -> Result<()> {
     /// Strings up to this length are read through a stack buffer.
@@ -58,6 +58,30 @@ pub fn read_string_into<R: Read + ?Sized>(reader: &mut R, out: &mut String) -> R
         out.push_str(&cesu8.decode());
     }
     Ok(())
+}
+
+/// Reads a compound entry's name into `buf`, without decoding it.
+///
+/// On success the name's bytes are in `buf[..len]`, validated as modified
+/// UTF-8 like any other string on the wire, so the caller can compare them
+/// with the bytes its field names were encoded as. Nothing is decoded into
+/// `str`: a name holding a NUL or a non-BMP character has a different
+/// modified spelling than its UTF-8, and matching that spelling is what
+/// keeps a read from converting it back.
+///
+/// Returns `None` when the name is longer than `buf`; it has been skipped,
+/// and since the derive sizes `buf` to its longest field name, a name that
+/// does not fit can equal none of them. Such a name is not validated.
+pub fn read_name_into<R: Read + ?Sized>(reader: &mut R, buf: &mut [u8]) -> Result<Option<usize>> {
+    let len = reader.read_u16_be()? as usize;
+    if len > buf.len() {
+        reader.skip(len)?;
+        return Ok(None);
+    }
+    let name = &mut buf[..len];
+    reader.read_exact(name)?;
+    nanocesu8::Cesu8::new(name).map_err(|_| Error::InvalidUtf8)?;
+    Ok(Some(len))
 }
 
 /// Writes a modified UTF-8 (CESU-8) string: a `u16` byte length followed by the bytes.
@@ -159,6 +183,31 @@ mod tests {
             let mut reader = SliceReader::new(&buffer);
             assert_eq!(read_string(&mut reader).unwrap(), value);
         }
+    }
+
+    #[test]
+    fn names_are_read_as_bytes_and_long_ones_are_skipped() {
+        // A name that fits is read as its raw bytes.
+        let mut buffer = Vec::new();
+        write_string(&mut buffer, "名前").unwrap();
+        let mut reader = SliceReader::new(&buffer);
+        let mut name = [0u8; 8];
+        assert_eq!(read_name_into(&mut reader, &mut name), Ok(Some(6)));
+        assert_eq!(&name[..6], "名前".as_bytes());
+
+        // A name longer than the buffer is skipped, not decoded.
+        let mut buffer = Vec::new();
+        write_string(&mut buffer, "much longer").unwrap();
+        let mut reader = SliceReader::new(&buffer);
+        assert_eq!(read_name_into(&mut reader, &mut name), Ok(None));
+        assert_eq!(reader.remaining(), 0);
+
+        // A name that fits is still validated as modified UTF-8.
+        let mut reader = SliceReader::new(&[0, 4, 0xf0, 0x9f, 0x98, 0x80]);
+        assert_eq!(
+            read_name_into(&mut reader, &mut name),
+            Err(Error::InvalidUtf8)
+        );
     }
 
     #[test]
