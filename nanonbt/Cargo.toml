@@ -6,15 +6,13 @@ version.workspace = true
 license.workspace = true
 
 [features]
-default = ["alloc"]
+default = ["alloc", "hashify"]
 alloc = []
 std = ["alloc"]
 # Note: `alloc::io::Read` is expected to stabilize in the future
 # (rust-lang/rust#154046), at which point this feature can be updated.
 # See: https://github.com/rust-lang/rust/issues/154046#issuecomment-4416678427
 
-# Dispatches the names a derived read sees through hashify's perfect hash
-# lookups instead of a `match`.
 hashify = ["nanonbt-derive/hashify", "dep:hashify"]
 
 [dependencies]
