@@ -1,6 +1,6 @@
 [workspace]
 resolver = '3'
-members = ["nanonbt", "nanonbt-derive"]
+members = ["nanocesu8", "nanonbt", "nanonbt-derive"]
 
 [workspace.package]
 edition = "2024"

@@ -1,0 +1,216 @@
+//! Long inputs and chunk boundaries, where the `simd` fast paths take over.
+//!
+//! Under the `simd` feature, UTF-8 validation is delegated to `simdutf8`
+//! and the encode scan runs 32 bytes at a time. These tests walk interesting
+//! byte windows and long inputs across the sizes where those fast paths take
+//! over, and hold the results against `core::str::from_utf8`, the `cesu8`
+//! crate, and hand-derived oracles. They run in both configurations: the
+//! scalar path must agree just the same.
+
+use std::borrow::Cow;
+
+use nanocesu8::Cesu8;
+use testkit::{check_n, ensure, ensure_eq, generate};
+
+/// Long enough for the head, one 32-byte block, and a tail.
+const BUF: usize = 100;
+
+#[test]
+fn encode_borrows_around_every_boundary() {
+    for len in 0..=2 * BUF {
+        let plain = "a".repeat(len);
+        let encoded = Cesu8::from_str(&plain);
+        assert!(matches!(encoded, Cow::Borrowed(_)), "{len} ASCII bytes");
+        assert_eq!(
+            encoded.as_bytes().as_ptr(),
+            plain.as_ptr(),
+            "{len} ASCII bytes"
+        );
+        for pos in 0..len {
+            let mut bytes = vec![b'a'; len];
+            bytes[pos] = 0;
+            let text = String::from_utf8(bytes).expect("NUL is UTF-8");
+            let encoded = Cesu8::from_str(&text);
+            assert!(
+                matches!(encoded, Cow::Owned(_)),
+                "NUL at {pos} of {len} must copy"
+            );
+            assert_eq!(
+                encoded.as_bytes(),
+                &*cesu8::to_java_cesu8(&text),
+                "NUL at {pos} of {len}"
+            );
+
+            let text = format!("{}\u{10401}{}", "a".repeat(pos), "a".repeat(len - pos));
+            let encoded = Cesu8::from_str(&text);
+            assert!(
+                matches!(encoded, Cow::Owned(_)),
+                "astral at {pos} of {len} must copy"
+            );
+            assert_eq!(
+                encoded.as_bytes(),
+                &*cesu8::to_java_cesu8(&text),
+                "astral at {pos} of {len}"
+            );
+        }
+    }
+}
+
+#[test]
+fn two_byte_windows_agree_with_the_oracles() {
+    // Across the head, the block and the tail, and the seams between them.
+    const POSITIONS: [usize; 11] = [0, 1, 62, 63, 64, 65, 66, 94, 95, 96, 97];
+    let mut buf = vec![b'a'; BUF];
+    for first in 0..=255u8 {
+        for second in 0..=255u8 {
+            for pos in POSITIONS {
+                buf[pos] = first;
+                buf[pos + 1] = second;
+                // Inside a run of ASCII, the only window that is modified
+                // UTF-8 without being UTF-8 is `C0 80`: two-byte sequences
+                // `C2..=DF` are UTF-8 as well, and three-byte sequences and
+                // surrogate pairs do not fit the window.
+                if let Ok(text) = str::from_utf8(&buf) {
+                    // UTF-8 is modified UTF-8 as it is only without a raw
+                    // NUL or a four-byte lead.
+                    let accepted = !buf.contains(&0) && !buf.iter().any(|&b| b >= 0xf0);
+                    assert_eq!(Cesu8::new(&buf).is_ok(), accepted, "{buf:02x?}");
+                    if accepted {
+                        let ours = Cesu8::new(&buf).expect("accepted");
+                        assert_eq!(&*ours.decode(), text, "{buf:02x?}");
+                    }
+                } else {
+                    let accepted = (first, second) == (0xc0, 0x80);
+                    assert_eq!(Cesu8::new(&buf).is_ok(), accepted, "{buf:02x?}");
+                    if accepted {
+                        let text = Cesu8::new(&buf).expect("C0 80 validates").decode();
+                        assert!(matches!(text, Cow::Owned(_)), "{buf:02x?}");
+                        assert_eq!(
+                            &*text,
+                            format!("{}\0{}", "a".repeat(pos), "a".repeat(BUF - 2 - pos)),
+                            "{buf:02x?}"
+                        );
+                    }
+                }
+                buf[pos] = b'a';
+                buf[pos + 1] = b'a';
+            }
+        }
+    }
+}
+
+#[test]
+fn edge_sequences_agree_with_the_cesu8_crate() {
+    // Every byte that starts, ends or breaks a range in the grammar.
+    const EDGES: &[u8] = &[
+        0x00, 0x41, 0x7f, 0x80, 0x8f, 0x90, 0x9f, 0xa0, 0xbf, 0xc0, 0xc1, 0xc2, 0xdf, 0xe0, 0xed,
+        0xef, 0xf0, 0xf4, 0xf5, 0xff,
+    ];
+    let mut buf = vec![b'a'; BUF];
+    for &first in EDGES {
+        for &second in EDGES {
+            for &third in EDGES {
+                for pos in [63, 64, 96] {
+                    buf[pos..pos + 3].copy_from_slice(&[first, second, third]);
+                    agree_with_both_oracles(&buf);
+                    buf[pos..pos + 3].fill(b'a');
+                }
+                for &fourth in EDGES {
+                    for pos in [63, 93] {
+                        buf[pos..pos + 4].copy_from_slice(&[first, second, third, fourth]);
+                        agree_with_both_oracles(&buf);
+                        buf[pos..pos + 4].fill(b'a');
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn long_inputs_match_the_cesu8_crate() {
+    check_n("long_inputs_match_the_cesu8_crate", 4096, |rng| {
+        let target = 64 + rng.index(193);
+        let mut text = String::new();
+        while text.len() < target {
+            text.push_str(&generate::string(rng, 16));
+            text.push('a');
+        }
+        let encoded = Cesu8::from_str(&text);
+        ensure_eq!(encoded.as_bytes(), &*cesu8::to_java_cesu8(&text), "encode");
+
+        let mutated = generate::mutate(rng, encoded.as_bytes());
+        ensure_oracles_agree(&mutated)?;
+
+        let mut raw = vec![0u8; 64 + rng.index(193)];
+        rng.fill_bytes(&mut raw);
+        ensure_oracles_agree(&raw)?;
+        Ok(())
+    });
+}
+
+/// `Cesu8::new` must accept exactly the modified UTF-8, and otherwise agree
+/// with the `cesu8` crate about acceptance and text.
+fn agree_with_both_oracles(buf: &[u8]) {
+    let ours = Cesu8::new(buf);
+    if let Ok(text) = str::from_utf8(buf) {
+        // Plain UTF-8 passes only when it is already spelled the modified
+        // way, which is when there is no raw NUL or four-byte lead.
+        let accepted = !buf.contains(&0) && !buf.iter().any(|&b| b >= 0xf0);
+        assert_eq!(ours.is_ok(), accepted, "{buf:02x?}");
+        if accepted {
+            assert_eq!(&*ours.unwrap().decode(), text, "{buf:02x?}");
+        }
+    } else {
+        // Not UTF-8: only modified UTF-8 is left for either decoder, and
+        // the two grammars agree on it.
+        assert_eq!(
+            ours.is_ok(),
+            cesu8::from_java_cesu8(buf).is_ok(),
+            "{buf:02x?}"
+        );
+        if let Ok(valid) = ours {
+            let theirs = cesu8::from_java_cesu8(buf).expect("both accept");
+            assert_eq!(&*valid.decode(), &*theirs, "{buf:02x?}");
+            assert_eq!(
+                valid.chars().collect::<String>().as_str(),
+                &*theirs,
+                "{buf:02x?}"
+            );
+        }
+    }
+}
+
+/// [`agree_with_both_oracles`] as a property case, plus the iteration and
+/// decoding of an accepted [`Cesu8`].
+fn ensure_oracles_agree(bytes: &[u8]) -> Result<(), String> {
+    match Cesu8::new(bytes) {
+        Ok(valid) => {
+            let theirs =
+                cesu8::from_java_cesu8(bytes).expect("the cesu8 crate accepts what we accept");
+            ensure_eq!(&*valid.decode(), &*theirs, "decode {bytes:02x?}");
+            ensure_eq!(
+                valid.chars().collect::<String>().as_str(),
+                &*theirs,
+                "chars {bytes:02x?}"
+            );
+            if let Ok(text) = str::from_utf8(bytes) {
+                ensure!(matches!(valid.decode(), Cow::Borrowed(_)), "{bytes:02x?}");
+                ensure_eq!(&*valid.decode(), text, "borrow {bytes:02x?}");
+            }
+        }
+        Err(_) => {
+            if cesu8::from_java_cesu8(bytes).is_ok() {
+                // The `cesu8` crate is strictly more permissive: it takes
+                // plain UTF-8 with a raw NUL or a four-byte sequence.
+                let plain = str::from_utf8(bytes)
+                    .map_err(|_| format!("accepted only when UTF-8: {bytes:02x?}"))?;
+                ensure!(
+                    plain.bytes().any(|b| b == 0 || b >= 0xf0),
+                    "UTF-8 without a NUL or four-byte lead is modified UTF-8: {bytes:02x?}"
+                );
+            }
+        }
+    }
+    Ok(())
+}
