@@ -1,0 +1,20 @@
+[package]
+name = "nanonbt"
+description = "Small NBT (Named Binary Tag) serializer with derive support and zero-copy array decoding."
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[features]
+default = ["alloc"]
+alloc = []
+std = ["alloc"]
+# Note: `alloc::io::Read` is expected to stabilize in the future
+# (rust-lang/rust#154046), at which point this feature can be updated.
+# See: https://github.com/rust-lang/rust/issues/154046#issuecomment-4416678427
+
+[dependencies]
+nanonbt-derive = { workspace = true }
+
+[lints]
+workspace = true
