@@ -1,0 +1,68 @@
+# Records the benchmark history for the base branch and defines the
+# regression threshold used by pull requests.
+#
+# Required repository configuration:
+#   variable BENCHER_PROJECT  - Bencher project slug
+#   secret   BENCHER_API_KEY  - Bencher project API key
+#
+# If your default branch is not `main`, update `--branch` below.
+name: Base Branch Benchmarks
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: benchmarks-base-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  benchmark_base_branch:
+    name: Continuous Benchmarking with Bencher
+    permissions:
+      checks: write
+    runs-on: ubuntu-latest
+    env:
+      CARGO_TARGET_DIR: target
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Verify the benchmarks compare identical documents
+        run: cargo test --manifest-path benchmarks/Cargo.toml --locked --test interop
+
+      - name: Check Bencher configuration
+        id: bencher
+        env:
+          BENCHER_API_KEY: ${{ secrets.BENCHER_API_KEY }}
+          BENCHER_PROJECT: ${{ vars.BENCHER_PROJECT }}
+        run: |
+          if [ -z "$BENCHER_API_KEY" ] || [ -z "$BENCHER_PROJECT" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Bencher not configured::BENCHER_PROJECT and BENCHER_API_KEY are not set; skipping benchmark tracking."
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: bencherdev/bencher@main
+
+      - name: Track base branch benchmarks with Bencher
+        if: steps.bencher.outputs.configured == 'true'
+        env:
+          BENCHER_PROJECT: ${{ vars.BENCHER_PROJECT }}
+        run: |
+          bencher run \
+            --project "$BENCHER_PROJECT" \
+            --key "${{ secrets.BENCHER_API_KEY }}" \
+            --branch main \
+            --testbed ubuntu-latest \
+            --threshold-measure latency \
+            --threshold-test t_test \
+            --threshold-max-sample-size 64 \
+            --threshold-upper-boundary 0.99 \
+            --thresholds-reset \
+            --error-on-alert \
+            --adapter rust_criterion \
+            --github-actions "${{ secrets.GITHUB_TOKEN }}" \
+            "cargo bench --manifest-path benchmarks/Cargo.toml --locked --bench compare -- --warm-up-time 0.5 --measurement-time 2 --sample-size 30"

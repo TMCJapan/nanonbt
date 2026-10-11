@@ -1,0 +1,27 @@
+# Archives the Bencher branch data when a pull request is closed.
+#
+# Required repository configuration:
+#   variable BENCHER_PROJECT  - Bencher project slug
+#   secret   BENCHER_API_KEY  - Bencher project API key
+name: Archive Closed PR Benchmarks
+
+on:
+  pull_request:
+    types: [closed]
+
+jobs:
+  archive_pr_branch:
+    name: Archive closed PR branch with Bencher
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: bencherdev/bencher@main
+
+      - name: Archive closed PR branch with Bencher
+        env:
+          BENCHER_PROJECT: ${{ vars.BENCHER_PROJECT }}
+        run: |
+          bencher archive \
+            --project "$BENCHER_PROJECT" \
+            --key "${{ secrets.BENCHER_API_KEY }}" \
+            --branch "$GITHUB_HEAD_REF"

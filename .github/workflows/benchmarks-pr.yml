@@ -1,0 +1,72 @@
+# Runs the benchmarks on pull requests, compares them with the base branch,
+# and posts the results as a PR comment and a GitHub check.
+#
+# Required repository configuration:
+#   variable BENCHER_PROJECT  - Bencher project slug
+#   secret   BENCHER_API_KEY  - Bencher project API key
+#
+# Fork PRs cannot read repository secrets, so they are skipped on purpose.
+# See https://bencher.dev/docs/how-to/github-actions/#pull-requests-from-forks
+# for the two-workflow pattern if you want to benchmark them.
+name: PR Benchmarks
+
+on:
+  pull_request:
+    types: [opened, reopened, edited, synchronize]
+
+concurrency:
+  group: benchmarks-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  benchmark_pr_branch:
+    name: Continuous Benchmarking PRs with Bencher
+    # DO NOT REMOVE: fork PRs cannot read the BENCHER_API_KEY secret.
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      checks: write
+      pull-requests: write
+    runs-on: ubuntu-latest
+    env:
+      CARGO_TARGET_DIR: target
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Verify the benchmarks compare identical documents
+        run: cargo test --manifest-path benchmarks/Cargo.toml --locked --test interop
+
+      - name: Check Bencher configuration
+        id: bencher
+        env:
+          BENCHER_API_KEY: ${{ secrets.BENCHER_API_KEY }}
+          BENCHER_PROJECT: ${{ vars.BENCHER_PROJECT }}
+        run: |
+          if [ -z "$BENCHER_API_KEY" ] || [ -z "$BENCHER_PROJECT" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Bencher not configured::BENCHER_PROJECT and BENCHER_API_KEY are not set; skipping benchmark tracking."
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: bencherdev/bencher@main
+
+      - name: Track PR benchmarks with Bencher
+        if: steps.bencher.outputs.configured == 'true'
+        env:
+          BENCHER_PROJECT: ${{ vars.BENCHER_PROJECT }}
+        run: |
+          bencher run \
+            --project "$BENCHER_PROJECT" \
+            --key "${{ secrets.BENCHER_API_KEY }}" \
+            --branch "$GITHUB_HEAD_REF" \
+            --start-point "$GITHUB_BASE_REF" \
+            --start-point-hash '${{ github.event.pull_request.base.sha }}' \
+            --start-point-clone-thresholds \
+            --start-point-reset \
+            --testbed ubuntu-latest \
+            --error-on-alert \
+            --adapter rust_criterion \
+            --github-actions "${{ secrets.GITHUB_TOKEN }}" \
+            "cargo bench --manifest-path benchmarks/Cargo.toml --locked --bench compare -- --warm-up-time 0.5 --measurement-time 2 --sample-size 30"

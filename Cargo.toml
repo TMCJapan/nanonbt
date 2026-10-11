@@ -1,6 +1,10 @@
 [workspace]
 resolver = '3'
 members = ["nanocesu8", "nanonbt", "nanonbt-derive"]
+# `benchmarks` stays outside the workspace: it compares against `simdnbt`,
+# which needs a nightly compiler, while CI builds the workspace on the pinned
+# stable toolchain. Run it with `benches/run.sh`.
+exclude = ["benchmarks"]
 
 [workspace.package]
 edition = "2024"

@@ -1,0 +1,64 @@
+# This crate intentionally lives outside the Cargo workspace: it compares
+# against `simdnbt`, which requires a nightly compiler, while the workspace CI
+# runs on a pinned stable toolchain. Run it with `benches/run.sh` or see
+# `benchmarks/README.md`.
+[package]
+name = "nanonbt-bench"
+description = "Criterion benchmarks and comparison charts for nanonbt, fastnbt and simdnbt"
+publish = false
+edition = "2024"
+version = "0.1.0"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+fastnbt = "2.6.3"
+nanonbt = { path = "../nanonbt", version = "0.1.0" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+simdnbt = { version = "0.10.0", features = ["derive"] }
+
+[dev-dependencies]
+criterion = { version = "0.8.2", features = ["html_reports"] }
+
+[[bench]]
+name = "compare"
+harness = false
+
+# Mirrors the workspace's lint configuration; this crate cannot inherit it.
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+
+redundant_clone = "warn"
+needless_collect = "warn"
+large_enum_variant = "warn"
+large_types_passed_by_value = "warn"
+trivially_copy_pass_by_ref = "warn"
+needless_pass_by_value = "warn"
+ptr_arg = "warn"
+manual_memcpy = "warn"
+manual_slice_fill = "warn"
+iter_count = "warn"
+bytes_count_to_len = "warn"
+unnecessary_to_owned = "warn"
+implicit_clone = "warn"
+str_to_string = "warn"
+format_push_string = "warn"
+rc_buffer = "warn"
+string_add = "warn"
+string_add_assign = "warn"
+
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"
+
+module_name_repetitions = "allow"
+future_not_send = "allow"
+redundant_pub_crate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+missing_safety_doc = "allow"
+must_use_candidate = "allow"
+similar_names = "allow"
+too_many_lines = "allow"
