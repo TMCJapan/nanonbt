@@ -406,7 +406,7 @@ impl<R: std::io::Read + ?Sized> crate::Read for R {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "alloc"))]
 mod tests {
     use super::*;
     use alloc::vec;

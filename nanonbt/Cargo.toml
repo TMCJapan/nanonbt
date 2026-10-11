@@ -18,3 +18,19 @@ nanonbt-derive = { workspace = true }
 
 [lints]
 workspace = true
+
+[[test]]
+name = "borrowed"
+required-features = ["alloc"]
+
+[[test]]
+name = "errors"
+required-features = ["alloc"]
+
+[[test]]
+name = "roundtrip"
+required-features = ["alloc"]
+
+[[example]]
+name = "player"
+required-features = ["alloc"]

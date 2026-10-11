@@ -142,7 +142,7 @@ fn checked_len(len: usize, size: usize) -> Result<usize> {
     len.checked_mul(size).ok_or(Error::InvalidLength)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "alloc"))]
 mod tests {
     use crate::{ReadRef, SliceReader};
     #[cfg(feature = "alloc")]

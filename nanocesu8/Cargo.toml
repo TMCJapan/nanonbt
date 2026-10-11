@@ -26,6 +26,7 @@ simd_cesu8 = "1.2"
 [[bench]]
 name = "compare"
 harness = false
+required-features = ["alloc"]
 
 [lints]
 workspace = true
