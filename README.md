@@ -9,9 +9,9 @@ vs. owned decoding, and read/write paths, then renders grouped and relative bar
 charts:
 
 ```sh
-benches/run.sh                # run every scenario, then generate the charts
-benches/run.sh --quick        # fewer samples while iterating
-benches/run.sh small chunk    # only some criterion groups
+benchmarks/run.sh                # run every scenario, then generate the charts
+benchmarks/run.sh --quick        # fewer samples while iterating
+benchmarks/run.sh small chunk    # only some criterion groups
 ```
 
 Results land in `target/nanonbt-bench-report/index.html` (plus `report.md`).

@@ -3,12 +3,12 @@
 # Runs the nanonbt comparison benchmarks and regenerates the chart report.
 #
 # Usage:
-#   benches/run.sh [--quick] [criterion-filter ...]
+#   benchmarks/run.sh [--quick] [criterion-filter ...]
 #
 # Examples:
-#   benches/run.sh                 # full run
-#   benches/run.sh --quick         # fewer samples (fast iteration)
-#   benches/run.sh small chunk     # only those criterion groups
+#   benchmarks/run.sh                 # full run
+#   benchmarks/run.sh --quick         # fewer samples (fast iteration)
+#   benchmarks/run.sh small chunk     # only those criterion groups
 #
 # simdnbt requires nightly-only features; this script prefers a nightly
 # toolchain and falls back to RUSTC_BOOTSTRAP=1 on stable.

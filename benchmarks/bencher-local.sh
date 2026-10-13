@@ -14,8 +14,8 @@
 #   BENCH_FILTER      criterion filter passed after `--`
 #
 # Usage:
-#   BENCHER_PROJECT=project-abc123 BENCHER_API_KEY=... benches/bencher-local.sh
-#   BENCHER_PROJECT=project-abc123 BENCHER_DRY_RUN=1 benches/bencher-local.sh
+#   BENCHER_PROJECT=project-abc123 BENCHER_API_KEY=... benchmarks/bencher-local.sh
+#   BENCHER_PROJECT=project-abc123 BENCHER_DRY_RUN=1 benchmarks/bencher-local.sh
 
 set -euo pipefail
 

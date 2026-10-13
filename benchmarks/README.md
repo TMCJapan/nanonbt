@@ -36,9 +36,9 @@ libraries under comparison stay pinned.
 The complete local workflow is:
 
 ```sh
-benches/run.sh            # all scenarios, then generate the report
-benches/run.sh --quick    # fewer samples, useful while iterating
-benches/run.sh small chunk  # only those criterion groups
+benchmarks/run.sh            # all scenarios, then generate the report
+benchmarks/run.sh --quick    # fewer samples, useful while iterating
+benchmarks/run.sh small chunk  # only those criterion groups
 ```
 
 The equivalent raw commands (the scripts also point `CARGO_TARGET_DIR` at the
@@ -177,7 +177,7 @@ Then track a run from your machine:
 ```sh
 BENCHER_PROJECT=project-abc123 \
 BENCHER_API_KEY=... \
-benches/bencher-local.sh
+benchmarks/bencher-local.sh
 ```
 
 The script uses the current git branch and a `localhost` testbed by default,
