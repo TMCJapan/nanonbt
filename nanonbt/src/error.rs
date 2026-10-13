@@ -29,6 +29,10 @@ pub enum Error {
     InvalidUtf8,
     /// A required compound field was missing.
     MissingField(&'static str),
+    /// A serde `Serialize` or `Deserialize` implementation reported a custom
+    /// error, such as a value that does not match the target type.
+    #[cfg(feature = "serde")]
+    Message(alloc::string::String),
 }
 
 impl fmt::Display for Error {
@@ -48,6 +52,8 @@ impl fmt::Display for Error {
             Self::MissingField(name) => {
                 write!(formatter, "missing NBT compound field `{name}`")
             }
+            #[cfg(feature = "serde")]
+            Self::Message(message) => formatter.write_str(message),
         }
     }
 }

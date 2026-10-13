@@ -8,6 +8,8 @@ license.workspace = true
 [features]
 default = ["alloc", "hashify"]
 alloc = []
+# serde support needs `alloc` for list buffering and error messages.
+serde = ["alloc", "dep:serde"]
 std = ["alloc"]
 # Note: `alloc::io::Read` is expected to stabilize in the future
 # (rust-lang/rust#154046), at which point this feature can be updated.
@@ -19,6 +21,11 @@ hashify = ["nanonbt-derive/hashify", "dep:hashify"]
 hashify = { workspace = true, optional = true }
 nanocesu8 = { workspace = true }
 nanonbt-derive = { workspace = true }
+serde = { workspace = true, optional = true, features = ["alloc"] }
+
+[dev-dependencies]
+serde = { workspace = true, features = ["derive", "std"] }
+serde_bytes = "0.11"
 
 [lints]
 workspace = true
@@ -42,6 +49,10 @@ required-features = ["alloc"]
 [[test]]
 name = "roundtrip"
 required-features = ["alloc"]
+
+[[test]]
+name = "serde"
+required-features = ["serde"]
 
 [[example]]
 name = "player"

@@ -20,6 +20,7 @@ hashify = "0.3"
 pulp = { version = "0.22.3", default-features = false, features = ["x86-v3"] }
 proc-macro2 = "1"
 quote = "1"
+serde = { version = "1", default-features = false }
 syn = { version = "3", features = ["full", "visit"] }
 testkit = { path = "testkit" }
 

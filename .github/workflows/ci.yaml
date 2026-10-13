@@ -137,6 +137,10 @@ jobs:
       # macro that builds their lookups; the re-export must stay no_std too.
       - name: clippy (hashify)
         run: cargo clippy -p nanonbt --features hashify --target ${{ matrix.target }} --locked -- -D warnings
+      # The `serde` feature pulls in serde and buffers lists; it stays
+      # no_std + alloc like the rest.
+      - name: clippy (serde)
+        run: cargo clippy -p nanonbt --features serde --target ${{ matrix.target }} --locked -- -D warnings
 
   # Every feature on its own, so a feature that only compiles next to another
   # cannot hide in the all-features build above.

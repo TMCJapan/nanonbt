@@ -23,6 +23,11 @@
 //! instead of a `match`, which pays off for types with many fields; it too
 //! stays `no_std`.
 //!
+//! With the `serde` feature, serde's own derives work over NBT as well: the
+//! `serde` module encodes and decodes any type implementing serde's
+//! `Serialize` / `Deserialize` traits with the same wire format as the native
+//! derives.
+//!
 //! # Example
 //!
 //! ```
@@ -71,8 +76,9 @@
 //!   Minecraft's file format; [`from_bytes`] reads and ignores the root name.
 //! * Integers keep their signed NBT tags: `i8`/`i16`/`i32`/`i64` map to
 //!   `Byte`/`Short`/`Int`/`Long`, `u8` maps to `Byte`.
-//! * Enums, `Option`, maps, and borrowed strings are not supported yet; see
-//!   the derive crate for the supported field attribute set.
+//! * Enums, `Option`, maps, and borrowed strings are not supported yet by the
+//!   native derives; see the derive crate for the supported field attribute
+//!   set. The `serde` feature covers most of them through serde's derives.
 
 #![no_std]
 #![warn(missing_docs)]
@@ -93,6 +99,8 @@ mod error;
 mod io;
 pub mod route;
 mod ser;
+#[cfg(feature = "serde")]
+pub mod serde;
 mod tag;
 mod wire;
 
