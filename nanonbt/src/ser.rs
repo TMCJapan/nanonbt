@@ -208,12 +208,31 @@ impl_wire_array_serialize!(ByteArray, i8);
 impl_wire_array_serialize!(IntArray, I32Be);
 impl_wire_array_serialize!(LongArray, I64Be);
 
+/// Serializes native integer arrays a whole chunk at a time.
+///
+/// The chunk is converted to the wire type in one `[Wire; CHUNK]`, which
+/// keeps the byte swap in safe code — the conversion is the plain
+/// `to_be_bytes` spelling — and gives the compiler a fixed-size loop to turn
+/// into vector byte swaps, one shuffle per register instead of a `bswap` per
+/// element. Where the target has no cheap vector swap, the bulk write still
+/// replaces one writer call per element with one per chunk. The ragged tail
+/// is written element by element. `tests/simd.rs` pins the vectorized
+/// outcome down on the LLVM IR.
 macro_rules! impl_native_array_serialize {
-    ($route:ty, $elem:ty, $write:ident) => {
-        impl SerializeNbtArray<$route> for [$elem] {
+    ($route:ty, $native:ty, $wire:ty, $write:ident) => {
+        impl SerializeNbtArray<$route> for [$native] {
+            #[inline]
             fn serialize_nbt_array<W: Write + ?Sized>(&self, writer: &mut W) -> Result<()> {
+                /// Elements per bulk write: 16 `i32` or 8 `i64`, so a chunk
+                /// is 64 bytes — one 512-bit register where the target has
+                /// one, and a multiple of every smaller vector width.
+                const CHUNK: usize = 64 / core::mem::size_of::<$native>();
                 write_count(writer, self.len())?;
-                for &value in self {
+                let (bulk, tail) = self.as_chunks::<CHUNK>();
+                for chunk in bulk {
+                    writer.write_bytes(<$wire as Wire>::cast_to_bytes(&chunk.map(<$wire>::new)));
+                }
+                for &value in tail {
                     writer.$write(value);
                 }
                 Ok(())
@@ -222,8 +241,8 @@ macro_rules! impl_native_array_serialize {
     };
 }
 
-impl_native_array_serialize!(IntArray, i32, write_i32_be);
-impl_native_array_serialize!(LongArray, i64, write_i64_be);
+impl_native_array_serialize!(IntArray, i32, I32Be, write_i32_be);
+impl_native_array_serialize!(LongArray, i64, I64Be, write_i64_be);
 
 impl<K: ArrayRoute, T: SerializeNbtArray<K> + ?Sized> SerializeNbtArray<K> for &T {
     #[inline]
