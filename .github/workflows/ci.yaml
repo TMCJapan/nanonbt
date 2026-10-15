@@ -142,6 +142,43 @@ jobs:
       - name: clippy (serde)
         run: cargo clippy -p nanonbt --features serde --target ${{ matrix.target }} --locked -- -D warnings
 
+  # The wasm targets: bare-metal checks on `wasm32-unknown-unknown`, where
+  # `nanocesu8`'s `simd128` backend lives behind wasm-only cfgs, plus a
+  # `wasm32-wasip1` run under wasmtime — the one non-native target whose tests
+  # execute in CI. The executed tests are `nanonbt`'s; `nanocesu8`'s tests
+  # need `criterion`, which does not build for wasm.
+  wasm:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          targets: wasm32-unknown-unknown, wasm32-wasip1
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: wasm
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest, wasmtime
+      - name: clippy (wasm32-unknown-unknown)
+        run: cargo clippy -p nanonbt -p nanocesu8 --target wasm32-unknown-unknown --locked -- -D warnings
+      - name: clippy (all targets and features)
+        run: cargo clippy -p nanonbt --all-targets --all-features --target wasm32-unknown-unknown --locked -- -D warnings
+      - name: clippy (simd128)
+        env:
+          RUSTFLAGS: -C target-feature=+simd128
+        run: cargo clippy -p nanocesu8 -p nanonbt --features nanocesu8/simd --target wasm32-unknown-unknown --locked -- -D warnings
+      - name: nextest (wasm32-wasip1)
+        env:
+          CARGO_TARGET_WASM32_WASIP1_RUNNER: wasmtime
+        run: cargo nextest run -p nanonbt --all-features --locked --no-fail-fast --failure-output immediate-final --target wasm32-wasip1
+      - name: doctests (wasm32-wasip1)
+        env:
+          CARGO_TARGET_WASM32_WASIP1_RUNNER: wasmtime
+        run: cargo test --doc -p nanonbt --all-features --locked --target wasm32-wasip1
+
   # Every feature on its own, so a feature that only compiles next to another
   # cannot hide in the all-features build above.
   features:
@@ -198,7 +235,7 @@ jobs:
   # One required check for branch protection.
   ci:
     if: always()
-    needs: [typos, taplo, fmt, machete, test, no-std, features, docs, msrv]
+    needs: [typos, taplo, fmt, machete, test, no-std, wasm, features, docs, msrv]
     runs-on: ubuntu-24.04
     steps:
       - if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
