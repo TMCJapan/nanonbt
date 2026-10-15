@@ -146,6 +146,11 @@ Until `BENCHER_PROJECT` and `BENCHER_API_KEY` exist, the benchmark jobs still
 run the interop tests but skip Bencher tracking with a notice instead of
 failing.
 
+Both workflows compile with `RUSTFLAGS=-C target-cpu=x86-64-v3`, so the
+libraries' SIMD paths (vector byte swaps, portable SIMD) are exercised on
+GitHub's runners while the feature level stays fixed across runner
+generations; see the `env:` blocks in the two workflow files.
+
 The base workflow defines a latency threshold as a 99% t-test prediction
 interval over the last 64 runs: a result outside that interval generates an
 alert and fails the job. This adapts to the noise of shared GitHub runners;

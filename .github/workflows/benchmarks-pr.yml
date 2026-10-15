@@ -29,6 +29,11 @@ jobs:
     runs-on: ubuntu-latest
     env:
       CARGO_TARGET_DIR: target
+      # Compile for the x86-64-v3 feature level so the libraries' SIMD paths
+      # (nanonbt's vector byte swaps, simdnbt's portable SIMD) are exercised.
+      # Pinned instead of `native`, because the ubuntu-latest fleet's CPU
+      # varies over time and the Bencher thresholds compare across runs.
+      RUSTFLAGS: -C target-cpu=x86-64-v3
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@nightly
