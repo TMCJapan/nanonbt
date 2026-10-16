@@ -1,4 +1,6 @@
 extern crate alloc;
+use std::borrow::Cow;
+
 use nanonbt::route::{ByteArray, IntArray};
 use nanonbt::{
     DeserializeNbt, DeserializeNbtArray, DeserializeNbtArrayRef, Error, F32Be, F64Be, I16Be, I32Be,
@@ -231,6 +233,73 @@ fn empty_lists_use_the_end_element_tag() {
     );
     let decoded: Vec<i32> = from_bytes(&bytes).unwrap();
     assert_eq!(decoded, []);
+}
+
+/// A slice writes the same `TAG_List` its `Vec<T>` does, including the empty
+/// spelling and the bulk element path.
+#[test]
+fn slices_serialize_like_vecs() {
+    let ints = vec![1i32, -2, 3];
+    assert_eq!(to_bytes(&ints).unwrap(), to_bytes(&ints[..]).unwrap());
+
+    let empty: &[i32] = &[];
+    assert_eq!(
+        to_bytes(empty).unwrap(),
+        to_bytes(&Vec::<i32>::new()).unwrap()
+    );
+
+    let wires = vec![I32Be::new(7), I32Be::new(-7)];
+    assert_eq!(to_bytes(&wires[..]).unwrap(), to_bytes(&wires).unwrap());
+}
+
+#[derive(SerializeNbt)]
+struct VecList {
+    values: Vec<i32>,
+}
+
+#[derive(SerializeNbt)]
+struct BoxedList {
+    values: Box<[i32]>,
+}
+
+#[derive(SerializeNbt)]
+struct BorrowedList<'de> {
+    values: &'de [i32],
+}
+
+#[derive(SerializeNbt)]
+struct CowList<'de> {
+    values: Cow<'de, [i32]>,
+}
+
+/// The list impl on `[T]` is what lets the slice containers serialize a field
+/// as a plain list without `#[nbt(array)]`.
+#[test]
+fn slice_containers_serialize_like_vecs() {
+    let values = vec![1, -2, 3];
+    let expected = to_bytes(&VecList {
+        values: values.clone(),
+    })
+    .unwrap();
+
+    assert_eq!(
+        to_bytes(&BoxedList {
+            values: values.clone().into_boxed_slice(),
+        })
+        .unwrap(),
+        expected
+    );
+    assert_eq!(
+        to_bytes(&BorrowedList { values: &values }).unwrap(),
+        expected
+    );
+    assert_eq!(
+        to_bytes(&CowList {
+            values: Cow::Borrowed(&values),
+        })
+        .unwrap(),
+        expected
+    );
 }
 
 #[derive(SerializeNbt, DeserializeNbt, Debug, PartialEq, Default)]

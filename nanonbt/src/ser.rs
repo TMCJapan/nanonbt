@@ -241,13 +241,15 @@ impl<T: SerializeNbt + ToOwned + ?Sized> SerializeNbt for Cow<'_, T> {
     }
 }
 
-/// `Vec<T>` is a `TAG_List<T>` by default.
+/// `[T]` is a `TAG_List<T>`, written like a `Vec<T>`.
 ///
-/// This includes `Vec<u8>`: to get a `TAG_Byte_Array`, annotate the field with
-/// `#[nbt(array = byte)]`. Empty lists are written with the `End` element
-/// tag, which is the conventional representation.
-#[cfg(feature = "alloc")]
-impl<T: SerializeNbt> SerializeNbt for Vec<T> {
+/// `Box<[T]>`, `&[T]` and `Cow<[T]>` reach this implementation through their
+/// own forwarding impls, so a slice field serializes as a plain list unless
+/// `#[nbt(array = ...)]` selects an array route. This includes `[u8]`: to get
+/// a `TAG_Byte_Array`, annotate the field with `#[nbt(array = byte)]`. Empty
+/// lists are written with the `End` element tag, which is the conventional
+/// representation.
+impl<T: SerializeNbt> SerializeNbt for [T] {
     const TAG: Tag = Tag::List;
 
     fn serialize_nbt<W: Write + ?Sized>(&self, writer: &mut W) -> Result<()> {
@@ -257,8 +259,21 @@ impl<T: SerializeNbt> SerializeNbt for Vec<T> {
         }
         writer.write_u8(T::TAG.as_u8());
         write_count(writer, self.len())?;
-        T::serialize_nbt_elements(self, writer)?;
-        Ok(())
+        T::serialize_nbt_elements(self, writer)
+    }
+}
+
+/// `Vec<T>` is a `TAG_List<T>` by default, delegating to the slice writer.
+///
+/// This includes `Vec<u8>`: to get a `TAG_Byte_Array`, annotate the field with
+/// `#[nbt(array = byte)]`.
+#[cfg(feature = "alloc")]
+impl<T: SerializeNbt> SerializeNbt for Vec<T> {
+    const TAG: Tag = Tag::List;
+
+    #[inline]
+    fn serialize_nbt<W: Write + ?Sized>(&self, writer: &mut W) -> Result<()> {
+        self.as_slice().serialize_nbt(writer)
     }
 }
 

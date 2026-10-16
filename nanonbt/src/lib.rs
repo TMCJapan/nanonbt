@@ -8,9 +8,10 @@
 //!    field order does not matter and unknown fields are skipped, which keeps
 //!    decoding forward compatible.
 //! 2. **Explicit array routes.** `TAG_List` is the default encoding for
-//!    `Vec<T>`; the `#[nbt(array = byte | int | long)]` attribute (or
-//!    `#[nbt(array)]`, whose kind is inferred from the element type) switches
-//!    a field to `TAG_Byte_Array`, `TAG_Int_Array` or `TAG_Long_Array`.
+//!    `Vec<T>` and `[T]`; the `#[nbt(array = byte | int | long)]` attribute
+//!    (or `#[nbt(array)]`, whose kind is inferred from the element type)
+//!    switches a field to `TAG_Byte_Array`, `TAG_Int_Array` or
+//!    `TAG_Long_Array`.
 //! 3. **Zero-copy decoding.** Readers that can hand out slices of their
 //!    backing buffer implement [`ReadRef`]. Array fields typed as
 //!    `&'de [u8]`, `&'de [I32Be]` or `&'de [I64Be]` then borrow directly from
@@ -71,7 +72,8 @@
 //!
 //! # Encoding notes
 //!
-//! * `Vec<T>` is a `TAG_List<T>`, including `Vec<u8>`; annotate with
+//! * `Vec<T>` and `[T]` are a `TAG_List<T>`, including `Vec<u8>`; slices are
+//!   what `Box<[T]>`, `&[T]` and `Cow<[T]>` serialize through. Annotate with
 //!   `#[nbt(array = byte)]` to get a `TAG_Byte_Array`. Empty lists are written
 //!   with the `End` element tag.
 //! * Strings are written as Java modified UTF-8 (CESU-8). Raw NUL bytes or
