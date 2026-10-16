@@ -65,7 +65,9 @@
 //! native integers are needed. [`I16Be`], [`F32Be`] and [`F64Be`] round out
 //! the wire representations (NBT has no short or float array tag); the
 //! `TAG_List` writers use all five to byte-swap a whole chunk of
-//! `i16`/`i32`/`i64`/`f32`/`f64` elements in one conversion.
+//! `i16`/`i32`/`i64`/`f32`/`f64` elements in one conversion. A list whose
+//! elements are already wire form — a `*Be` type, or plain `u8`/`i8` — needs
+//! no conversion and is written in a single call.
 //!
 //! # Encoding notes
 //!

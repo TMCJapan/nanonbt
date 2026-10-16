@@ -1,8 +1,8 @@
 extern crate alloc;
 use nanonbt::route::{ByteArray, IntArray};
 use nanonbt::{
-    DeserializeNbt, DeserializeNbtArray, DeserializeNbtArrayRef, Error, I32Be, Read, SerializeNbt,
-    SliceReader, Tag, VecReader, from_bytes, to_bytes,
+    DeserializeNbt, DeserializeNbtArray, DeserializeNbtArrayRef, Error, F32Be, F64Be, I16Be, I32Be,
+    I64Be, Read, SerializeNbt, SliceReader, Tag, VecReader, Write, from_bytes, to_bytes,
 };
 
 #[derive(SerializeNbt, DeserializeNbt, Debug, PartialEq)]
@@ -148,6 +148,77 @@ fn native_list_payloads_are_big_endian() {
             .map(f64::from)
             .chain([-0.0, f64::INFINITY, f64::NAN, f64::MIN, f64::MAX])
             .collect::<Vec<_>>()
+    );
+}
+
+/// Counts sink calls; every [`Write`] method funnels into `write_bytes`.
+#[derive(Default)]
+struct CountingWriter {
+    bytes: Vec<u8>,
+    calls: usize,
+}
+
+impl Write for CountingWriter {
+    fn write_bytes(&mut self, bytes: &[u8]) {
+        self.calls += 1;
+        self.bytes.extend_from_slice(bytes);
+    }
+}
+
+#[test]
+fn byte_and_wire_lists_are_written_in_one_bulk_call() {
+    // These element types are already their wire bytes, so the payload must
+    // be a single `write_bytes` instead of one per element: the element tag,
+    // the count and the payload make exactly three sink calls, at any length.
+    macro_rules! check {
+        ($tag:expr, $values:expr, $payload:expr) => {{
+            let values = $values;
+            let payload: Vec<u8> = $payload;
+            let mut writer = CountingWriter::default();
+            values.serialize_nbt(&mut writer).unwrap();
+
+            let mut expected = vec![$tag.as_u8()];
+            expected.extend_from_slice(&i32::try_from(values.len()).unwrap().to_be_bytes());
+            expected.extend_from_slice(&payload);
+            assert_eq!(writer.bytes, expected, "{}", stringify!($values));
+            assert_eq!(writer.calls, 3, "{}", stringify!($values));
+        }};
+    }
+
+    check!(Tag::Byte, vec![0u8, 1, 255], vec![0, 1, 255]);
+    check!(
+        Tag::Byte,
+        (0u8..100).collect::<Vec<_>>(),
+        (0u8..100).collect::<Vec<_>>()
+    );
+    check!(Tag::Byte, vec![-128i8, 0, 127], vec![0x80, 0x00, 0x7f]);
+    check!(
+        Tag::Short,
+        vec![I16Be::new(-2), I16Be::new(258)],
+        vec![0xff, 0xfe, 0x01, 0x02]
+    );
+    check!(
+        Tag::Int,
+        vec![I32Be::new(-2), I32Be::new(258)],
+        vec![0xff, 0xff, 0xff, 0xfe, 0x00, 0x00, 0x01, 0x02]
+    );
+    check!(
+        Tag::Long,
+        vec![I64Be::new(-2), I64Be::new(258)],
+        vec![
+            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xfe, //
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x02,
+        ]
+    );
+    check!(
+        Tag::Float,
+        vec![F32Be::new(1.5)],
+        vec![0x3f, 0xc0, 0x00, 0x00]
+    );
+    check!(
+        Tag::Double,
+        vec![F64Be::new(-2.25)],
+        vec![0xc0, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
     );
 }
 

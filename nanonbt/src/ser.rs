@@ -29,8 +29,11 @@ pub trait SerializeNbt {
     /// [`serialize_nbt`](Self::serialize_nbt) themselves, so an element type
     /// can batch its writes. The native integer and float types override it
     /// to byte-swap a whole 64-byte chunk at a time, which is the same bulk
-    /// path the `TAG_Int_Array` and `TAG_Long_Array` routes use. The default
-    /// implementation writes one element at a time.
+    /// path the `TAG_Int_Array` and `TAG_Long_Array` routes use. Element
+    /// types that are already in wire form — `u8`, `i8` and the [`Wire`]
+    /// types such as [`I32Be`] — override it to write the whole slice in one
+    /// `write_bytes` call. The default implementation writes one element at
+    /// a time.
     #[inline]
     fn serialize_nbt_elements<W: Write + ?Sized>(values: &[Self], writer: &mut W) -> Result<()>
     where
@@ -108,25 +111,42 @@ impl_serialize_primitive!(i64, Long, write_i64_be, I64Be);
 impl_serialize_primitive!(f32, Float, write_f32_be, F32Be);
 impl_serialize_primitive!(f64, Double, write_f64_be, F64Be);
 
-impl SerializeNbt for i8 {
-    const TAG: Tag = Tag::Byte;
+/// Implements [`SerializeNbt`] for types that are their own wire form.
+///
+/// There is no conversion to do — `u8` and `i8` are the bytes they serialize
+/// as, and the `*Be` types store their big-endian bytes — so a list of them
+/// is one `write_bytes` over the contiguous slice instead of one write per
+/// element.
+macro_rules! impl_serialize_wire {
+    ($ty:ty, $tag:ident) => {
+        impl SerializeNbt for $ty {
+            const TAG: Tag = Tag::$tag;
 
-    #[inline]
-    fn serialize_nbt<W: Write + ?Sized>(&self, writer: &mut W) -> Result<()> {
-        writer.write_u8(self.cast_unsigned());
-        Ok(())
-    }
+            #[inline]
+            fn serialize_nbt<W: Write + ?Sized>(&self, writer: &mut W) -> Result<()> {
+                <$ty as Wire>::write_to(writer, *self);
+                Ok(())
+            }
+
+            #[inline]
+            fn serialize_nbt_elements<W: Write + ?Sized>(
+                values: &[Self],
+                writer: &mut W,
+            ) -> Result<()> {
+                writer.write_bytes(<$ty as Wire>::cast_to_bytes(values));
+                Ok(())
+            }
+        }
+    };
 }
 
-impl SerializeNbt for u8 {
-    const TAG: Tag = Tag::Byte;
-
-    #[inline]
-    fn serialize_nbt<W: Write + ?Sized>(&self, writer: &mut W) -> Result<()> {
-        writer.write_u8(*self);
-        Ok(())
-    }
-}
+impl_serialize_wire!(u8, Byte);
+impl_serialize_wire!(i8, Byte);
+impl_serialize_wire!(I16Be, Short);
+impl_serialize_wire!(I32Be, Int);
+impl_serialize_wire!(I64Be, Long);
+impl_serialize_wire!(F32Be, Float);
+impl_serialize_wire!(F64Be, Double);
 
 impl SerializeNbt for bool {
     const TAG: Tag = Tag::Byte;
