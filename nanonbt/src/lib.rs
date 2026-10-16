@@ -58,11 +58,14 @@
 //!
 //! # Wire types
 //!
-//! Zero-copy integer arrays are exposed as [`I32Be`] / [`I64Be`], which store
+//! Zero-copy array fields are exposed as [`I32Be`] / [`I64Be`], which store
 //! the big-endian bytes of the value and have alignment 1. Borrowing native
 //! `&[i32]` would require either an alignment guarantee on the input buffer or
 //! a byte swap, so `nanonbt` does not do it; decode into `Vec<i32>` when
-//! native integers are needed.
+//! native integers are needed. [`I16Be`], [`F32Be`] and [`F64Be`] round out
+//! the wire representations (NBT has no short or float array tag); the
+//! `TAG_List` writers use all five to byte-swap a whole chunk of
+//! `i16`/`i32`/`i64`/`f32`/`f64` elements in one conversion.
 //!
 //! # Encoding notes
 //!
@@ -116,7 +119,7 @@ pub use io::{Read, ReadRef, SliceReader, Write};
 pub use route::{ArrayElem, ArrayRoute, ArrayRouteFor};
 pub use ser::{SerializeNbt, SerializeNbtArray};
 pub use tag::Tag;
-pub use wire::{I32Be, I64Be, Wire};
+pub use wire::{F32Be, F64Be, I16Be, I32Be, I64Be, Wire};
 
 pub use nanonbt_derive::{DeserializeNbt, SerializeNbt};
 

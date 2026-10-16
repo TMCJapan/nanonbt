@@ -111,6 +111,47 @@ fn list_payload_layout_matches_the_spec() {
 }
 
 #[test]
+fn native_list_payloads_are_big_endian() {
+    // The longer payloads cross a 64-byte chunk, so the bulk conversion and
+    // the ragged per-element tail both run; the expected bytes come straight
+    // from `to_be_bytes`, which is the spelling the chunk conversion uses.
+    macro_rules! check {
+        ($tag:expr, $values:expr) => {{
+            let values = $values;
+            let bytes = to_bytes(&values).unwrap();
+            let mut expected = vec![Tag::List.as_u8(), 0, 0, $tag.as_u8()];
+            expected.extend_from_slice(&i32::try_from(values.len()).unwrap().to_be_bytes());
+            for value in &values {
+                expected.extend_from_slice(&value.to_be_bytes());
+            }
+            assert_eq!(bytes, expected);
+        }};
+    }
+
+    check!(
+        Tag::Short,
+        (0u8..40)
+            .map(i16::from)
+            .chain([-1, i16::MIN, i16::MAX])
+            .collect::<Vec<_>>()
+    );
+    check!(
+        Tag::Float,
+        (0u8..20)
+            .map(f32::from)
+            .chain([-0.0, f32::INFINITY, f32::NAN])
+            .collect::<Vec<_>>()
+    );
+    check!(
+        Tag::Double,
+        (0u8..12)
+            .map(f64::from)
+            .chain([-0.0, f64::INFINITY, f64::NAN, f64::MIN, f64::MAX])
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn empty_lists_use_the_end_element_tag() {
     let bytes = to_bytes(&Vec::<i32>::new()).unwrap();
     assert_eq!(

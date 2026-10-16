@@ -1,15 +1,16 @@
-//! Checks that integer serialization vectorizes its byte swap.
+//! Checks that native scalar serialization vectorizes its byte swap.
 //!
-//! The payload of `TAG_Int` and `TAG_Long` elements is big-endian, so writing
-//! native integers means swapping every element — in the `TAG_Int_Array` and
-//! `TAG_Long_Array` routes and in a plain `TAG_List` of either. `nanonbt`
-//! keeps that swap in safe code — the wire types express `to_be_bytes` —
-//! which leaves it to LLVM to find the vector instructions. Whether it did is
-//! not visible in the source, so these tests pin the generated LLVM IR down
-//! with [`ir_assert`]: `assert_ir!` recompiles this test target at
-//! `opt-level=3` and matches the IR of the referenced function, so a change
-//! that quietly degrades the bulk swap to a per-element loop fails here
-//! instead of only showing up in a benchmark.
+//! The payload of `TAG_Short`, `TAG_Int`, `TAG_Long`, `TAG_Float` and
+//! `TAG_Double` elements is big-endian, so writing native values means
+//! swapping every element — in a plain `TAG_List` of any of them and in the
+//! `TAG_Int_Array` / `TAG_Long_Array` routes `i32` and `i64` additionally get
+//! (NBT has no short or float arrays). `nanonbt` keeps the swap in safe code —
+//! the wire types express `to_be_bytes` — which leaves it to LLVM to find the
+//! vector instructions. Whether it did is not visible in the source, so these
+//! tests pin the generated LLVM IR down with [`ir_assert`]: `assert_ir!`
+//! recompiles this test target at `opt-level=3` and matches the IR of the
+//! referenced function, so a change that quietly degrades the bulk swap to a
+//! per-element loop fails here instead of only showing up in a benchmark.
 //!
 //! The assertions follow the target features the test crate is compiled
 //! with, so a machine that has the feature can pin a wider vector down as
@@ -24,7 +25,7 @@
 //! build scripts with those features; on a machine without it, the codegen
 //! can still be inspected without running anything, by compiling the test
 //! target (which instantiates the serializers) to IR and looking for the
-//! 512-bit `llvm.bswap.v16i32` / `llvm.bswap.v8i64`.
+//! widest `llvm.bswap.v*` the target admits.
 //!
 //! The assertions are limited to the architectures whose baseline has a
 //! vector byte swap; everywhere else the test binary compiles empty.
@@ -115,5 +116,33 @@ fn long_list_bulk_swap_is_vectorized() {
     assert_ir!(
         ir_assert::predicate::opt3 & VectorByteSwap,
         <i64 as SerializeNbt>::serialize_nbt_elements::<Vec<u8>>,
+    );
+}
+
+/// A plain `TAG_List` of `i16` goes through the same bulk hook.
+#[test]
+fn short_list_bulk_swap_is_vectorized() {
+    assert_ir!(
+        ir_assert::predicate::opt3 & VectorByteSwap,
+        <i16 as SerializeNbt>::serialize_nbt_elements::<Vec<u8>>,
+    );
+}
+
+/// The `f32` list hook swaps the bit patterns of a whole chunk.
+#[test]
+fn float_list_bulk_swap_is_vectorized() {
+    assert_ir!(
+        ir_assert::predicate::opt3 & VectorByteSwap,
+        <f32 as SerializeNbt>::serialize_nbt_elements::<Vec<u8>>,
+    );
+}
+
+/// The `f64` hook follows the 64-bit vector-swap rule of the array route.
+#[cfg(any(target_arch = "aarch64", target_feature = "ssse3"))]
+#[test]
+fn double_list_bulk_swap_is_vectorized() {
+    assert_ir!(
+        ir_assert::predicate::opt3 & VectorByteSwap,
+        <f64 as SerializeNbt>::serialize_nbt_elements::<Vec<u8>>,
     );
 }
