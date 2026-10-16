@@ -97,6 +97,20 @@ fn array_payload_layout_matches_the_spec() {
 }
 
 #[test]
+fn list_payload_layout_matches_the_spec() {
+    let bytes = to_bytes(&vec![1i32, -2]).unwrap();
+    #[rustfmt::skip]
+    let expected: Vec<u8> = vec![
+        Tag::List.as_u8(), 0, 0,    // root list, empty name
+        Tag::Int.as_u8(),           // list element tag
+        0, 0, 0, 2,                 // list length
+        0, 0, 0, 1,                 // 1
+        0xff, 0xff, 0xff, 0xfe,     // -2
+    ];
+    assert_eq!(bytes, expected);
+}
+
+#[test]
 fn empty_lists_use_the_end_element_tag() {
     let bytes = to_bytes(&Vec::<i32>::new()).unwrap();
     assert_eq!(

@@ -1,10 +1,11 @@
-//! Checks that integer array serialization vectorizes its byte swap.
+//! Checks that integer serialization vectorizes its byte swap.
 //!
-//! The payload of `TAG_Int_Array` and `TAG_Long_Array` is big-endian, so
-//! writing native integers means swapping every element. `nanonbt` keeps
-//! that swap in safe code — the wire types express `to_be_bytes` — which
-//! leaves it to LLVM to find the vector instructions. Whether it did is not
-//! visible in the source, so these tests pin the generated LLVM IR down
+//! The payload of `TAG_Int` and `TAG_Long` elements is big-endian, so writing
+//! native integers means swapping every element — in the `TAG_Int_Array` and
+//! `TAG_Long_Array` routes and in a plain `TAG_List` of either. `nanonbt`
+//! keeps that swap in safe code — the wire types express `to_be_bytes` —
+//! which leaves it to LLVM to find the vector instructions. Whether it did is
+//! not visible in the source, so these tests pin the generated LLVM IR down
 //! with [`ir_assert`]: `assert_ir!` recompiles this test target at
 //! `opt-level=3` and matches the IR of the referenced function, so a change
 //! that quietly degrades the bulk swap to a per-element loop fails here
@@ -34,10 +35,10 @@ use std::fmt;
 
 use ir_assert::env::EnvSpec;
 use ir_assert::{FunctionIr, Predicate, assert_ir};
-use nanonbt::SerializeNbtArray;
 use nanonbt::route::IntArray;
 #[cfg(any(target_arch = "aarch64", target_feature = "ssse3"))]
 use nanonbt::route::LongArray;
+use nanonbt::{SerializeNbt, SerializeNbtArray};
 
 /// Passes when the function's IR contains a vector byte swap.
 ///
@@ -94,5 +95,25 @@ fn long_array_bulk_swap_is_vectorized() {
     assert_ir!(
         ir_assert::predicate::opt3 & VectorByteSwap,
         <[i64] as SerializeNbtArray<LongArray>>::serialize_nbt_array::<Vec<u8>>,
+    );
+}
+
+/// A plain `TAG_List` of `i32` — no `#[nbt(array)]` attribute — goes through
+/// the same bulk swap, which is the element hook `Vec<i32>` calls.
+#[test]
+fn int_list_bulk_swap_is_vectorized() {
+    assert_ir!(
+        ir_assert::predicate::opt3 & VectorByteSwap,
+        <i32 as SerializeNbt>::serialize_nbt_elements::<Vec<u8>>,
+    );
+}
+
+/// The 64-bit hook follows the same target-feature rule as the array route.
+#[cfg(any(target_arch = "aarch64", target_feature = "ssse3"))]
+#[test]
+fn long_list_bulk_swap_is_vectorized() {
+    assert_ir!(
+        ir_assert::predicate::opt3 & VectorByteSwap,
+        <i64 as SerializeNbt>::serialize_nbt_elements::<Vec<u8>>,
     );
 }
