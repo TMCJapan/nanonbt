@@ -8,9 +8,10 @@
 //!    field order does not matter and unknown fields are skipped, which keeps
 //!    decoding forward compatible.
 //! 2. **Explicit array routes.** `TAG_List` is the default encoding for
-//!    `Vec<T>`; the `#[nbt(array = byte | int | long)]` attribute (or
-//!    `#[nbt(array)]`, whose kind is inferred from the element type) switches
-//!    a field to `TAG_Byte_Array`, `TAG_Int_Array` or `TAG_Long_Array`.
+//!    `Vec<T>` and `[T]`; the `#[nbt(array = byte | int | long)]` attribute
+//!    (or `#[nbt(array)]`, whose kind is inferred from the element type)
+//!    switches a field to `TAG_Byte_Array`, `TAG_Int_Array` or
+//!    `TAG_Long_Array`.
 //! 3. **Zero-copy decoding.** Readers that can hand out slices of their
 //!    backing buffer implement [`ReadRef`]. Array fields typed as
 //!    `&'de [u8]`, `&'de [I32Be]` or `&'de [I64Be]` then borrow directly from
@@ -58,15 +59,21 @@
 //!
 //! # Wire types
 //!
-//! Zero-copy integer arrays are exposed as [`I32Be`] / [`I64Be`], which store
+//! Zero-copy array fields are exposed as [`I32Be`] / [`I64Be`], which store
 //! the big-endian bytes of the value and have alignment 1. Borrowing native
 //! `&[i32]` would require either an alignment guarantee on the input buffer or
 //! a byte swap, so `nanonbt` does not do it; decode into `Vec<i32>` when
-//! native integers are needed.
+//! native integers are needed. [`I16Be`], [`F32Be`] and [`F64Be`] round out
+//! the wire representations (NBT has no short or float array tag); the
+//! `TAG_List` writers use all five to byte-swap a whole chunk of
+//! `i16`/`i32`/`i64`/`f32`/`f64` elements in one conversion. A list whose
+//! elements are already wire form — a `*Be` type, or plain `u8`/`i8` — needs
+//! no conversion and is written in a single call.
 //!
 //! # Encoding notes
 //!
-//! * `Vec<T>` is a `TAG_List<T>`, including `Vec<u8>`; annotate with
+//! * `Vec<T>` and `[T]` are a `TAG_List<T>`, including `Vec<u8>`; slices are
+//!   what `Box<[T]>`, `&[T]` and `Cow<[T]>` serialize through. Annotate with
 //!   `#[nbt(array = byte)]` to get a `TAG_Byte_Array`. Empty lists are written
 //!   with the `End` element tag.
 //! * Strings are written as Java modified UTF-8 (CESU-8). Raw NUL bytes or
@@ -116,7 +123,7 @@ pub use io::{Read, ReadRef, SliceReader, Write};
 pub use route::{ArrayElem, ArrayRoute, ArrayRouteFor};
 pub use ser::{SerializeNbt, SerializeNbtArray};
 pub use tag::Tag;
-pub use wire::{I32Be, I64Be, Wire};
+pub use wire::{F32Be, F64Be, I16Be, I32Be, I64Be, Wire};
 
 pub use nanonbt_derive::{DeserializeNbt, SerializeNbt};
 

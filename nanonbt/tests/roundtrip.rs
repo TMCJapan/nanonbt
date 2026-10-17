@@ -1,8 +1,10 @@
 extern crate alloc;
+use std::borrow::Cow;
+
 use nanonbt::route::{ByteArray, IntArray};
 use nanonbt::{
-    DeserializeNbt, DeserializeNbtArray, DeserializeNbtArrayRef, Error, I32Be, Read, SerializeNbt,
-    SliceReader, Tag, VecReader, from_bytes, to_bytes,
+    DeserializeNbt, DeserializeNbtArray, DeserializeNbtArrayRef, Error, F32Be, F64Be, I16Be, I32Be,
+    I64Be, Read, SerializeNbt, SliceReader, Tag, VecReader, Write, from_bytes, to_bytes,
 };
 
 #[derive(SerializeNbt, DeserializeNbt, Debug, PartialEq)]
@@ -97,6 +99,132 @@ fn array_payload_layout_matches_the_spec() {
 }
 
 #[test]
+fn list_payload_layout_matches_the_spec() {
+    let bytes = to_bytes(&vec![1i32, -2]).unwrap();
+    #[rustfmt::skip]
+    let expected: Vec<u8> = vec![
+        Tag::List.as_u8(), 0, 0,    // root list, empty name
+        Tag::Int.as_u8(),           // list element tag
+        0, 0, 0, 2,                 // list length
+        0, 0, 0, 1,                 // 1
+        0xff, 0xff, 0xff, 0xfe,     // -2
+    ];
+    assert_eq!(bytes, expected);
+}
+
+#[test]
+fn native_list_payloads_are_big_endian() {
+    // The longer payloads cross a 64-byte chunk, so the bulk conversion and
+    // the ragged per-element tail both run; the expected bytes come straight
+    // from `to_be_bytes`, which is the spelling the chunk conversion uses.
+    macro_rules! check {
+        ($tag:expr, $values:expr) => {{
+            let values = $values;
+            let bytes = to_bytes(&values).unwrap();
+            let mut expected = vec![Tag::List.as_u8(), 0, 0, $tag.as_u8()];
+            expected.extend_from_slice(&i32::try_from(values.len()).unwrap().to_be_bytes());
+            for value in &values {
+                expected.extend_from_slice(&value.to_be_bytes());
+            }
+            assert_eq!(bytes, expected);
+        }};
+    }
+
+    check!(
+        Tag::Short,
+        (0u8..40)
+            .map(i16::from)
+            .chain([-1, i16::MIN, i16::MAX])
+            .collect::<Vec<_>>()
+    );
+    check!(
+        Tag::Float,
+        (0u8..20)
+            .map(f32::from)
+            .chain([-0.0, f32::INFINITY, f32::NAN])
+            .collect::<Vec<_>>()
+    );
+    check!(
+        Tag::Double,
+        (0u8..12)
+            .map(f64::from)
+            .chain([-0.0, f64::INFINITY, f64::NAN, f64::MIN, f64::MAX])
+            .collect::<Vec<_>>()
+    );
+}
+
+/// Counts sink calls; every [`Write`] method funnels into `write_bytes`.
+#[derive(Default)]
+struct CountingWriter {
+    bytes: Vec<u8>,
+    calls: usize,
+}
+
+impl Write for CountingWriter {
+    fn write_bytes(&mut self, bytes: &[u8]) {
+        self.calls += 1;
+        self.bytes.extend_from_slice(bytes);
+    }
+}
+
+#[test]
+fn byte_and_wire_lists_are_written_in_one_bulk_call() {
+    // These element types are already their wire bytes, so the payload must
+    // be a single `write_bytes` instead of one per element: the element tag,
+    // the count and the payload make exactly three sink calls, at any length.
+    macro_rules! check {
+        ($tag:expr, $values:expr, $payload:expr) => {{
+            let values = $values;
+            let payload: Vec<u8> = $payload;
+            let mut writer = CountingWriter::default();
+            values.serialize_nbt(&mut writer).unwrap();
+
+            let mut expected = vec![$tag.as_u8()];
+            expected.extend_from_slice(&i32::try_from(values.len()).unwrap().to_be_bytes());
+            expected.extend_from_slice(&payload);
+            assert_eq!(writer.bytes, expected, "{}", stringify!($values));
+            assert_eq!(writer.calls, 3, "{}", stringify!($values));
+        }};
+    }
+
+    check!(Tag::Byte, vec![0u8, 1, 255], vec![0, 1, 255]);
+    check!(
+        Tag::Byte,
+        (0u8..100).collect::<Vec<_>>(),
+        (0u8..100).collect::<Vec<_>>()
+    );
+    check!(Tag::Byte, vec![-128i8, 0, 127], vec![0x80, 0x00, 0x7f]);
+    check!(
+        Tag::Short,
+        vec![I16Be::new(-2), I16Be::new(258)],
+        vec![0xff, 0xfe, 0x01, 0x02]
+    );
+    check!(
+        Tag::Int,
+        vec![I32Be::new(-2), I32Be::new(258)],
+        vec![0xff, 0xff, 0xff, 0xfe, 0x00, 0x00, 0x01, 0x02]
+    );
+    check!(
+        Tag::Long,
+        vec![I64Be::new(-2), I64Be::new(258)],
+        vec![
+            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xfe, //
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x02,
+        ]
+    );
+    check!(
+        Tag::Float,
+        vec![F32Be::new(1.5)],
+        vec![0x3f, 0xc0, 0x00, 0x00]
+    );
+    check!(
+        Tag::Double,
+        vec![F64Be::new(-2.25)],
+        vec![0xc0, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+    );
+}
+
+#[test]
 fn empty_lists_use_the_end_element_tag() {
     let bytes = to_bytes(&Vec::<i32>::new()).unwrap();
     assert_eq!(
@@ -105,6 +233,73 @@ fn empty_lists_use_the_end_element_tag() {
     );
     let decoded: Vec<i32> = from_bytes(&bytes).unwrap();
     assert_eq!(decoded, []);
+}
+
+/// A slice writes the same `TAG_List` its `Vec<T>` does, including the empty
+/// spelling and the bulk element path.
+#[test]
+fn slices_serialize_like_vecs() {
+    let ints = vec![1i32, -2, 3];
+    assert_eq!(to_bytes(&ints).unwrap(), to_bytes(&ints[..]).unwrap());
+
+    let empty: &[i32] = &[];
+    assert_eq!(
+        to_bytes(empty).unwrap(),
+        to_bytes(&Vec::<i32>::new()).unwrap()
+    );
+
+    let wires = vec![I32Be::new(7), I32Be::new(-7)];
+    assert_eq!(to_bytes(&wires[..]).unwrap(), to_bytes(&wires).unwrap());
+}
+
+#[derive(SerializeNbt)]
+struct VecList {
+    values: Vec<i32>,
+}
+
+#[derive(SerializeNbt)]
+struct BoxedList {
+    values: Box<[i32]>,
+}
+
+#[derive(SerializeNbt)]
+struct BorrowedList<'de> {
+    values: &'de [i32],
+}
+
+#[derive(SerializeNbt)]
+struct CowList<'de> {
+    values: Cow<'de, [i32]>,
+}
+
+/// The list impl on `[T]` is what lets the slice containers serialize a field
+/// as a plain list without `#[nbt(array)]`.
+#[test]
+fn slice_containers_serialize_like_vecs() {
+    let values = vec![1, -2, 3];
+    let expected = to_bytes(&VecList {
+        values: values.clone(),
+    })
+    .unwrap();
+
+    assert_eq!(
+        to_bytes(&BoxedList {
+            values: values.clone().into_boxed_slice(),
+        })
+        .unwrap(),
+        expected
+    );
+    assert_eq!(
+        to_bytes(&BorrowedList { values: &values }).unwrap(),
+        expected
+    );
+    assert_eq!(
+        to_bytes(&CowList {
+            values: Cow::Borrowed(&values),
+        })
+        .unwrap(),
+        expected
+    );
 }
 
 #[derive(SerializeNbt, DeserializeNbt, Debug, PartialEq, Default)]

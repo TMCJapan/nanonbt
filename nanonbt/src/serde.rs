@@ -80,7 +80,7 @@ use ::serde::ser::{
 };
 
 use crate::codec::{read_count, write_count, write_string};
-use crate::wire::{I32Be, I64Be};
+use crate::wire::{F32Be, F64Be, I16Be, I32Be, I64Be};
 use crate::{Error, Read, ReadRef, Result, SliceReader, Tag, Write};
 
 /// Encodes `value` into a complete NBT document with serde.
@@ -1486,6 +1486,25 @@ impl de::Error for Error {
     }
 }
 
+impl Serialize for I16Be {
+    #[inline]
+    fn serialize<S: ser::Serializer>(
+        &self,
+        serializer: S,
+    ) -> core::result::Result<S::Ok, S::Error> {
+        serializer.serialize_i16(self.get())
+    }
+}
+
+impl<'de> Deserialize<'de> for I16Be {
+    #[inline]
+    fn deserialize<D: de::Deserializer<'de>>(
+        deserializer: D,
+    ) -> core::result::Result<Self, D::Error> {
+        i16::deserialize(deserializer).map(Self::new)
+    }
+}
+
 impl Serialize for I32Be {
     #[inline]
     fn serialize<S: ser::Serializer>(
@@ -1521,5 +1540,43 @@ impl<'de> Deserialize<'de> for I64Be {
         deserializer: D,
     ) -> core::result::Result<Self, D::Error> {
         i64::deserialize(deserializer).map(Self::new)
+    }
+}
+
+impl Serialize for F32Be {
+    #[inline]
+    fn serialize<S: ser::Serializer>(
+        &self,
+        serializer: S,
+    ) -> core::result::Result<S::Ok, S::Error> {
+        serializer.serialize_f32(self.get())
+    }
+}
+
+impl<'de> Deserialize<'de> for F32Be {
+    #[inline]
+    fn deserialize<D: de::Deserializer<'de>>(
+        deserializer: D,
+    ) -> core::result::Result<Self, D::Error> {
+        f32::deserialize(deserializer).map(Self::new)
+    }
+}
+
+impl Serialize for F64Be {
+    #[inline]
+    fn serialize<S: ser::Serializer>(
+        &self,
+        serializer: S,
+    ) -> core::result::Result<S::Ok, S::Error> {
+        serializer.serialize_f64(self.get())
+    }
+}
+
+impl<'de> Deserialize<'de> for F64Be {
+    #[inline]
+    fn deserialize<D: de::Deserializer<'de>>(
+        deserializer: D,
+    ) -> core::result::Result<Self, D::Error> {
+        f64::deserialize(deserializer).map(Self::new)
     }
 }

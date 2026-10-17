@@ -8,7 +8,7 @@
 use std::collections::BTreeMap;
 
 use nanonbt::serde::{from_bytes, from_reader, to_bytes};
-use nanonbt::{DeserializeNbt, I32Be, SerializeNbt, Tag, VecReader};
+use nanonbt::{DeserializeNbt, F32Be, F64Be, I16Be, I32Be, I64Be, SerializeNbt, Tag, VecReader};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
@@ -347,14 +347,22 @@ fn empty_lists_use_the_end_element_tag() {
 }
 
 #[test]
-fn wire_types_are_integers_in_serde_structs() {
+fn wire_types_are_scalars_in_serde_structs() {
     #[derive(Serialize, Deserialize, Debug, PartialEq)]
     struct Grid {
         cells: Vec<I32Be>,
+        shorts: Vec<I16Be>,
+        longs: Vec<I64Be>,
+        floats: Vec<F32Be>,
+        doubles: Vec<F64Be>,
     }
 
     let value = Grid {
         cells: vec![I32Be::new(-1), I32Be::new(2)],
+        shorts: vec![I16Be::new(-3), I16Be::new(4)],
+        longs: vec![I64Be::new(-5), I64Be::new(6)],
+        floats: vec![F32Be::new(-1.5), F32Be::new(2.5)],
+        doubles: vec![F64Be::new(-3.5), F64Be::new(4.5)],
     };
     assert_eq!(
         from_bytes::<Grid>(&to_bytes(&value).unwrap()).unwrap(),

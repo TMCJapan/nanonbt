@@ -7,7 +7,7 @@ use alloc::vec::Vec;
 
 use crate::codec::{write_count, write_string};
 use crate::route::{ArrayRoute, ByteArray, IntArray, LongArray};
-use crate::wire::{I32Be, I64Be, Wire};
+use crate::wire::{F32Be, F64Be, I16Be, I32Be, I64Be, Wire};
 use crate::{Error, Result, Tag, Write};
 
 /// Serializes a value as an NBT tag.
@@ -22,6 +22,28 @@ pub trait SerializeNbt {
 
     /// Writes the payload of [`Self::TAG`] to `writer`.
     fn serialize_nbt<W: Write + ?Sized>(&self, writer: &mut W) -> Result<()>;
+
+    /// Writes the elements of a `TAG_List<Self>` after its header.
+    ///
+    /// `Vec<T>` and the other list writers call this instead of looping over
+    /// [`serialize_nbt`](Self::serialize_nbt) themselves, so an element type
+    /// can batch its writes. The native integer and float types override it
+    /// to byte-swap a whole 64-byte chunk at a time, which is the same bulk
+    /// path the `TAG_Int_Array` and `TAG_Long_Array` routes use. Element
+    /// types that are already in wire form — `u8`, `i8` and the [`Wire`]
+    /// types such as [`I32Be`] — override it to write the whole slice in one
+    /// `write_bytes` call. The default implementation writes one element at
+    /// a time.
+    #[inline]
+    fn serialize_nbt_elements<W: Write + ?Sized>(values: &[Self], writer: &mut W) -> Result<()>
+    where
+        Self: Sized,
+    {
+        for value in values {
+            value.serialize_nbt(writer)?;
+        }
+        Ok(())
+    }
 }
 
 /// Serializes a sequence using an NBT array route such as [`IntArray`].
@@ -34,8 +56,34 @@ pub trait SerializeNbtArray<K: ArrayRoute> {
     fn serialize_nbt_array<W: Write + ?Sized>(&self, writer: &mut W) -> Result<()>;
 }
 
+/// Writes native integers and floats big-endian a whole chunk at a time.
+///
+/// The chunk becomes one fixed-size `[Wire; CHUNK]` of 64 bytes — 32 `i16`,
+/// 16 `i32`/`f32` or 8 `i64`/`f64` — which keeps the byte swap in safe code
+/// (the conversion is the plain `to_be_bytes` spelling) and gives the
+/// compiler a fixed-size loop to turn into vector byte swaps, one shuffle per
+/// register instead of a `bswap` per element. Where the target has no cheap
+/// vector swap, the bulk write still replaces one writer call per element
+/// with one per chunk. The ragged tail is written element by element.
+/// `tests/simd.rs` pins the vectorized outcome down on the LLVM IR.
+macro_rules! write_be_chunked {
+    ($writer:expr, $values:expr, $native:ty, $wire:ty, $write:ident) => {{
+        /// Elements per bulk write: 32 `i16`, 16 `i32`/`f32` or 8
+        /// `i64`/`f64`, so a chunk is 64 bytes — one 512-bit register where
+        /// the target has one, and a multiple of every smaller vector width.
+        const CHUNK: usize = 64 / core::mem::size_of::<$native>();
+        let (bulk, tail) = $values.as_chunks::<CHUNK>();
+        for chunk in bulk {
+            $writer.write_bytes(<$wire as Wire>::cast_to_bytes(&chunk.map(<$wire>::new)));
+        }
+        for &value in tail {
+            $writer.$write(value);
+        }
+    }};
+}
+
 macro_rules! impl_serialize_primitive {
-    ($ty:ty, $tag:ident, $write:ident) => {
+    ($ty:ty, $tag:ident, $write:ident, $wire:ty) => {
         impl SerializeNbt for $ty {
             const TAG: Tag = Tag::$tag;
 
@@ -44,35 +92,61 @@ macro_rules! impl_serialize_primitive {
                 writer.$write(*self);
                 Ok(())
             }
+
+            #[inline]
+            fn serialize_nbt_elements<W: Write + ?Sized>(
+                values: &[Self],
+                writer: &mut W,
+            ) -> Result<()> {
+                write_be_chunked!(writer, values, $ty, $wire, $write);
+                Ok(())
+            }
         }
     };
 }
 
-impl_serialize_primitive!(i16, Short, write_i16_be);
-impl_serialize_primitive!(i32, Int, write_i32_be);
-impl_serialize_primitive!(i64, Long, write_i64_be);
-impl_serialize_primitive!(f32, Float, write_f32_be);
-impl_serialize_primitive!(f64, Double, write_f64_be);
+impl_serialize_primitive!(i16, Short, write_i16_be, I16Be);
+impl_serialize_primitive!(i32, Int, write_i32_be, I32Be);
+impl_serialize_primitive!(i64, Long, write_i64_be, I64Be);
+impl_serialize_primitive!(f32, Float, write_f32_be, F32Be);
+impl_serialize_primitive!(f64, Double, write_f64_be, F64Be);
 
-impl SerializeNbt for i8 {
-    const TAG: Tag = Tag::Byte;
+/// Implements [`SerializeNbt`] for types that are their own wire form.
+///
+/// There is no conversion to do — `u8` and `i8` are the bytes they serialize
+/// as, and the `*Be` types store their big-endian bytes — so a list of them
+/// is one `write_bytes` over the contiguous slice instead of one write per
+/// element.
+macro_rules! impl_serialize_wire {
+    ($ty:ty, $tag:ident) => {
+        impl SerializeNbt for $ty {
+            const TAG: Tag = Tag::$tag;
 
-    #[inline]
-    fn serialize_nbt<W: Write + ?Sized>(&self, writer: &mut W) -> Result<()> {
-        writer.write_u8(self.cast_unsigned());
-        Ok(())
-    }
+            #[inline]
+            fn serialize_nbt<W: Write + ?Sized>(&self, writer: &mut W) -> Result<()> {
+                <$ty as Wire>::write_to(writer, *self);
+                Ok(())
+            }
+
+            #[inline]
+            fn serialize_nbt_elements<W: Write + ?Sized>(
+                values: &[Self],
+                writer: &mut W,
+            ) -> Result<()> {
+                writer.write_bytes(<$ty as Wire>::cast_to_bytes(values));
+                Ok(())
+            }
+        }
+    };
 }
 
-impl SerializeNbt for u8 {
-    const TAG: Tag = Tag::Byte;
-
-    #[inline]
-    fn serialize_nbt<W: Write + ?Sized>(&self, writer: &mut W) -> Result<()> {
-        writer.write_u8(*self);
-        Ok(())
-    }
-}
+impl_serialize_wire!(u8, Byte);
+impl_serialize_wire!(i8, Byte);
+impl_serialize_wire!(I16Be, Short);
+impl_serialize_wire!(I32Be, Int);
+impl_serialize_wire!(I64Be, Long);
+impl_serialize_wire!(F32Be, Float);
+impl_serialize_wire!(F64Be, Double);
 
 impl SerializeNbt for bool {
     const TAG: Tag = Tag::Byte;
@@ -167,13 +241,15 @@ impl<T: SerializeNbt + ToOwned + ?Sized> SerializeNbt for Cow<'_, T> {
     }
 }
 
-/// `Vec<T>` is a `TAG_List<T>` by default.
+/// `[T]` is a `TAG_List<T>`, written like a `Vec<T>`.
 ///
-/// This includes `Vec<u8>`: to get a `TAG_Byte_Array`, annotate the field with
-/// `#[nbt(array = byte)]`. Empty lists are written with the `End` element
-/// tag, which is the conventional representation.
-#[cfg(feature = "alloc")]
-impl<T: SerializeNbt> SerializeNbt for Vec<T> {
+/// `Box<[T]>`, `&[T]` and `Cow<[T]>` reach this implementation through their
+/// own forwarding impls, so a slice field serializes as a plain list unless
+/// `#[nbt(array = ...)]` selects an array route. This includes `[u8]`: to get
+/// a `TAG_Byte_Array`, annotate the field with `#[nbt(array = byte)]`. Empty
+/// lists are written with the `End` element tag, which is the conventional
+/// representation.
+impl<T: SerializeNbt> SerializeNbt for [T] {
     const TAG: Tag = Tag::List;
 
     fn serialize_nbt<W: Write + ?Sized>(&self, writer: &mut W) -> Result<()> {
@@ -183,10 +259,21 @@ impl<T: SerializeNbt> SerializeNbt for Vec<T> {
         }
         writer.write_u8(T::TAG.as_u8());
         write_count(writer, self.len())?;
-        for value in self {
-            value.serialize_nbt(writer)?;
-        }
-        Ok(())
+        T::serialize_nbt_elements(self, writer)
+    }
+}
+
+/// `Vec<T>` is a `TAG_List<T>` by default, delegating to the slice writer.
+///
+/// This includes `Vec<u8>`: to get a `TAG_Byte_Array`, annotate the field with
+/// `#[nbt(array = byte)]`.
+#[cfg(feature = "alloc")]
+impl<T: SerializeNbt> SerializeNbt for Vec<T> {
+    const TAG: Tag = Tag::List;
+
+    #[inline]
+    fn serialize_nbt<W: Write + ?Sized>(&self, writer: &mut W) -> Result<()> {
+        self.as_slice().serialize_nbt(writer)
     }
 }
 
@@ -208,22 +295,22 @@ impl_wire_array_serialize!(ByteArray, i8);
 impl_wire_array_serialize!(IntArray, I32Be);
 impl_wire_array_serialize!(LongArray, I64Be);
 
+/// Serializes native integer arrays through the shared chunked byte swap.
 macro_rules! impl_native_array_serialize {
-    ($route:ty, $elem:ty, $write:ident) => {
-        impl SerializeNbtArray<$route> for [$elem] {
+    ($route:ty, $native:ty, $wire:ty, $write:ident) => {
+        impl SerializeNbtArray<$route> for [$native] {
+            #[inline]
             fn serialize_nbt_array<W: Write + ?Sized>(&self, writer: &mut W) -> Result<()> {
                 write_count(writer, self.len())?;
-                for &value in self {
-                    writer.$write(value);
-                }
+                write_be_chunked!(writer, self, $native, $wire, $write);
                 Ok(())
             }
         }
     };
 }
 
-impl_native_array_serialize!(IntArray, i32, write_i32_be);
-impl_native_array_serialize!(LongArray, i64, write_i64_be);
+impl_native_array_serialize!(IntArray, i32, I32Be, write_i32_be);
+impl_native_array_serialize!(LongArray, i64, I64Be, write_i64_be);
 
 impl<K: ArrayRoute, T: SerializeNbtArray<K> + ?Sized> SerializeNbtArray<K> for &T {
     #[inline]
