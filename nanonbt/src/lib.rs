@@ -127,6 +127,7 @@ pub use wire::{F32Be, F64Be, I16Be, I32Be, I64Be, Wire};
 
 pub use nanonbt_derive::{DeserializeNbt, SerializeNbt};
 
+pub use nanocesu8::{Cesu8, Cesu8Buf};
 /// Implementation details the derive macros rely on.
 ///
 /// Nothing here is stable; it follows what the generated code needs.
