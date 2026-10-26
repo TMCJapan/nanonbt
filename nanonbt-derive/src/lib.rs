@@ -813,7 +813,7 @@ fn build_decode_impl(
                     #(#declarations)*
                     let mut __nbt_name = [0u8; #name_max];
                     loop {
-                        let __nbt_tag = ::nanonbt::Tag::from_u8(__tee.read_u8()?)?;
+                        let __nbt_tag = ::nanonbt::Tag::from_u8(::nanonbt::Read::read_u8(&mut __tee)?)?;
                         if __nbt_tag == ::nanonbt::Tag::End {
                             let __nbt_self_captured = ::core::mem::take(&mut __nbt_self_bytes);
                             #(#self_assignments)*
