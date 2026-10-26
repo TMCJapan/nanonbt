@@ -83,9 +83,11 @@
 //!   Minecraft's file format; [`from_bytes`] reads and ignores the root name.
 //! * Integers keep their signed NBT tags: `i8`/`i16`/`i32`/`i64` map to
 //!   `Byte`/`Short`/`Int`/`Long`, `u8` maps to `Byte`.
-//! * Enums, `Option`, maps, and borrowed strings are not supported yet by the
-//!   native derives; see the derive crate for the supported field attribute
-//!   set. The `serde` feature covers most of them through serde's derives.
+//! * `Option`, maps, and enums are not supported yet by the native derives;
+//!   borrowed strings (`&'de Cesu8`, `&'de str`, `Cow<'de, Cesu8>`) are
+//!   supported zero-copy. See the derive crate for the supported field
+//!   attribute set. The `serde` feature covers most of them through serde's
+//!   derives.
 
 #![no_std]
 #![warn(missing_docs)]
