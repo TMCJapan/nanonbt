@@ -112,3 +112,25 @@ impl<'de> DeserializeNbtRef<'de> for &'de str {
         cesu8.try_decode().ok_or(Error::InvalidUtf8)
     }
 }
+
+/// Zero-copy variant of [`DeserializeNbtSelf`](crate::DeserializeNbtSelf): the
+/// bytes handed to it point directly into the input buffer.
+pub trait DeserializeNbtSelfRef<'de>: Sized {
+    /// Builds `Self` from the compound's raw payload bytes.
+    fn deserialize_nbt_self_ref(bytes: &'de [u8]) -> Result<Self>;
+}
+
+impl<'de> DeserializeNbtSelfRef<'de> for &'de [u8] {
+    #[inline]
+    fn deserialize_nbt_self_ref(bytes: &'de [u8]) -> Result<Self> {
+        Ok(bytes)
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl<'de> DeserializeNbtSelfRef<'de> for alloc::borrow::Cow<'de, [u8]> {
+    #[inline]
+    fn deserialize_nbt_self_ref(bytes: &'de [u8]) -> Result<Self> {
+        Ok(alloc::borrow::Cow::Borrowed(bytes))
+    }
+}

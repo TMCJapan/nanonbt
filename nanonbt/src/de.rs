@@ -270,3 +270,37 @@ macro_rules! impl_native_array_decode {
 impl_native_array_decode!(IntArray, i32, I32Be);
 #[cfg(feature = "alloc")]
 impl_native_array_decode!(LongArray, i64, I64Be);
+
+/// Reads the complete serialized payload bytes of an NBT compound into `Self`.
+///
+/// Used by `#[nbt(self)]` fields: the derived decoder captures the raw bytes of
+/// the enclosing compound (including the trailing `End`) and hands them to this
+/// trait. Implement it for any type that can be built from those bytes.
+pub trait DeserializeNbtSelf: Sized {
+    /// Builds `Self` from the compound's raw payload bytes.
+    fn deserialize_nbt_self(bytes: &[u8]) -> Result<Self>;
+}
+
+#[cfg(feature = "alloc")]
+impl DeserializeNbtSelf for alloc::vec::Vec<u8> {
+    #[inline]
+    fn deserialize_nbt_self(bytes: &[u8]) -> Result<Self> {
+        Ok(bytes.to_vec())
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl DeserializeNbtSelf for alloc::boxed::Box<[u8]> {
+    #[inline]
+    fn deserialize_nbt_self(bytes: &[u8]) -> Result<Self> {
+        Ok(bytes.to_vec().into_boxed_slice())
+    }
+}
+
+#[cfg(feature = "bytes")]
+impl DeserializeNbtSelf for bytes::Bytes {
+    #[inline]
+    fn deserialize_nbt_self(bytes: &[u8]) -> Result<Self> {
+        Ok(Self::copy_from_slice(bytes))
+    }
+}

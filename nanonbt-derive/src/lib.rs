@@ -79,6 +79,7 @@ struct FieldAttrs {
     array: Option<ArraySpec>,
     skip: bool,
     rename: Option<String>,
+    self_: bool,
 }
 
 #[derive(Clone)]
@@ -140,13 +141,19 @@ fn parse_field_attrs(field: &Field) -> syn::Result<FieldAttrs> {
                 }
                 attrs.skip = true;
                 Ok(())
+            } else if meta.path.is_ident("self") {
+                if attrs.self_ {
+                    return Err(meta.error("duplicate `self` attribute"));
+                }
+                attrs.self_ = true;
+                Ok(())
             } else if meta.path.is_ident("rename") {
                 let value: LitStr = meta.value()?.parse()?;
                 attrs.rename = Some(value.value());
                 Ok(())
             } else {
                 Err(meta.error(
-                    "unsupported `nbt` attribute; expected `array`, `skip`, or `rename`",
+                    "unsupported `nbt` attribute; expected `array`, `skip`, `rename`, or `self`",
                 ))
             }
         })?;
@@ -312,6 +319,14 @@ fn is_cow_slice(ty: &Type) -> bool {
     matches!(cow_argument(ty), Some(Type::Slice(_)))
 }
 
+fn is_u8_type(ty: &Type) -> bool {
+    matches!(ty, Type::Path(path) if path.path.is_ident("u8"))
+}
+
+fn is_u8_slice_reference(ty: &Type) -> bool {
+    matches!(ty, Type::Reference(reference) if matches!(&*reference.elem, Type::Slice(slice) if is_u8_type(&slice.elem)))
+}
+
 fn type_mentions_lifetime(ty: &Type, lifetime: &Lifetime) -> bool {
     let mut finder = LifetimeFinder {
         target: lifetime,
@@ -362,6 +377,15 @@ fn expand_serialize(input: &DeriveInput) -> syn::Result<TokenStream2> {
     let name = &input.ident;
     let fields = expect_struct(input)?;
     check_duplicate_keys(fields)?;
+    for field in field_list(fields) {
+        let attrs = parse_field_attrs(field)?;
+        if attrs.self_ {
+            return Err(syn::Error::new_spanned(
+                field,
+                "`#[nbt(self)]` fields cannot be serialized",
+            ));
+        }
+    }
 
     let mut used_types: Vec<Type> = Vec::new();
     let mut tag: TokenStream2 = quote!(::nanonbt::Tag::Compound);
@@ -465,6 +489,10 @@ fn serialize_field(
 enum FieldMode {
     /// Not part of the wire format; filled with `Default::default()`.
     Skipped,
+    /// Captures the struct's own raw payload bytes (borrowed slice).
+    SelfBorrowed,
+    /// Captures the struct's own raw payload bytes (owned buffer).
+    SelfOwned,
     /// Decoded with `DeserializeNbt`.
     Owned,
     /// `&'de [T]` / `Cow<'de, [T]>`, decoded with `DeserializeNbtArrayRef`.
@@ -499,8 +527,31 @@ fn expand_deserialize(input: &DeriveInput) -> syn::Result<TokenStream2> {
     for (index, field) in field_list(fields).into_iter().enumerate() {
         let attrs = parse_field_attrs(field)?;
         let ty = field.ty.clone();
+        if attrs.self_ && matches!(fields, Fields::Unnamed(_)) {
+            return Err(syn::Error::new_spanned(
+                field,
+                "`#[nbt(self)]` is not supported on newtype fields",
+            ));
+        }
         let mode = if attrs.skip {
             FieldMode::Skipped
+        } else if attrs.self_ {
+            if borrow_lifetime.is_some()
+                && (is_reference(&ty)
+                    || is_cow(&ty)
+                    || type_mentions_lifetime(&ty, borrow_lifetime.as_ref().unwrap()))
+            {
+                if borrow_lifetime.is_none() {
+                    return Err(syn::Error::new_spanned(
+                        field,
+                        "borrowed `#[nbt(self)]` fields require the struct to declare a lifetime",
+                    ));
+                }
+                borrowed = true;
+                FieldMode::SelfBorrowed
+            } else {
+                FieldMode::SelfOwned
+            }
         } else if is_reference(&ty) || is_cow(&ty) {
             borrowed = true;
             FieldMode::BorrowedArray
@@ -514,6 +565,23 @@ fn expand_deserialize(input: &DeriveInput) -> syn::Result<TokenStream2> {
         } else {
             FieldMode::Owned
         };
+
+        if mode == FieldMode::SelfBorrowed {
+            if borrow_lifetime.is_none() {
+                return Err(syn::Error::new_spanned(
+                    field,
+                    "borrowed `#[nbt(self)]` fields require the struct to declare a lifetime",
+                ));
+            }
+            if is_u8_slice_reference(&ty) || is_cow_slice(&ty) {
+                // accepted
+            } else {
+                return Err(syn::Error::new_spanned(
+                    field,
+                    "borrowed `#[nbt(self)]` fields must wrap `u8`",
+                ));
+            }
+        }
 
         if mode == FieldMode::BorrowedArray {
             if attrs.array.is_none() {
@@ -563,8 +631,8 @@ fn expand_deserialize(input: &DeriveInput) -> syn::Result<TokenStream2> {
 /// reached through `nanonbt`'s re-export so the user's crate needs no
 /// dependency of its own. Either way the arms and the default stay
 /// expressions in the function that reads, so an arm can `?` its error.
-fn name_dispatch(arms: &[TokenStream2]) -> TokenStream2 {
-    let default = quote!(::nanonbt::skip_nbt(__r, __nbt_tag)?);
+fn name_dispatch(arms: &[TokenStream2], reader: &TokenStream2) -> TokenStream2 {
+    let default = quote!(::nanonbt::skip_nbt(#reader, __nbt_tag)?);
     if cfg!(feature = "hashify") {
         quote! {
             ::nanonbt::__private::hashify::fnc_map!(
@@ -595,6 +663,8 @@ fn build_decode_impl(
     let body: TokenStream2;
     let mut owned_types: Vec<Type> = Vec::new();
     let mut nested_types: Vec<Type> = Vec::new();
+    let mut self_owned_types: Vec<Type> = Vec::new();
+    let mut self_borrowed_types: Vec<Type> = Vec::new();
 
     match fields {
         Fields::Named(_) | Fields::Unit => {
@@ -605,11 +675,43 @@ fn build_decode_impl(
             // against: a wire name that does not fit is longer than every
             // name the struct knows, so it cannot match and is skipped.
             let mut name_max = 0usize;
+            let mut self_vars: Vec<(Ident, Type, bool)> = Vec::new();
+            let self_borrowed_flag = infos
+                .iter()
+                .any(|i| matches!(i.mode, FieldMode::SelfBorrowed));
+            let self_has_flag = infos.iter().any(|i| i.attrs.self_);
+            let self_reader = if self_has_flag && !self_borrowed_flag {
+                quote!(&mut __tee)
+            } else {
+                quote!(__r)
+            };
 
             for info in infos {
                 let Some(ident) = &info.ident else {
                     continue;
                 };
+
+                if info.attrs.self_ {
+                    let var = format_ident!("__nbt_field_{}", info.index);
+                    let ty = &info.ty;
+                    declarations.push(quote! {
+                        let mut #var: ::core::option::Option<#ty> = ::core::option::Option::None;
+                    });
+                    if matches!(info.mode, FieldMode::SelfBorrowed) {
+                        self_borrowed_types.push(ty.clone());
+                    } else {
+                        self_owned_types.push(ty.clone());
+                    }
+                    self_vars.push((
+                        var.clone(),
+                        ty.clone(),
+                        matches!(info.mode, FieldMode::SelfBorrowed),
+                    ));
+                    inits.push(quote! {
+                        #ident: #var.unwrap(),
+                    });
+                    continue;
+                }
 
                 if info.mode == FieldMode::Skipped {
                     inits.push(quote! {
@@ -623,7 +725,7 @@ fn build_decode_impl(
                 let key = field_key(ident, &info.attrs);
                 let (name_len, name_bytes) = encode_name(&key)?;
                 name_max = name_max.max(usize::from(name_len));
-                let (expected, decode) = decode_parts(info, borrow_lifetime);
+                let (expected, decode) = decode_parts(info, borrow_lifetime, &self_reader);
 
                 match info.mode {
                     FieldMode::Owned => owned_types.push(ty.clone()),
@@ -652,30 +754,90 @@ fn build_decode_impl(
                 });
             }
 
-            let dispatch = name_dispatch(&arms);
+            let dispatch = name_dispatch(&arms, &self_reader);
             let construct = if matches!(fields, Fields::Unit) {
                 quote!(::core::result::Result::Ok(Self))
             } else {
                 quote!(::core::result::Result::Ok(Self { #(#inits)* }))
             };
-            body = quote! {
-                #(#declarations)*
-                let mut __nbt_name = [0u8; #name_max];
-                loop {
-                    let __nbt_tag = ::nanonbt::Tag::from_u8(__r.read_u8()?)?;
-                    if __nbt_tag == ::nanonbt::Tag::End {
-                        break;
+            if !self_has_flag {
+                body = quote! {
+                    #(#declarations)*
+                    let mut __nbt_name = [0u8; #name_max];
+                    loop {
+                        let __nbt_tag = ::nanonbt::Tag::from_u8(__r.read_u8()?)?;
+                        if __nbt_tag == ::nanonbt::Tag::End {
+                            break;
+                        }
+                        if let ::core::option::Option::Some(__nbt_len) =
+                            ::nanonbt::read_name_into(__r, &mut __nbt_name)?
+                        {
+                            #dispatch
+                        } else {
+                            ::nanonbt::skip_nbt(__r, __nbt_tag)?;
+                        }
                     }
-                    if let ::core::option::Option::Some(__nbt_len) =
-                        ::nanonbt::read_name_into(__r, &mut __nbt_name)?
-                    {
-                        #dispatch
+                    #construct
+                };
+            } else if self_borrowed_flag {
+                let self_lifetime = borrow_lifetime
+                    .expect("borrowed self requires a lifetime")
+                    .clone();
+                let self_assignments: Vec<_> = self_vars.iter().map(|(var, ty, is_borrowed)| {
+                    if *is_borrowed {
+                        quote!(#var = ::core::option::Option::Some(<#ty as ::nanonbt::DeserializeNbtSelfRef<#self_lifetime>>::deserialize_nbt_self_ref(&__r.backing_bytes()[__nbt_self_start..__nbt_self_end])?);)
                     } else {
-                        ::nanonbt::skip_nbt(__r, __nbt_tag)?;
+                        quote!(#var = ::core::option::Option::Some(<#ty as ::nanonbt::DeserializeNbtSelf>::deserialize_nbt_self(&__r.backing_bytes()[__nbt_self_start..__nbt_self_end])?);)
                     }
-                }
-                #construct
-            };
+                }).collect();
+                body = quote! {
+                    let __nbt_self_start = __r.position();
+                    #(#declarations)*
+                    let mut __nbt_name = [0u8; #name_max];
+                    loop {
+                        let __nbt_tag = ::nanonbt::Tag::from_u8(__r.read_u8()?)?;
+                        if __nbt_tag == ::nanonbt::Tag::End {
+                            let __nbt_self_end = __r.position();
+                            #(#self_assignments)*
+                            break;
+                        }
+                        if let ::core::option::Option::Some(__nbt_len) =
+                            ::nanonbt::read_name_into(__r, &mut __nbt_name)?
+                        {
+                            #dispatch
+                        } else {
+                            ::nanonbt::skip_nbt(__r, __nbt_tag)?;
+                        }
+                    }
+                    #construct
+                };
+            } else {
+                let self_assignments: Vec<_> = self_vars.iter().map(|(var, ty, _b)| {
+                    quote!(#var = ::core::option::Option::Some(<#ty as ::nanonbt::DeserializeNbtSelf>::deserialize_nbt_self(&__nbt_self_captured)?);)
+                }).collect();
+                body = quote! {
+                    let mut __nbt_self_bytes = ::alloc::vec::Vec::new();
+                    let mut __tee = ::nanonbt::TeeReader::new(__r, &mut __nbt_self_bytes);
+                    #(#declarations)*
+                    let mut __nbt_name = [0u8; #name_max];
+                    loop {
+                        let __nbt_tag = ::nanonbt::Tag::from_u8(::nanonbt::Read::read_u8(&mut __tee)?)?;
+                        if __nbt_tag == ::nanonbt::Tag::End {
+                            let __nbt_self_captured = ::core::mem::take(&mut __nbt_self_bytes);
+                            #(#self_assignments)*
+                            break;
+                        }
+                        if let ::core::option::Option::Some(__nbt_len) =
+                            ::nanonbt::read_name_into(&mut __tee, &mut __nbt_name)?
+                        {
+                            #dispatch
+                        } else {
+                            ::nanonbt::skip_nbt(&mut __tee, __nbt_tag)?;
+                        }
+                    }
+                    #construct
+                };
+            }
         }
         Fields::Unnamed(_) => {
             let info = &infos[0];
@@ -716,7 +878,9 @@ fn build_decode_impl(
                     tag = quote_spanned!(span=> <#ty as ::nanonbt::DeserializeNbtRef<#lifetime>>::TAG);
                     quote_spanned!(span=> ::core::result::Result::Ok(Self(<#ty as ::nanonbt::DeserializeNbtRef<#lifetime>>::deserialize_nbt_ref(__r)?)))
                 }
-                FieldMode::Skipped => unreachable!("handled above"),
+                FieldMode::Skipped | FieldMode::SelfBorrowed | FieldMode::SelfOwned => {
+                    unreachable!("handled above")
+                }
             };
         }
     }
@@ -729,12 +893,26 @@ fn build_decode_impl(
             parse_quote!(::nanonbt::DeserializeNbt),
         );
     }
+    for param in used_type_params(self_owned_types.iter(), &input.generics) {
+        add_bound(
+            &mut generics,
+            &param,
+            parse_quote!(::nanonbt::DeserializeNbtSelf),
+        );
+    }
     if let Some(lifetime) = borrow_lifetime {
         for param in used_type_params(nested_types.iter(), &input.generics) {
             add_bound(
                 &mut generics,
                 &param,
                 parse_quote!(::nanonbt::DeserializeNbtRef<#lifetime>),
+            );
+        }
+        for param in used_type_params(self_borrowed_types.iter(), &input.generics) {
+            add_bound(
+                &mut generics,
+                &param,
+                parse_quote!(::nanonbt::DeserializeNbtSelfRef<#lifetime>),
             );
         }
     }
@@ -774,6 +952,7 @@ fn build_decode_impl(
 fn decode_parts(
     info: &FieldInfo,
     borrow_lifetime: Option<&Lifetime>,
+    reader: &TokenStream2,
 ) -> (TokenStream2, TokenStream2) {
     let ty = &info.ty;
     let span = ty.span();
@@ -783,12 +962,12 @@ fn decode_parts(
                 let route = array.route_type(ty);
                 (
                     quote_spanned!(span=> <#route as ::nanonbt::ArrayRoute>::TAG),
-                    quote_spanned!(span=> <#ty as ::nanonbt::DeserializeNbtArray<#route>>::deserialize_nbt_array(__r)?),
+                    quote_spanned!(span=> <#ty as ::nanonbt::DeserializeNbtArray<#route>>::deserialize_nbt_array(#reader)?),
                 )
             } else {
                 (
                     quote_spanned!(span=> <#ty as ::nanonbt::DeserializeNbt>::TAG),
-                    quote_spanned!(span=> <#ty as ::nanonbt::DeserializeNbt>::deserialize_nbt(__r)?),
+                    quote_spanned!(span=> <#ty as ::nanonbt::DeserializeNbt>::deserialize_nbt(#reader)?),
                 )
             }
         }
@@ -802,16 +981,17 @@ fn decode_parts(
                 .route_type(ty);
             (
                 quote_spanned!(span=> <#route as ::nanonbt::ArrayRoute>::TAG),
-                quote_spanned!(span=> <#ty as ::nanonbt::DeserializeNbtArrayRef<#lifetime, #route>>::deserialize_nbt_array_ref(__r)?),
+                quote_spanned!(span=> <#ty as ::nanonbt::DeserializeNbtArrayRef<#lifetime, #route>>::deserialize_nbt_array_ref(#reader)?),
             )
         }
         FieldMode::Nested => {
             let lifetime = borrow_lifetime.expect("nested field needs a lifetime");
             (
                 quote_spanned!(span=> <#ty as ::nanonbt::DeserializeNbtRef<#lifetime>>::TAG),
-                quote_spanned!(span=> <#ty as ::nanonbt::DeserializeNbtRef<#lifetime>>::deserialize_nbt_ref(__r)?),
+                quote_spanned!(span=> <#ty as ::nanonbt::DeserializeNbtRef<#lifetime>>::deserialize_nbt_ref(#reader)?),
             )
         }
+        FieldMode::SelfBorrowed | FieldMode::SelfOwned => unreachable!(),
     }
 }
 
@@ -865,7 +1045,7 @@ mod tests {
     /// would pass every round trip just as well.
     #[test]
     fn dispatch_is_hashified_exactly_when_asked() {
-        let dispatch = name_dispatch(&[quote!(b"one" => (),)]);
+        let dispatch = name_dispatch(&[quote!(b"one" => (),)], &quote!(__r));
         let text = dispatch.to_string();
         assert_eq!(
             text.contains("fnc_map"),

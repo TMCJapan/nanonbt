@@ -114,9 +114,11 @@ mod wire;
 pub use codec::{read_count, read_name_into, skip_nbt, write_count, write_string};
 #[cfg(feature = "alloc")]
 pub use codec::{read_string, read_string_into};
-pub use de::{DeserializeNbt, DeserializeNbtArray};
-pub use de_ref::{DeserializeNbtArrayRef, DeserializeNbtRef};
+pub use de::{DeserializeNbt, DeserializeNbtArray, DeserializeNbtSelf};
+pub use de_ref::{DeserializeNbtArrayRef, DeserializeNbtRef, DeserializeNbtSelfRef};
 pub use error::{Error, Result};
+#[cfg(feature = "alloc")]
+pub use io::TeeReader;
 #[cfg(feature = "alloc")]
 pub use io::VecReader;
 pub use io::{Read, ReadRef, SliceReader, Write};
