@@ -1,5 +1,7 @@
 #[cfg(feature = "alloc")]
 use alloc::borrow::Cow;
+#[cfg(feature = "alloc")]
+use alloc::vec::Vec;
 
 use crate::codec::read_count;
 use crate::route::{ByteArray, IntArray, LongArray};
@@ -132,5 +134,39 @@ impl<'de> DeserializeNbtSelfRef<'de> for alloc::borrow::Cow<'de, [u8]> {
     #[inline]
     fn deserialize_nbt_self_ref(bytes: &'de [u8]) -> Result<Self> {
         Ok(alloc::borrow::Cow::Borrowed(bytes))
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl<'de, T: DeserializeNbtRef<'de>> DeserializeNbtRef<'de> for Vec<T> {
+    const TAG: Tag = Tag::List;
+
+    fn deserialize_nbt_ref<R: ReadRef<'de> + ?Sized>(reader: &mut R) -> Result<Self> {
+        let element = Tag::from_u8(reader.read_u8()?)?;
+        let len = read_count(reader)?;
+        if element == Tag::End {
+            return if len == 0 {
+                Ok(Self::new())
+            } else {
+                Err(Error::InvalidData(
+                    "non-empty list with the `End` element tag",
+                ))
+            };
+        }
+        if element != T::TAG {
+            return Err(Error::InvalidTag {
+                expected: T::TAG,
+                actual: element.as_u8(),
+            });
+        }
+        if len > reader.remaining() {
+            return Err(Error::UnexpectedEof);
+        }
+        let mut out = Self::new();
+        out.try_reserve(len).map_err(|_| Error::InvalidLength)?;
+        for _ in 0..len {
+            out.push(T::deserialize_nbt_ref(reader)?);
+        }
+        Ok(out)
     }
 }

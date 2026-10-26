@@ -28,7 +28,8 @@
 //! # Borrowed fields
 //!
 //! A struct with a borrowed field such as `&'de [u8]`, `&'de [I32Be]`,
-//! `Cow<'de, [u8]>` or a nested borrowing struct gets an implementation of
+//! `&'de Cesu8`, `&'de str`, `Cow<'de, Cesu8>`, or a nested borrowing struct
+//! gets an implementation of
 //! `DeserializeNbtRef<'de>` instead of `DeserializeNbt`, so it can only be
 //! decoded from a reader that supports zero-copy. Borrowed fields must carry
 //! `#[nbt(array = ...)]`, and the struct must declare the lifetime used for
@@ -552,7 +553,7 @@ fn expand_deserialize(input: &DeriveInput) -> syn::Result<TokenStream2> {
             } else {
                 FieldMode::SelfOwned
             }
-        } else if is_reference(&ty) || is_cow(&ty) {
+        } else if is_slice_reference(&ty) || is_cow_slice(&ty) {
             borrowed = true;
             FieldMode::BorrowedArray
         } else if let Some(lifetime) = &borrow_lifetime {
