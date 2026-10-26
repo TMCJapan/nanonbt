@@ -297,7 +297,6 @@ impl DeserializeNbtSelf for alloc::boxed::Box<[u8]> {
     }
 }
 
-
 #[cfg(feature = "bytes")]
 impl DeserializeNbtSelf for bytes::Bytes {
     #[inline]

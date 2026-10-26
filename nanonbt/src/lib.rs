@@ -118,9 +118,9 @@ pub use de::{DeserializeNbt, DeserializeNbtArray, DeserializeNbtSelf};
 pub use de_ref::{DeserializeNbtArrayRef, DeserializeNbtRef, DeserializeNbtSelfRef};
 pub use error::{Error, Result};
 #[cfg(feature = "alloc")]
-pub use io::VecReader;
-#[cfg(feature = "alloc")]
 pub use io::TeeReader;
+#[cfg(feature = "alloc")]
+pub use io::VecReader;
 pub use io::{Read, ReadRef, SliceReader, Write};
 pub use route::{ArrayElem, ArrayRoute, ArrayRouteFor};
 pub use ser::{SerializeNbt, SerializeNbtArray};

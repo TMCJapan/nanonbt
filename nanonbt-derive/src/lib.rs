@@ -676,7 +676,9 @@ fn build_decode_impl(
             // name the struct knows, so it cannot match and is skipped.
             let mut name_max = 0usize;
             let mut self_vars: Vec<(Ident, Type, bool)> = Vec::new();
-            let self_borrowed_flag = infos.iter().any(|i| matches!(i.mode, FieldMode::SelfBorrowed));
+            let self_borrowed_flag = infos
+                .iter()
+                .any(|i| matches!(i.mode, FieldMode::SelfBorrowed));
             let self_has_flag = infos.iter().any(|i| i.attrs.self_);
             let self_reader = if self_has_flag && !self_borrowed_flag {
                 quote!(&mut __tee)
@@ -700,7 +702,11 @@ fn build_decode_impl(
                     } else {
                         self_owned_types.push(ty.clone());
                     }
-                    self_vars.push((var.clone(), ty.clone(), matches!(info.mode, FieldMode::SelfBorrowed)));
+                    self_vars.push((
+                        var.clone(),
+                        ty.clone(),
+                        matches!(info.mode, FieldMode::SelfBorrowed),
+                    ));
                     inits.push(quote! {
                         #ident: #var.unwrap(),
                     });
@@ -774,7 +780,9 @@ fn build_decode_impl(
                     #construct
                 };
             } else if self_borrowed_flag {
-                let self_lifetime = borrow_lifetime.expect("borrowed self requires a lifetime").clone();
+                let self_lifetime = borrow_lifetime
+                    .expect("borrowed self requires a lifetime")
+                    .clone();
                 let self_assignments: Vec<_> = self_vars.iter().map(|(var, ty, is_borrowed)| {
                     if *is_borrowed {
                         quote!(#var = ::core::option::Option::Some(<#ty as ::nanonbt::DeserializeNbtSelfRef<#self_lifetime>>::deserialize_nbt_self_ref(&__r.backing_bytes()[__nbt_self_start..__nbt_self_end])?);)
