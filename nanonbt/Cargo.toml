@@ -8,6 +8,7 @@ license.workspace = true
 [features]
 default = ["alloc", "hashify"]
 alloc = []
+bytes = ["alloc", "dep:bytes"]
 # serde support needs `alloc` for list buffering and error messages.
 serde = ["alloc", "dep:serde"]
 std = ["alloc"]
@@ -20,6 +21,7 @@ hashify = ["nanonbt-derive/hashify", "dep:hashify"]
 [dependencies]
 hashify = { workspace = true, optional = true }
 nanocesu8 = { workspace = true }
+bytes = { version = "1", optional = true }
 nanonbt-derive = { workspace = true }
 serde = { workspace = true, optional = true, features = ["alloc"] }
 

@@ -296,3 +296,12 @@ impl DeserializeNbtSelf for alloc::boxed::Box<[u8]> {
         Ok(bytes.to_vec().into_boxed_slice())
     }
 }
+
+
+#[cfg(feature = "bytes")]
+impl DeserializeNbtSelf for bytes::Bytes {
+    #[inline]
+    fn deserialize_nbt_self(bytes: &[u8]) -> Result<Self> {
+        Ok(Self::copy_from_slice(bytes))
+    }
+}
