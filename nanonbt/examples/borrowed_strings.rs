@@ -44,8 +44,7 @@ fn main() {
     // allocation. (Some spellings borrow, others own their storage.)
     let start = bytes.as_ptr() as usize;
     let end = start + bytes.len();
-    let title_in_input =
-        (start..end).contains(&(borrowed.title.as_bytes().as_ptr() as usize));
+    let title_in_input = (start..end).contains(&(borrowed.title.as_bytes().as_ptr() as usize));
     println!("title borrowed from input: {title_in_input}");
 
     // Serializing the borrowed value writes the same bytes back.
