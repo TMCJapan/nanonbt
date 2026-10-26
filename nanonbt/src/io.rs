@@ -225,6 +225,12 @@ impl<R: Read + ?Sized> Read for &mut R {
 pub trait ReadRef<'buf>: Read {
     /// Returns the next `len` bytes as a slice of the backing buffer.
     fn read_borrowed(&mut self, len: usize) -> Result<&'buf [u8]>;
+
+    /// Returns the reader's current offset into its backing buffer.
+    fn position(&self) -> usize;
+
+    /// Returns the full backing buffer the reader draws from.
+    fn backing_bytes(&self) -> &'buf [u8];
 }
 
 impl<'buf> ReadRef<'buf> for &'buf [u8] {
@@ -238,6 +244,16 @@ impl<'buf> ReadRef<'buf> for &'buf [u8] {
         *self = tail;
         Ok(head)
     }
+
+    #[inline]
+    fn position(&self) -> usize {
+        0
+    }
+
+    #[inline]
+    fn backing_bytes(&self) -> &'buf [u8] {
+        self
+    }
 }
 
 #[cfg(not(feature = "std"))]
@@ -245,6 +261,16 @@ impl<'buf, R: ReadRef<'buf> + ?Sized> ReadRef<'buf> for &mut R {
     #[inline]
     fn read_borrowed(&mut self, len: usize) -> Result<&'buf [u8]> {
         (**self).read_borrowed(len)
+    }
+
+    #[inline]
+    fn position(&self) -> usize {
+        (**self).position()
+    }
+
+    #[inline]
+    fn backing_bytes(&self) -> &'buf [u8] {
+        (**self).backing_bytes()
     }
 }
 
@@ -316,6 +342,16 @@ impl<'buf> ReadRef<'buf> for SliceReader<'buf> {
         let bytes: &'buf [u8] = self.bytes;
         Ok(&bytes[start..end])
     }
+
+    #[inline]
+    fn position(&self) -> usize {
+        self.pos
+    }
+
+    #[inline]
+    fn backing_bytes(&self) -> &'buf [u8] {
+        self.bytes
+    }
 }
 
 /// A [`Read`]-only reader over an owned byte buffer.
@@ -379,6 +415,54 @@ impl Read for VecReader {
     #[inline]
     fn remaining(&self) -> usize {
         self.bytes.len().saturating_sub(self.pos)
+    }
+}
+
+/// A [`Read`] wrapper that copies everything it reads into a buffer.
+///
+/// Used by the derive macro when a `#[nbt(self)]` field stores the compound's
+/// raw payload as an owned [`Vec<u8>`]: the read still drives the parser, but
+/// every byte consumed is retained in the supplied buffer.
+#[cfg(feature = "alloc")]
+pub struct TeeReader<'a, R: ?Sized> {
+    inner: &'a mut R,
+    buffer: &'a mut alloc::vec::Vec<u8>,
+}
+
+#[cfg(feature = "alloc")]
+impl<'a, R: ?Sized> TeeReader<'a, R> {
+    /// Creates a tee over `inner`, appending consumed bytes to `buffer`.
+    #[inline]
+    pub const fn new(inner: &'a mut R, buffer: &'a mut alloc::vec::Vec<u8>) -> Self {
+        Self { inner, buffer }
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl<R: Read + ?Sized> Read for TeeReader<'_, R> {
+    #[inline]
+    fn read_exact(&mut self, buf: &mut [u8]) -> Result<()> {
+        self.inner.read_exact(buf)?;
+        self.buffer.extend_from_slice(buf);
+        Ok(())
+    }
+
+    #[inline]
+    fn skip(&mut self, len: usize) -> Result<()> {
+        let mut remaining = len;
+        let mut tmp = [0u8; 1024];
+        while remaining > 0 {
+            let chunk = remaining.min(tmp.len());
+            self.inner.read_exact(&mut tmp[..chunk])?;
+            self.buffer.extend_from_slice(&tmp[..chunk]);
+            remaining -= chunk;
+        }
+        Ok(())
+    }
+
+    #[inline]
+    fn remaining(&self) -> usize {
+        self.inner.remaining()
     }
 }
 
