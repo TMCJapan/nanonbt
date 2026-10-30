@@ -24,7 +24,7 @@
 //!   written but not read back.
 //! * `#[nbt(default)]` — write the field, but fill it with
 //!   [`Default::default()`] when the input lacks its key, instead of failing
-//!   with [`Error::MissingField`](nanonbt::Error::MissingField). The type must
+//!   with `nanonbt::Error::MissingField`. The type must
 //!   implement [`Default`].
 //! * `#[nbt(default = "path")]` — the same, but the value comes from calling
 //!   the named zero-argument function; the type needs no [`Default`].
