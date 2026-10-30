@@ -328,6 +328,117 @@ fn skip_and_rename_work() {
     );
 }
 
+#[derive(SerializeNbt, DeserializeNbt, Debug, PartialEq, Default)]
+struct SkipSerialize {
+    #[nbt(skip_serialize)]
+    out: i64,
+    kept: String,
+}
+
+#[test]
+fn skip_serialize_omits_the_field_and_keeps_the_read_arm() {
+    let value = SkipSerialize {
+        out: 99,
+        kept: "abc".to_owned(),
+    };
+    let bytes = to_bytes(&value).unwrap();
+    assert!(!bytes.windows(3).any(|window| window == b"out"));
+
+    // `skip_serialize` alone leaves the field required on read, so this still
+    // asks for a key the write above did not emit.
+    assert_eq!(
+        from_bytes::<SkipSerialize>(&bytes).unwrap_err(),
+        Error::MissingField("out")
+    );
+
+    // When the bytes do carry the key, only `skip_deserialize` ignores it.
+    let mut carried = bytes;
+    let end = carried.len() - 1;
+    carried.splice(
+        end..end,
+        [
+            Tag::Long.as_u8(),
+            0,
+            3,
+            b'o',
+            b'u',
+            b't',
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            7,
+        ],
+    );
+    assert_eq!(
+        from_bytes::<SkipSerialize>(&carried).unwrap(),
+        SkipSerialize {
+            out: 7,
+            kept: "abc".to_owned(),
+        }
+    );
+}
+
+#[derive(SerializeNbt, DeserializeNbt, Debug, PartialEq, Default)]
+struct SkipDeserialize {
+    #[nbt(skip_deserialize)]
+    hidden: i64,
+    kept: String,
+}
+
+#[test]
+fn skip_deserialize_writes_the_field_but_ignores_it_on_read() {
+    let value = SkipDeserialize {
+        hidden: 99,
+        kept: "abc".to_owned(),
+    };
+    let bytes = to_bytes(&value).unwrap();
+    // The field is on the wire and is skipped as an unknown key when read.
+    assert!(bytes.windows(6).any(|window| window == b"hidden"));
+    assert_eq!(
+        from_bytes::<SkipDeserialize>(&bytes).unwrap(),
+        SkipDeserialize {
+            hidden: 0,
+            kept: "abc".to_owned(),
+        }
+    );
+}
+
+/// `skip` is the alias for both halves: it writes and reads exactly like a
+/// struct that names both flags on the same key.
+#[derive(SerializeNbt, DeserializeNbt, Debug, PartialEq, Default)]
+struct SkipBoth {
+    #[nbt(skip_serialize, skip_deserialize)]
+    #[nbt(rename = "cache")]
+    both: i64,
+    #[nbt(rename = "n")]
+    kept: String,
+}
+
+#[test]
+fn skip_is_the_alias_for_both_flags() {
+    let alias = Skipping {
+        cache: 99,
+        name: "abc".to_owned(),
+    };
+    let split = SkipBoth {
+        both: 99,
+        kept: "abc".to_owned(),
+    };
+    let bytes = to_bytes(&split).unwrap();
+    assert_eq!(to_bytes(&alias).unwrap(), bytes);
+    assert_eq!(
+        from_bytes::<SkipBoth>(&bytes).unwrap(),
+        SkipBoth {
+            both: 0,
+            kept: "abc".to_owned(),
+        }
+    );
+}
+
 #[derive(SerializeNbt, DeserializeNbt, Debug, PartialEq)]
 struct Renamed {
     #[nbt(rename = "名前\0\u{1f600}")]
