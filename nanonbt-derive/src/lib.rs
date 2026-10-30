@@ -18,6 +18,11 @@
 //! * `#[nbt(rename = "name")]` — use a different compound key.
 //! * `#[nbt(skip)]` — shorthand for `skip_serialize` plus `skip_deserialize`.
 //! * `#[nbt(skip_serialize)]` — omit the field when writing.
+//! * `#[nbt(skip_serializing_if = "path")]` — omit the field when writing only
+//!   if `path(&self.field)` returns `true`. The path is called with a
+//!   reference to the field, so `Option::is_none` works directly. The field is
+//!   still read as usual, so a value the predicate dropped must be one the
+//!   reader can do without — see below.
 //! * `#[nbt(skip_deserialize)]` — ignore the field when reading and fill it
 //!   with [`Default::default()`]. A key of that name on the wire is skipped
 //!   like any other unknown field, so setting only this one lets a value be
@@ -34,6 +39,14 @@
 //! the field off the read path. `default` applies to a field that is still on
 //! the read path, so it can be combined with `skip_serialize` but not with
 //! `skip_deserialize`, which already fills the field.
+//!
+//! `skip_serializing_if` is likewise write-only: a read of bytes the predicate
+//! let through decodes the field as usual, and a read of bytes it dropped fails
+//! with `Error::MissingField` unless the field also carries `default`, whose
+//! fallback then fills it. Pairing the two lets a value round trip in both
+//! directions without treating an absent key as corruption. It implies
+//! `skip_serialize`, so a field that is always omitted needs neither the
+//! predicate nor both flags.
 //!
 //! With the `hashify` feature (enable `nanonbt/hashify`), a read dispatches
 //! the names it sees through
@@ -95,6 +108,7 @@ pub fn derive_deserialize_nbt(input: TokenStream) -> TokenStream {
 struct FieldAttrs {
     array: Option<ArraySpec>,
     skip_serialize: bool,
+    skip_serializing_if: Option<syn::Path>,
     skip_deserialize: bool,
     default: Option<DefaultSpec>,
     rename: Option<String>,
@@ -169,6 +183,7 @@ fn parse_field_attrs(field: &Field) -> syn::Result<FieldAttrs> {
                 if attrs.skip_serialize || attrs.skip_deserialize {
                     return Err(meta.error("duplicate `skip` attribute"));
                 }
+                ensure_predicate_fits(&meta, &attrs, "skip")?;
                 attrs.skip_serialize = true;
                 attrs.skip_deserialize = true;
                 Ok(())
@@ -176,7 +191,21 @@ fn parse_field_attrs(field: &Field) -> syn::Result<FieldAttrs> {
                 if attrs.skip_serialize {
                     return Err(meta.error("duplicate `skip_serialize` attribute"));
                 }
+                ensure_predicate_fits(&meta, &attrs, "skip_serialize")?;
                 attrs.skip_serialize = true;
+                Ok(())
+            } else if meta.path.is_ident("skip_serializing_if") {
+                if attrs.skip_serializing_if.is_some() {
+                    return Err(meta.error("duplicate `skip_serializing_if` attribute"));
+                }
+                if attrs.skip_serialize {
+                    return Err(meta.error(
+                        "`skip_serializing_if` conflicts with `skip_serialize` (`skip` implies it): \
+                         a field that is always omitted cannot need a predicate",
+                    ));
+                }
+                let value: LitStr = meta.value()?.parse()?;
+                attrs.skip_serializing_if = Some(value.parse()?);
                 Ok(())
             } else if meta.path.is_ident("skip_deserialize") {
                 if attrs.skip_deserialize {
@@ -214,12 +243,43 @@ fn parse_field_attrs(field: &Field) -> syn::Result<FieldAttrs> {
             } else {
                 Err(meta.error(
                     "unsupported `nbt` attribute; expected `array`, `skip`, `skip_serialize`, \
-                     `skip_deserialize`, `default`, `rename`, or `self`",
+                     `skip_serializing_if`, `skip_deserialize`, `default`, `rename`, \
+                     or `self`",
                 ))
             }
         })?;
     }
     Ok(attrs)
+}
+
+/// `skip_serialize` and `skip` already omit the field unconditionally, so a
+/// predicate in the same attribute list is a contradiction whichever order
+/// the two are written in.
+fn ensure_predicate_fits(
+    meta: &syn::meta::ParseNestedMeta<'_>,
+    attrs: &FieldAttrs,
+    flag: &str,
+) -> syn::Result<()> {
+    if attrs.skip_serializing_if.is_some() {
+        return Err(meta.error(format!(
+            "`{flag}` conflicts with `skip_serializing_if`: a field that is always omitted \
+             cannot need a predicate"
+        )));
+    }
+    Ok(())
+}
+
+/// A newtype is transparent, so the payload is the whole value and there is
+/// no entry a predicate could omit; only a compound has fields to skip.
+fn reject_newtype_skip_serializing_if(field: &Field, attrs: &FieldAttrs) -> syn::Result<()> {
+    if attrs.skip_serializing_if.is_some() {
+        return Err(syn::Error::new_spanned(
+            field,
+            "`#[nbt(skip_serializing_if = \"...\")]` is not supported on newtype fields, \
+             because a newtype's payload is the value itself",
+        ));
+    }
+    Ok(())
 }
 
 fn field_key(ident: &Ident, attrs: &FieldAttrs) -> LitStr {
@@ -466,11 +526,24 @@ fn expand_serialize(input: &DeriveInput) -> syn::Result<TokenStream2> {
                 let (name_len, name_bytes) = encode_name(&field_key(ident, &attrs))?;
                 let value = quote!(&self.#ident);
                 let (tag_byte, payload) = serialize_field(ty, &attrs, &value);
-                writes.push(quote! {
+                let write = quote! {
                     __w.write_bytes(&[#tag_byte]);
                     __w.write_u16_be(#name_len);
                     __w.write_bytes(#name_bytes);
                     #payload
+                };
+                // `skip_serializing_if` takes a path called with the field, so
+                // the predicate owns every borrow it makes for the field's
+                // lifetime (`matches!(x, None)`, `Option::is_none`, ...).
+                writes.push(if let Some(predicate) = &attrs.skip_serializing_if {
+                    let span = predicate.span();
+                    quote_spanned! {span=>
+                        if !#predicate(&self.#ident) {
+                            #write
+                        }
+                    }
+                } else {
+                    write
                 });
             }
             body = quote! {
@@ -481,6 +554,7 @@ fn expand_serialize(input: &DeriveInput) -> syn::Result<TokenStream2> {
         Fields::Unnamed(unnamed) => {
             let field = expect_newtype(&input.ident, unnamed)?;
             let attrs = parse_field_attrs(field)?;
+            reject_newtype_skip_serializing_if(field, &attrs)?;
             let ty = &field.ty;
             used_types.push(ty.clone());
             let span = ty.span();
@@ -1240,6 +1314,68 @@ mod tests {
             struct S(#[nbt(default)] i32);
         };
         assert!(expand_deserialize(&newtype).is_err());
+    }
+
+    /// The predicate wraps the whole entry, so nothing of it is written when
+    /// it returns `true`, and it is called with a borrow of the field.
+    #[test]
+    fn skip_serializing_if_guards_the_entry() {
+        let input: DeriveInput = parse_quote! {
+            struct S {
+                #[nbt(skip_serializing_if = "String::is_empty")]
+                name: String,
+            }
+        };
+        let generated = expand_serialize(&input).unwrap().to_string();
+        assert!(
+            generated.contains("if ! String :: is_empty (& self . name)"),
+            "{generated}"
+        );
+        // The key is still read: the attribute is write-only.
+        let generated = expand_deserialize(&input).unwrap().to_string();
+        assert!(generated.contains(r#"b"name""#), "{generated}");
+    }
+
+    /// `skip_serialize` already omits the field, so pairing it with a
+    /// predicate is a contradiction rather than a no-op worth allowing.
+    #[test]
+    fn skip_serializing_if_conflicts_with_skip_serialize() {
+        let input: DeriveInput = parse_quote! {
+            struct S {
+                #[nbt(skip_serialize, skip_serializing_if = "String::is_empty")]
+                name: String,
+            }
+        };
+        assert!(expand_serialize(&input).is_err());
+        let input: DeriveInput = parse_quote! {
+            struct S {
+                #[nbt(skip_serializing_if = "String::is_empty", skip)]
+                name: String,
+            }
+        };
+        assert!(expand_serialize(&input).is_err());
+    }
+
+    /// A newtype's payload is the value itself, so there is no entry a
+    /// predicate could drop.
+    #[test]
+    fn skip_serializing_if_is_refused_on_newtypes() {
+        let input: DeriveInput = parse_quote! {
+            struct S(#[nbt(skip_serializing_if = "i64::is_negative")] i64);
+        };
+        assert!(expand_serialize(&input).is_err());
+    }
+
+    /// The predicate is a path string, parsed where the attribute is.
+    #[test]
+    fn skip_serializing_if_rejects_a_non_path() {
+        let input: DeriveInput = parse_quote! {
+            struct S {
+                #[nbt(skip_serializing_if = "true")]
+                name: String,
+            }
+        };
+        assert!(expand_serialize(&input).is_err());
     }
 
     /// A write must emit the same bytes the macro encoded.
