@@ -15,7 +15,15 @@
 //!   route from the element type (`Vec<i32>` becomes `TAG_Int_Array`).
 //! * `#[nbt(array = byte | int | long)]` — force a `TAG_Byte_Array`,
 //!   `TAG_Int_Array` or `TAG_Long_Array` route.
-//! * `#[nbt(rename = "name")]` — use a different compound key.
+//! * `#[nbt(rename = "name")]` — use a different compound key, both when
+//!   writing and when reading. Shorthand for `rename_serialize` plus
+//!   `rename_deserialize`.
+//! * `#[nbt(rename_serialize = "name")]` — write the field under a different
+//!   compound key.
+//! * `#[nbt(rename_deserialize = "name")]` — read the field from a different
+//!   compound key. Like `skip_deserialize`, it is independent of the write
+//!   path, so setting only this one lets a value be written under one name and
+//!   read back from another.
 //! * `#[nbt(skip)]` — shorthand for `skip_serialize` plus `skip_deserialize`.
 //! * `#[nbt(skip_serialize)]` — omit the field when writing.
 //! * `#[nbt(skip_serializing_if = "path")]` — omit the field when writing only
@@ -111,7 +119,8 @@ struct FieldAttrs {
     skip_serializing_if: Option<syn::Path>,
     skip_deserialize: bool,
     default: Option<DefaultSpec>,
-    rename: Option<String>,
+    rename_serialize: Option<String>,
+    rename_deserialize: Option<String>,
     self_: bool,
 }
 
@@ -124,6 +133,34 @@ enum DefaultSpec {
     /// `#[nbt(default = "path")]`: the named function, which is called with no
     /// arguments and need not relate to the type's `Default`.
     Function(Path),
+}
+
+/// Which direction a `rename*` attribute sets, so `rename` can go through the
+/// same code path as the two halves it stands in for.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RenameDirection {
+    Serialize,
+    Deserialize,
+}
+
+impl FieldAttrs {
+    const fn rename_slot(&mut self, direction: RenameDirection) -> &mut Option<String> {
+        match direction {
+            RenameDirection::Serialize => &mut self.rename_serialize,
+            RenameDirection::Deserialize => &mut self.rename_deserialize,
+        }
+    }
+
+    /// The key the field is written under.
+    fn serialize_key(&self, ident: &Ident) -> LitStr {
+        rename_or_ident(self.rename_serialize.as_ref(), ident)
+    }
+
+    /// The key the field's read arm matches, and the name `MissingField`
+    /// reports.
+    fn deserialize_key(&self, ident: &Ident) -> LitStr {
+        rename_or_ident(self.rename_deserialize.as_ref(), ident)
+    }
 }
 
 #[derive(Clone)]
@@ -238,13 +275,31 @@ fn parse_field_attrs(field: &Field) -> syn::Result<FieldAttrs> {
                 Ok(())
             } else if meta.path.is_ident("rename") {
                 let value: LitStr = meta.value()?.parse()?;
-                attrs.rename = Some(value.value());
+                for direction in [RenameDirection::Serialize, RenameDirection::Deserialize] {
+                    set_rename(&mut attrs, direction, "rename", &value)?;
+                }
                 Ok(())
+            } else if meta.path.is_ident("rename_serialize") {
+                let value: LitStr = meta.value()?.parse()?;
+                set_rename(
+                    &mut attrs,
+                    RenameDirection::Serialize,
+                    "rename_serialize",
+                    &value,
+                )
+            } else if meta.path.is_ident("rename_deserialize") {
+                let value: LitStr = meta.value()?.parse()?;
+                set_rename(
+                    &mut attrs,
+                    RenameDirection::Deserialize,
+                    "rename_deserialize",
+                    &value,
+                )
             } else {
                 Err(meta.error(
                     "unsupported `nbt` attribute; expected `array`, `skip`, `skip_serialize`, \
                      `skip_serializing_if`, `skip_deserialize`, `default`, `rename`, \
-                     or `self`",
+                     `rename_serialize`, `rename_deserialize`, or `self`",
                 ))
             }
         })?;
@@ -282,8 +337,35 @@ fn reject_newtype_skip_serializing_if(field: &Field, attrs: &FieldAttrs) -> syn:
     Ok(())
 }
 
-fn field_key(ident: &Ident, attrs: &FieldAttrs) -> LitStr {
-    attrs.rename.as_ref().map_or_else(
+/// Records one direction of a rename, refusing to set it twice.
+///
+/// The caller's name goes in the message, so a field carrying both `rename`
+/// and `rename_serialize` is told which one it cannot repeat, in whichever
+/// order they were written.
+fn set_rename(
+    attrs: &mut FieldAttrs,
+    direction: RenameDirection,
+    attribute: &str,
+    value: &LitStr,
+) -> syn::Result<()> {
+    let span = value.span();
+    let slot = attrs.rename_slot(direction);
+    if slot.is_some() {
+        let direction = match direction {
+            RenameDirection::Serialize => "serialize",
+            RenameDirection::Deserialize => "deserialize",
+        };
+        return Err(syn::Error::new(
+            span,
+            format!("duplicate `{attribute}` attribute: the {direction} key is already set"),
+        ));
+    }
+    *slot = Some(value.value());
+    Ok(())
+}
+
+fn rename_or_ident(rename: Option<&String>, ident: &Ident) -> LitStr {
+    rename.map_or_else(
         || LitStr::new(&ident.unraw().to_string(), ident.span()),
         |name| LitStr::new(name, ident.span()),
     )
@@ -385,23 +467,50 @@ fn expect_newtype<'a>(ident: &Ident, unnamed: &'a FieldsUnnamed) -> syn::Result<
 /// Rejects fields that would share a compound key.
 ///
 /// Two fields can collide through `#[nbt(rename = "...")]`; without this check
-/// the generated decoder would silently ignore one of them at runtime.
+/// the generated decoder would silently ignore one of them at runtime. Since
+/// `rename_serialize` and `rename_deserialize` are independent, a field's
+/// written name and its read name can differ, so the written names must be
+/// unique among themselves and the read names among themselves. A struct that
+/// merely swaps two fields' keys between the two directions is therefore fine;
+/// one whose keys collide on either path is refused.
 fn check_duplicate_keys(fields: &Fields) -> syn::Result<()> {
-    let mut seen: HashSet<String> = HashSet::new();
+    let mut field_names: HashSet<String> = HashSet::new();
+    let mut written: HashSet<String> = HashSet::new();
+    let mut read: HashSet<String> = HashSet::new();
     for field in field_list(fields) {
         let attrs = parse_field_attrs(field)?;
-        if attrs.skip_serialize && attrs.skip_deserialize {
-            continue;
-        }
         let Some(ident) = field.ident.as_ref() else {
             continue;
         };
-        let key = field_key(ident, &attrs);
-        if !seen.insert(key.value()) {
+        if !field_names.insert(ident.unraw().to_string()) {
             return Err(syn::Error::new_spanned(
                 field,
-                format!("duplicate NBT field name `{}`", key.value()),
+                format!("duplicate NBT field name `{}`", ident.unraw()),
             ));
+        }
+        if !attrs.skip_serialize {
+            let key = attrs.serialize_key(ident);
+            if !written.insert(key.value()) {
+                return Err(syn::Error::new_spanned(
+                    field,
+                    format!(
+                        "duplicate NBT field name `{}` written by the struct",
+                        key.value()
+                    ),
+                ));
+            }
+        }
+        if !attrs.skip_deserialize {
+            let key = attrs.deserialize_key(ident);
+            if !read.insert(key.value()) {
+                return Err(syn::Error::new_spanned(
+                    field,
+                    format!(
+                        "duplicate NBT field name `{}` read by the struct",
+                        key.value()
+                    ),
+                ));
+            }
         }
     }
     Ok(())
@@ -523,7 +632,7 @@ fn expand_serialize(input: &DeriveInput) -> syn::Result<TokenStream2> {
                 let ident = field.ident.as_ref().expect("named field");
                 let ty = &field.ty;
                 used_types.push(ty.clone());
-                let (name_len, name_bytes) = encode_name(&field_key(ident, &attrs))?;
+                let (name_len, name_bytes) = encode_name(&attrs.serialize_key(ident))?;
                 let value = quote!(&self.#ident);
                 let (tag_byte, payload) = serialize_field(ty, &attrs, &value);
                 let write = quote! {
@@ -880,7 +989,7 @@ fn build_decode_impl(
 
                 let var = format_ident!("__nbt_field_{}", info.index);
                 let ty = &info.ty;
-                let key = field_key(ident, &info.attrs);
+                let key = info.attrs.deserialize_key(ident);
                 let (name_len, name_bytes) = encode_name(&key)?;
                 name_max = name_max.max(usize::from(name_len));
                 let (expected, decode) = decode_parts(info, borrow_lifetime, &self_reader);
@@ -1393,5 +1502,109 @@ mod tests {
             "{generated}"
         );
         assert!(!generated.contains("write_string"), "{generated}");
+    }
+
+    /// Parses one field's attributes and returns its two keys.
+    fn keys(attrs: &proc_macro2::TokenStream) -> (String, String) {
+        let field: Field = parse_quote! {
+            #attrs
+            value: i32
+        };
+        let attrs = parse_field_attrs(&field).unwrap();
+        let ident = field.ident.as_ref().unwrap();
+        (
+            attrs.serialize_key(ident).value(),
+            attrs.deserialize_key(ident).value(),
+        )
+    }
+
+    #[test]
+    fn rename_sets_both_directions() {
+        assert_eq!(
+            keys(&quote!(#[nbt(rename = "n")])),
+            ("n".to_owned(), "n".to_owned())
+        );
+    }
+
+    #[test]
+    fn each_rename_half_is_independent() {
+        assert_eq!(
+            keys(&quote!(#[nbt(rename_serialize = "w")])),
+            ("w".to_owned(), "value".to_owned())
+        );
+        assert_eq!(
+            keys(&quote!(#[nbt(rename_deserialize = "r")])),
+            ("value".to_owned(), "r".to_owned())
+        );
+        assert_eq!(
+            keys(&quote! {
+                #[nbt(rename_serialize = "w")]
+                #[nbt(rename_deserialize = "r")]
+            }),
+            ("w".to_owned(), "r".to_owned())
+        );
+    }
+
+    #[test]
+    fn setting_a_direction_twice_is_refused() {
+        let cases = [
+            quote!(#[nbt(rename = "a", rename = "b")]),
+            quote!(#[nbt(rename = "a", rename_serialize = "b")]),
+            quote!(#[nbt(rename_serialize = "a", rename = "b")]),
+            quote!(#[nbt(rename = "a", rename_deserialize = "b")]),
+            quote!(#[nbt(rename_deserialize = "a", rename_deserialize = "b")]),
+        ];
+        for attrs in cases {
+            let field: Field = parse_quote! {
+                #attrs
+                value: i32
+            };
+            assert!(parse_field_attrs(&field).is_err(), "{}", quote!(#attrs));
+        }
+        // The two halves may be combined freely with each other.
+        assert_eq!(
+            keys(&quote! {
+                #[nbt(rename_serialize = "a", rename_deserialize = "b")]
+            }),
+            ("a".to_owned(), "b".to_owned())
+        );
+    }
+
+    #[test]
+    fn keys_collide_only_on_the_path_they_share() {
+        // Swapped write and read names are fine: no write collision, no read
+        // collision.
+        let swapped: DeriveInput = parse_quote! {
+            struct S {
+                #[nbt(rename_serialize = "b", rename_deserialize = "a")]
+                a: i32,
+                #[nbt(rename_serialize = "a", rename_deserialize = "b")]
+                b: i32,
+            }
+        };
+        assert!(expand_serialize(&swapped).is_ok());
+        assert!(expand_deserialize(&swapped).is_ok());
+
+        // Two fields read from the same key are still refused.
+        let read_collision: DeriveInput = parse_quote! {
+            struct S {
+                #[nbt(rename_serialize = "a")]
+                a: i32,
+                #[nbt(rename_deserialize = "a")]
+                other: i32,
+            }
+        };
+        assert!(expand_deserialize(&read_collision).is_err());
+
+        // So are two fields written under the same key.
+        let write_collision: DeriveInput = parse_quote! {
+            struct S {
+                #[nbt(rename_serialize = "c")]
+                a: i32,
+                #[nbt(rename_serialize = "c", rename_deserialize = "d")]
+                b: i32,
+            }
+        };
+        assert!(expand_serialize(&write_collision).is_err());
     }
 }

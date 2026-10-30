@@ -329,6 +329,142 @@ fn skip_and_rename_work() {
 }
 
 #[derive(SerializeNbt, DeserializeNbt, Debug, PartialEq, Default)]
+struct RenameSerialize {
+    #[nbt(rename_serialize = "written")]
+    value: String,
+}
+
+/// The same wire shape as [`RenameSerialize`], writing the key that struct
+/// reads back under.
+#[derive(SerializeNbt, DeserializeNbt, Debug, PartialEq, Default)]
+struct RenameSerializeOnRead {
+    value: String,
+}
+
+/// The mirror image: written as itself, read from another key.
+#[derive(SerializeNbt, DeserializeNbt, Debug, PartialEq, Default)]
+struct RenameDeserialize {
+    #[nbt(rename_deserialize = "read")]
+    value: String,
+}
+
+/// The same wire shape as [`RenameDeserialize`], writing the key it reads.
+#[derive(SerializeNbt, DeserializeNbt, Debug, PartialEq, Default)]
+struct RenameDeserializeOnWrite {
+    #[nbt(rename = "read")]
+    value: String,
+}
+
+#[test]
+fn rename_serialize_writes_but_reads_unchanged() {
+    let value = RenameSerialize {
+        value: "abc".to_owned(),
+    };
+    let bytes = to_bytes(&value).unwrap();
+    assert!(bytes.windows(7).any(|window| window == b"written"));
+    assert!(!bytes.windows(5).any(|window| window == b"value"));
+
+    // The read path still expects `value`, so the round trip fails on the
+    // key the write emitted.
+    assert_eq!(
+        from_bytes::<RenameSerialize>(&bytes).unwrap_err(),
+        Error::MissingField("value")
+    );
+
+    // Read from a document that spells the key the read path expects, and the
+    // value comes through.
+    let doc = to_bytes(&RenameSerializeOnRead {
+        value: "abc".to_owned(),
+    })
+    .unwrap();
+    assert_eq!(from_bytes::<RenameSerialize>(&doc).unwrap(), value);
+}
+
+#[test]
+fn rename_deserialize_reads_but_writes_unchanged() {
+    let value = RenameDeserialize {
+        value: "abc".to_owned(),
+    };
+    let bytes = to_bytes(&value).unwrap();
+    assert!(bytes.windows(5).any(|window| window == b"value"));
+    assert!(!bytes.windows(4).any(|window| window == b"read"));
+
+    // The read path wants `read`, so the bytes written above are missing it.
+    assert_eq!(
+        from_bytes::<RenameDeserialize>(&bytes).unwrap_err(),
+        Error::MissingField("read")
+    );
+
+    let doc = to_bytes(&RenameDeserializeOnWrite {
+        value: "abc".to_owned(),
+    })
+    .unwrap();
+    assert_eq!(from_bytes::<RenameDeserialize>(&doc).unwrap(), value);
+}
+
+/// Both halves together, under independent names.
+#[derive(SerializeNbt, DeserializeNbt, Debug, PartialEq, Default)]
+struct RenameBoth {
+    #[nbt(rename_serialize = "out", rename_deserialize = "in")]
+    value: String,
+}
+
+/// The same wire shape as [`RenameBoth`], writing the key it reads.
+#[derive(SerializeNbt, DeserializeNbt, Debug, PartialEq, Default)]
+struct RenameBothOnRead {
+    #[nbt(rename = "in")]
+    value: String,
+}
+
+#[test]
+fn rename_halves_combine() {
+    let bytes = to_bytes(&RenameBoth {
+        value: "abc".to_owned(),
+    })
+    .unwrap();
+    assert!(bytes.windows(3).any(|window| window == b"out"));
+
+    let doc = to_bytes(&RenameBothOnRead {
+        value: "abc".to_owned(),
+    })
+    .unwrap();
+    assert_eq!(
+        from_bytes::<RenameBoth>(&doc).unwrap(),
+        RenameBoth {
+            value: "abc".to_owned(),
+        }
+    );
+}
+
+/// `rename` remains an alias for setting both halves at once.
+#[test]
+fn rename_is_an_alias_for_both_halves() {
+    #[derive(SerializeNbt, DeserializeNbt, Debug, PartialEq)]
+    struct Split {
+        #[nbt(rename_serialize = "n", rename_deserialize = "n")]
+        name: String,
+    }
+    #[derive(SerializeNbt, DeserializeNbt, Debug, PartialEq)]
+    struct Alias {
+        #[nbt(rename = "n")]
+        name: String,
+    }
+
+    let split = Split {
+        name: "abc".to_owned(),
+    };
+    let alias = Alias {
+        name: "abc".to_owned(),
+    };
+    // Written under `n` by both, and each decodes what the other wrote.
+    assert_eq!(to_bytes(&split).unwrap(), to_bytes(&alias).unwrap());
+    assert_eq!(
+        from_bytes::<Split>(&to_bytes(&alias).unwrap()).unwrap(),
+        split
+    );
+}
+
+#[derive(SerializeNbt, DeserializeNbt, Debug, PartialEq, Default)]
 struct SkipSerialize {
     #[nbt(skip_serialize)]
     out: i64,
