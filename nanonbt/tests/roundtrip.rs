@@ -598,3 +598,118 @@ fn borrowed_array_decoding_matches_owned() {
     let start = bytes.as_ptr() as usize;
     assert!((start..start + bytes.len()).contains(&(borrowed.as_ptr() as usize)));
 }
+
+#[derive(SerializeNbt, DeserializeNbt, Debug, PartialEq)]
+struct Defaulted {
+    required: i32,
+    #[nbt(default)]
+    optional: String,
+    #[nbt(default)]
+    count: i32,
+}
+
+#[derive(SerializeNbt)]
+struct OnlyRequired {
+    required: i32,
+}
+
+#[test]
+fn default_fills_absent_keys_with_the_trait() {
+    let bytes = to_bytes(&OnlyRequired { required: 7 }).unwrap();
+    assert_eq!(
+        from_bytes::<Defaulted>(&bytes).unwrap(),
+        Defaulted {
+            required: 7,
+            optional: String::new(),
+            count: 0,
+        }
+    );
+}
+
+#[test]
+fn default_keeps_values_that_are_present() {
+    let value = Defaulted {
+        required: 1,
+        optional: "kept".to_owned(),
+        count: 3,
+    };
+    let decoded: Defaulted = from_bytes(&to_bytes(&value).unwrap()).unwrap();
+    assert_eq!(decoded, value);
+}
+
+#[derive(DeserializeNbt, Debug, PartialEq)]
+struct DefaultedByFunction {
+    #[nbt(default = "loud")]
+    text: String,
+    #[nbt(default = "crate::forty_two")]
+    number: i32,
+}
+
+fn loud() -> String {
+    "loud".to_owned()
+}
+
+pub const fn forty_two() -> i32 {
+    42
+}
+
+#[derive(SerializeNbt)]
+struct Nothing;
+
+#[derive(SerializeNbt)]
+struct Present {
+    text: String,
+    number: i32,
+}
+
+#[test]
+fn default_function_is_called_for_absent_keys() {
+    let bytes = to_bytes(&Nothing).unwrap();
+    assert_eq!(
+        from_bytes::<DefaultedByFunction>(&bytes).unwrap(),
+        DefaultedByFunction {
+            text: "loud".to_owned(),
+            number: 42,
+        }
+    );
+
+    let bytes = to_bytes(&Present {
+        text: "quiet".to_owned(),
+        number: 1,
+    })
+    .unwrap();
+    assert_eq!(
+        from_bytes::<DefaultedByFunction>(&bytes).unwrap(),
+        DefaultedByFunction {
+            text: "quiet".to_owned(),
+            number: 1,
+        }
+    );
+}
+
+/// `skip_serialize` takes the key off the wire but leaves it on the read
+/// path, so `default` is exactly what fills it back; the two compose.
+#[derive(SerializeNbt, DeserializeNbt, Debug, PartialEq)]
+struct DefaultedAndUnwritten {
+    #[nbt(skip_serialize, default = "loud")]
+    text: String,
+    #[nbt(skip_serialize, default = "crate::forty_two")]
+    number: i32,
+}
+
+#[test]
+fn default_fills_keys_that_skip_serialize_leaves_out() {
+    let value = DefaultedAndUnwritten {
+        text: "ignored".to_owned(),
+        number: 9,
+    };
+    let bytes = to_bytes(&value).unwrap();
+    assert!(!bytes.windows(4).any(|window| window == b"text"));
+    assert_eq!(
+        from_bytes::<DefaultedAndUnwritten>(&bytes).unwrap(),
+        DefaultedAndUnwritten {
+            text: "loud".to_owned(),
+            number: 42,
+        }
+    );
+}

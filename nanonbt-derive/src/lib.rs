@@ -22,10 +22,18 @@
 //!   with [`Default::default()`]. A key of that name on the wire is skipped
 //!   like any other unknown field, so setting only this one lets a value be
 //!   written but not read back.
+//! * `#[nbt(default)]` — write the field, but fill it with
+//!   [`Default::default()`] when the input lacks its key, instead of failing
+//!   with [`Error::MissingField`](nanonbt::Error::MissingField). The type must
+//!   implement [`Default`].
+//! * `#[nbt(default = "path")]` — the same, but the value comes from calling
+//!   the named zero-argument function; the type needs no [`Default`].
 //!
 //! Unlike serde's counterpart, `skip_serialize` alone still generates a read
 //! arm, so a serialized value can be decoded; `skip_deserialize` is what takes
-//! the field off the read path.
+//! the field off the read path. `default` applies to a field that is still on
+//! the read path, so it can be combined with `skip_serialize` but not with
+//! `skip_deserialize`, which already fills the field.
 //!
 //! With the `hashify` feature (enable `nanonbt/hashify`), a read dispatches
 //! the names it sees through
@@ -59,7 +67,7 @@ use syn::spanned::Spanned;
 use syn::visit::Visit;
 use syn::{
     Data, DeriveInput, Field, Fields, FieldsUnnamed, GenericParam, Generics, Ident, Lifetime,
-    LitByteStr, LitStr, PathArguments, Token, Type, TypeParamBound, parse_macro_input,
+    LitByteStr, LitStr, Path, PathArguments, Token, Type, TypeParamBound, parse_macro_input,
 };
 
 /// Derives `nanonbt::SerializeNbt` for a struct.
@@ -88,8 +96,20 @@ struct FieldAttrs {
     array: Option<ArraySpec>,
     skip_serialize: bool,
     skip_deserialize: bool,
+    default: Option<DefaultSpec>,
     rename: Option<String>,
     self_: bool,
+}
+
+/// How a field that is absent from the input is filled.
+#[derive(Clone)]
+enum DefaultSpec {
+    /// `#[nbt(default)]`: `Default::default()`, so the type must implement
+    /// [`Default`].
+    Trait,
+    /// `#[nbt(default = "path")]`: the named function, which is called with no
+    /// arguments and need not relate to the type's `Default`.
+    Function(Path),
 }
 
 #[derive(Clone)]
@@ -164,6 +184,23 @@ fn parse_field_attrs(field: &Field) -> syn::Result<FieldAttrs> {
                 }
                 attrs.skip_deserialize = true;
                 Ok(())
+            } else if meta.path.is_ident("default") {
+                if attrs.default.is_some() {
+                    return Err(meta.error("duplicate `default` attribute"));
+                }
+                attrs.default = Some(if meta.input.peek(Token![=]) {
+                    let value: LitStr = meta.value()?.parse()?;
+                    if value.value().trim().is_empty() {
+                        return Err(meta.error(
+                            "`default` needs a function path inside the string, \
+                             such as `default = \"my_default\"`",
+                        ));
+                    }
+                    DefaultSpec::Function(value.parse()?)
+                } else {
+                    DefaultSpec::Trait
+                });
+                Ok(())
             } else if meta.path.is_ident("self") {
                 if attrs.self_ {
                     return Err(meta.error("duplicate `self` attribute"));
@@ -177,7 +214,7 @@ fn parse_field_attrs(field: &Field) -> syn::Result<FieldAttrs> {
             } else {
                 Err(meta.error(
                     "unsupported `nbt` attribute; expected `array`, `skip`, `skip_serialize`, \
-                     `skip_deserialize`, `rename`, or `self`",
+                     `skip_deserialize`, `default`, `rename`, or `self`",
                 ))
             }
         })?;
@@ -636,6 +673,29 @@ fn expand_deserialize(input: &DeriveInput) -> syn::Result<TokenStream2> {
             }
         }
 
+        if attrs.skip_deserialize && attrs.default.is_some() {
+            return Err(syn::Error::new_spanned(
+                field,
+                "`#[nbt(default)]` cannot be combined with `#[nbt(skip)]` or \
+                 `#[nbt(skip_deserialize)]`, which already fill the field with \
+                 `Default::default()`",
+            ));
+        }
+        if attrs.default.is_some() && matches!(mode, FieldMode::BorrowedArray | FieldMode::Nested) {
+            return Err(syn::Error::new_spanned(
+                field,
+                "`#[nbt(default)]` is not supported on borrowed fields; \
+                 a borrowing value cannot be conjured when the key is absent",
+            ));
+        }
+        if matches!(fields, Fields::Unnamed(_)) && attrs.default.is_some() {
+            return Err(syn::Error::new_spanned(
+                field,
+                "`#[nbt(default)]` is not supported on newtype fields, \
+                 whose payload is the whole document",
+            ));
+        }
+
         infos.push(FieldInfo {
             index,
             ident: field.ident.clone(),
@@ -773,9 +833,24 @@ fn build_decode_impl(
                         #var = ::core::option::Option::Some(#decode);
                     },
                 });
-                inits.push(quote! {
-                    #ident: #var.ok_or(::nanonbt::Error::MissingField(#key))?,
-                });
+                inits.push(info.attrs.default.as_ref().map_or_else(
+                    || {
+                        quote! {
+                            #ident: #var.ok_or(::nanonbt::Error::MissingField(#key))?,
+                        }
+                    },
+                    |default| {
+                        let fallback = default_init(default, ty);
+                        // `var` holds a `Some` only when the key was seen; the
+                        // fallback must not run for a value that is present.
+                        quote! {
+                            #ident: match #var {
+                                ::core::option::Option::Some(__nbt_value) => __nbt_value,
+                                ::core::option::Option::None => #fallback,
+                            },
+                        }
+                    },
+                ));
             }
 
             let dispatch = name_dispatch(&arms, &self_reader);
@@ -972,6 +1047,21 @@ fn build_decode_impl(
     }
 }
 
+/// The expression produced when a `#[nbt(default)]` field's key is absent.
+///
+/// `#[nbt(default)]` goes through the field type's [`Default`], which the
+/// generated code spells with an explicit bound so a type without it fails
+/// with a familiar trait error. `#[nbt(default = "f")]` calls `f()` instead,
+/// so the type needs no `Default` at all.
+fn default_init(default: &DefaultSpec, ty: &Type) -> TokenStream2 {
+    match default {
+        DefaultSpec::Trait => {
+            quote_spanned!(ty.span()=> <#ty as ::core::default::Default>::default())
+        }
+        DefaultSpec::Function(path) => quote!(#path()),
+    }
+}
+
 #[allow(clippy::option_if_let_else)]
 fn decode_parts(
     info: &FieldInfo,
@@ -1092,6 +1182,64 @@ mod tests {
             cfg!(feature = "hashify"),
             "{generated}"
         );
+    }
+
+    /// `#[nbt(default)]` goes through `Default`; the function form calls the
+    /// named path and never requires `Default`.
+    #[test]
+    fn default_attributes_fill_absent_keys() {
+        let input: DeriveInput = parse_quote! {
+            struct S {
+                #[nbt(default)]
+                trait_default: i32,
+                #[nbt(default = "my::fallback")]
+                function: i32,
+            }
+        };
+        let generated = expand_deserialize(&input).unwrap().to_string();
+        assert!(
+            generated.contains("as :: core :: default :: Default > :: default"),
+            "{generated}"
+        );
+        assert!(generated.contains("my :: fallback ()"), "{generated}");
+        assert!(!generated.contains("MissingField"), "{generated}");
+    }
+
+    /// Absence without `#[nbt(default)]` stays an error.
+    #[test]
+    fn fields_without_default_still_report_missing_keys() {
+        let input: DeriveInput = parse_quote! {
+            struct S {
+                a: i32,
+            }
+        };
+        let generated = expand_deserialize(&input).unwrap().to_string();
+        assert!(generated.contains("MissingField"), "{generated}");
+    }
+
+    /// A default value cannot come from two places at once.
+    #[test]
+    fn default_conflicts_are_rejected() {
+        let skipped: DeriveInput = parse_quote! {
+            struct S {
+                #[nbt(skip, default)]
+                a: i32,
+            }
+        };
+        assert!(expand_deserialize(&skipped).is_err());
+
+        let empty: DeriveInput = parse_quote! {
+            struct S {
+                #[nbt(default = "")]
+                a: i32,
+            }
+        };
+        assert!(expand_deserialize(&empty).is_err());
+
+        let newtype: DeriveInput = parse_quote! {
+            struct S(#[nbt(default)] i32);
+        };
+        assert!(expand_deserialize(&newtype).is_err());
     }
 
     /// A write must emit the same bytes the macro encoded.

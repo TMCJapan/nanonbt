@@ -26,7 +26,7 @@ struct Everything {
     nested: Nested,
 }
 
-#[derive(DeserializeNbt, Debug, PartialEq)]
+#[derive(SerializeNbt, DeserializeNbt, Debug, PartialEq)]
 struct Empty {}
 
 #[test]
@@ -66,6 +66,29 @@ struct Target {
 fn missing_fields_are_reported() {
     let bytes = to_bytes(&Source { a: 1 }).unwrap();
     assert_eq!(from_bytes::<Target>(&bytes), Err(Error::MissingField("b")));
+}
+
+#[derive(DeserializeNbt, Debug, PartialEq)]
+struct RequiredWithDefault {
+    a: i32,
+    #[nbt(default)]
+    b: i64,
+}
+
+#[test]
+fn only_unannotated_fields_report_missing_keys() {
+    let bytes = to_bytes(&Source { a: 1 }).unwrap();
+    assert_eq!(
+        from_bytes::<RequiredWithDefault>(&bytes).unwrap(),
+        RequiredWithDefault { a: 1, b: 0 }
+    );
+    // `a` has no `#[nbt(default)]`, so its absence still fails; an empty
+    // compound is a valid document that simply lacks both keys.
+    let empty = to_bytes(&Empty {}).unwrap();
+    assert_eq!(
+        from_bytes::<RequiredWithDefault>(&empty),
+        Err(Error::MissingField("a"))
+    );
 }
 
 #[derive(SerializeNbt, DeserializeNbt, Debug, PartialEq)]
