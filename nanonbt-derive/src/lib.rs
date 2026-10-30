@@ -16,8 +16,16 @@
 //! * `#[nbt(array = byte | int | long)]` — force a `TAG_Byte_Array`,
 //!   `TAG_Int_Array` or `TAG_Long_Array` route.
 //! * `#[nbt(rename = "name")]` — use a different compound key.
-//! * `#[nbt(skip)]` — omit the field when writing and fill it with
-//!   [`Default::default()`] when reading.
+//! * `#[nbt(skip)]` — shorthand for `skip_serialize` plus `skip_deserialize`.
+//! * `#[nbt(skip_serialize)]` — omit the field when writing.
+//! * `#[nbt(skip_deserialize)]` — ignore the field when reading and fill it
+//!   with [`Default::default()`]. A key of that name on the wire is skipped
+//!   like any other unknown field, so setting only this one lets a value be
+//!   written but not read back.
+//!
+//! Unlike serde's counterpart, `skip_serialize` alone still generates a read
+//! arm, so a serialized value can be decoded; `skip_deserialize` is what takes
+//! the field off the read path.
 //!
 //! With the `hashify` feature (enable `nanonbt/hashify`), a read dispatches
 //! the names it sees through
@@ -78,7 +86,8 @@ pub fn derive_deserialize_nbt(input: TokenStream) -> TokenStream {
 #[derive(Default)]
 struct FieldAttrs {
     array: Option<ArraySpec>,
-    skip: bool,
+    skip_serialize: bool,
+    skip_deserialize: bool,
     rename: Option<String>,
     self_: bool,
 }
@@ -137,10 +146,23 @@ fn parse_field_attrs(field: &Field) -> syn::Result<FieldAttrs> {
                 });
                 Ok(())
             } else if meta.path.is_ident("skip") {
-                if attrs.skip {
+                if attrs.skip_serialize || attrs.skip_deserialize {
                     return Err(meta.error("duplicate `skip` attribute"));
                 }
-                attrs.skip = true;
+                attrs.skip_serialize = true;
+                attrs.skip_deserialize = true;
+                Ok(())
+            } else if meta.path.is_ident("skip_serialize") {
+                if attrs.skip_serialize {
+                    return Err(meta.error("duplicate `skip_serialize` attribute"));
+                }
+                attrs.skip_serialize = true;
+                Ok(())
+            } else if meta.path.is_ident("skip_deserialize") {
+                if attrs.skip_deserialize {
+                    return Err(meta.error("duplicate `skip_deserialize` attribute"));
+                }
+                attrs.skip_deserialize = true;
                 Ok(())
             } else if meta.path.is_ident("self") {
                 if attrs.self_ {
@@ -154,7 +176,8 @@ fn parse_field_attrs(field: &Field) -> syn::Result<FieldAttrs> {
                 Ok(())
             } else {
                 Err(meta.error(
-                    "unsupported `nbt` attribute; expected `array`, `skip`, `rename`, or `self`",
+                    "unsupported `nbt` attribute; expected `array`, `skip`, `skip_serialize`, \
+                     `skip_deserialize`, `rename`, or `self`",
                 ))
             }
         })?;
@@ -270,7 +293,7 @@ fn check_duplicate_keys(fields: &Fields) -> syn::Result<()> {
     let mut seen: HashSet<String> = HashSet::new();
     for field in field_list(fields) {
         let attrs = parse_field_attrs(field)?;
-        if attrs.skip {
+        if attrs.skip_serialize && attrs.skip_deserialize {
             continue;
         }
         let Some(ident) = field.ident.as_ref() else {
@@ -397,7 +420,7 @@ fn expand_serialize(input: &DeriveInput) -> syn::Result<TokenStream2> {
             let mut writes = Vec::new();
             for field in &named.named {
                 let attrs = parse_field_attrs(field)?;
-                if attrs.skip {
+                if attrs.skip_serialize {
                     continue;
                 }
                 let ident = field.ident.as_ref().expect("named field");
@@ -534,7 +557,7 @@ fn expand_deserialize(input: &DeriveInput) -> syn::Result<TokenStream2> {
                 "`#[nbt(self)]` is not supported on newtype fields",
             ));
         }
-        let mode = if attrs.skip {
+        let mode = if attrs.skip_deserialize {
             FieldMode::Skipped
         } else if attrs.self_ {
             if borrow_lifetime.is_some()
@@ -847,7 +870,7 @@ fn build_decode_impl(
             if info.mode == FieldMode::Skipped {
                 return Err(syn::Error::new_spanned(
                     ty,
-                    "`#[nbt(skip)]` is not supported on newtype fields",
+                    "`#[nbt(skip_deserialize)]` (or `#[nbt(skip)]`) is not supported on newtype fields",
                 ));
             }
             body = match info.mode {
