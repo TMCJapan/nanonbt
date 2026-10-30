@@ -439,6 +439,124 @@ fn skip_is_the_alias_for_both_flags() {
     );
 }
 
+/// A predicate named by path drops the entry when it returns `true`. It is
+/// called with `&field`, so an inherent method such as `String::is_empty` or a
+/// plain function taking a reference is usable as written.
+#[derive(SerializeNbt, DeserializeNbt, Debug, PartialEq)]
+struct SkipSerializingIf {
+    #[nbt(skip_serializing_if = "String::is_empty", skip_deserialize)]
+    maybe: String,
+    #[nbt(skip_serializing_if = "is_empty")]
+    list: Vec<i8>,
+    kept: String,
+}
+
+const fn is_empty(list: &[i8]) -> bool {
+    list.is_empty()
+}
+
+#[test]
+fn skip_serializing_if_omits_only_what_the_predicate_matches() {
+    let empty = SkipSerializingIf {
+        maybe: String::new(),
+        list: Vec::new(),
+        kept: "abc".to_owned(),
+    };
+    let bytes = to_bytes(&empty).unwrap();
+    assert!(!bytes.windows(5).any(|window| window == b"maybe"));
+    assert!(!bytes.windows(4).any(|window| window == b"list"));
+    // What remains is a compound holding just the kept field.
+    let mut expected = vec![Tag::Compound.as_u8(), 0, 0, Tag::String.as_u8(), 0, 4];
+    expected.extend_from_slice(b"kept");
+    expected.extend_from_slice(&[0, 3]);
+    expected.extend_from_slice(b"abc");
+    expected.push(Tag::End.as_u8());
+    assert_eq!(bytes, expected);
+
+    let full = SkipSerializingIf {
+        maybe: "gone".to_owned(),
+        list: vec![1, 2],
+        kept: "abc".to_owned(),
+    };
+    let bytes = to_bytes(&full).unwrap();
+    // `maybe` is skipped on read because it is `skip_deserialize`; the list
+    // comes back because the predicate let it through.
+    assert_eq!(
+        from_bytes::<SkipSerializingIf>(&bytes).unwrap(),
+        SkipSerializingIf {
+            maybe: String::new(),
+            list: vec![1, 2],
+            kept: "abc".to_owned(),
+        }
+    );
+}
+
+/// Without `skip_deserialize`, dropping the entry makes the bytes
+/// undecodable: the predicate only controls the write.
+#[derive(SerializeNbt, DeserializeNbt, Debug, PartialEq)]
+struct SkipSerializingIfRequired {
+    #[nbt(skip_serializing_if = "String::is_empty")]
+    maybe: String,
+}
+
+#[test]
+fn skip_serializing_if_keeps_the_field_required_on_read() {
+    let absent = to_bytes(&SkipSerializingIfRequired {
+        maybe: String::new(),
+    })
+    .unwrap();
+    assert_eq!(
+        from_bytes::<SkipSerializingIfRequired>(&absent).unwrap_err(),
+        Error::MissingField("maybe")
+    );
+
+    let present = SkipSerializingIfRequired {
+        maybe: "here".to_owned(),
+    };
+    assert_eq!(
+        from_bytes::<SkipSerializingIfRequired>(&to_bytes(&present).unwrap()).unwrap(),
+        present
+    );
+}
+
+/// The documented pairing: the predicate drops an absent-worthy entry on
+/// write and `default` fills it back on read, so a value round trips in both
+/// directions instead of failing with `MissingField`.
+#[derive(SerializeNbt, DeserializeNbt, Debug, PartialEq, Default)]
+struct SkipSerializingIfDefault {
+    #[nbt(skip_serializing_if = "String::is_empty", default)]
+    maybe: String,
+    #[nbt(skip_serializing_if = "Vec::is_empty", default)]
+    list: Vec<i8>,
+    kept: i32,
+}
+
+#[test]
+fn skip_serializing_if_pairs_with_default() {
+    let empty = SkipSerializingIfDefault {
+        maybe: String::new(),
+        list: Vec::new(),
+        kept: 7,
+    };
+    let bytes = to_bytes(&empty).unwrap();
+    assert!(!bytes.windows(5).any(|window| window == b"maybe"));
+    assert!(!bytes.windows(4).any(|window| window == b"list"));
+    assert_eq!(
+        from_bytes::<SkipSerializingIfDefault>(&bytes).unwrap(),
+        empty
+    );
+
+    let full = SkipSerializingIfDefault {
+        maybe: "here".to_owned(),
+        list: vec![1, 2],
+        kept: 7,
+    };
+    assert_eq!(
+        from_bytes::<SkipSerializingIfDefault>(&to_bytes(&full).unwrap()).unwrap(),
+        full
+    );
+}
+
 #[derive(SerializeNbt, DeserializeNbt, Debug, PartialEq)]
 struct Renamed {
     #[nbt(rename = "名前\0\u{1f600}")]
