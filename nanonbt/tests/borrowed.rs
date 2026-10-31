@@ -136,3 +136,116 @@ fn owned_fields_inside_borrowing_structs() {
     assert_eq!(decoded.pixels.as_ref(), &[4, 5]);
     assert!(matches!(decoded.pixels, Cow::Borrowed(_)));
 }
+
+const DEFAULTS: &[I32Be] = &[I32Be::new(3), I32Be::new(4)];
+
+const fn default_slice<'a>() -> &'a [I32Be] {
+    DEFAULTS
+}
+
+fn default_i32s() -> Vec<i32> {
+    vec![3, 4]
+}
+
+const fn default_cow<'a>() -> Cow<'a, [I32Be]> {
+    Cow::Borrowed(DEFAULTS)
+}
+
+const fn default_text<'a>() -> &'a str {
+    "fallback"
+}
+
+#[derive(nanonbt::DeserializeNbt, Debug, PartialEq)]
+struct DefaultedBorrowed<'de> {
+    // Owned fields work through `Default` and the function form alike.
+    #[nbt(default)]
+    owned: Vec<i32>,
+    #[nbt(default = "default_i32s")]
+    owned_by_function: Vec<i32>,
+    // Borrowed fields use the same fallback, built without borrowing the input.
+    #[nbt(array = byte, default)]
+    trait_bytes: Vec<u8>,
+    #[nbt(array = int, default = "default_slice")]
+    borrowed_slice: &'de [I32Be],
+    #[nbt(array = int, default = "default_cow")]
+    borrowed_cow: Cow<'de, [I32Be]>,
+    #[nbt(default = "default_text")]
+    text: &'de str,
+}
+
+/// Only the keys above are absent from this document.
+#[derive(nanonbt::SerializeNbt)]
+struct WithoutDefaults {}
+
+#[test]
+fn defaults_fill_absent_keys_in_borrowing_structs() {
+    let bytes = to_bytes(&WithoutDefaults {}).unwrap();
+    let decoded: DefaultedBorrowed<'_> = from_slice(&bytes).unwrap();
+    assert_eq!(decoded.owned, Vec::<i32>::new());
+    assert_eq!(decoded.owned_by_function, [3, 4]);
+    assert_eq!(decoded.trait_bytes, Vec::<u8>::new());
+    assert_eq!(decoded.borrowed_slice, DEFAULTS);
+    assert_eq!(decoded.borrowed_cow, DEFAULTS);
+    assert_eq!(decoded.text, "fallback");
+}
+
+#[derive(nanonbt::SerializeNbt)]
+struct WithDefaults {
+    owned: Vec<i32>,
+    owned_by_function: Vec<i32>,
+    #[nbt(array = byte)]
+    trait_bytes: Vec<u8>,
+    #[nbt(array = int)]
+    borrowed_slice: Vec<I32Be>,
+    #[nbt(array = int)]
+    borrowed_cow: Vec<I32Be>,
+    text: &'static str,
+}
+
+#[test]
+fn defaults_keep_borrowed_values_that_are_present() {
+    let value = WithDefaults {
+        owned: vec![1, 2],
+        owned_by_function: vec![5],
+        trait_bytes: vec![1, 2],
+        borrowed_slice: vec![I32Be::new(6)],
+        borrowed_cow: vec![I32Be::new(7)],
+        text: "present",
+    };
+    let bytes = to_bytes(&value).unwrap();
+    let decoded: DefaultedBorrowed<'_> = from_slice(&bytes).unwrap();
+    assert_eq!(decoded.owned, [1, 2]);
+    assert_eq!(decoded.owned_by_function, [5]);
+    assert_eq!(decoded.trait_bytes, [1, 2]);
+    assert_eq!(decoded.borrowed_slice, [I32Be::new(6)]);
+    assert_eq!(decoded.borrowed_cow.as_ref(), [I32Be::new(7)]);
+    assert_eq!(decoded.text, "present");
+
+    let range = bytes.as_ptr() as usize..bytes.as_ptr() as usize + bytes.len();
+    assert!(range.contains(&(decoded.borrowed_slice.as_ptr() as usize)));
+    assert!(range.contains(&(decoded.borrowed_cow.as_ptr() as usize)));
+    assert!(range.contains(&(decoded.text.as_ptr() as usize)));
+}
+
+/// Nested borrowing structs take a default as well.
+#[derive(nanonbt::DeserializeNbt, Debug, PartialEq)]
+struct DefaultedOuter<'de> {
+    #[nbt(default = "default_inner")]
+    inner: Inner<'de>,
+    #[nbt(array = int, default)]
+    trailing: &'de [I32Be],
+}
+
+const EMPTY_INNER: Inner<'static> = Inner { data: &[] };
+
+const fn default_inner() -> Inner<'static> {
+    EMPTY_INNER
+}
+
+#[test]
+fn nested_borrowing_fields_accept_defaults() {
+    let bytes = to_bytes(&WithoutDefaults {}).unwrap();
+    let decoded: DefaultedOuter<'_> = from_slice(&bytes).unwrap();
+    assert_eq!(decoded.inner, EMPTY_INNER);
+    assert_eq!(decoded.trailing, []);
+}
