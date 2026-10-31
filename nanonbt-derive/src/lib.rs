@@ -36,9 +36,9 @@
 //!   like any other unknown field, so setting only this one lets a value be
 //!   written but not read back.
 //! * `#[nbt(default)]` — write the field, but fill it with
-//!   [`Default::default()`] when the input lacks its key, instead of failing
-//!   with `nanonbt::Error::MissingField`. The type must
-//!   implement [`Default`].
+//!   `<T as Default>::default()` when the input lacks its key, instead of
+//!   failing with `nanonbt::Error::MissingField`. The type must implement
+//!   [`Default`].
 //! * `#[nbt(default = "path")]` — the same, but the value comes from calling
 //!   the named zero-argument function; the type needs no [`Default`].
 //!
@@ -47,6 +47,13 @@
 //! the field off the read path. `default` applies to a field that is still on
 //! the read path, so it can be combined with `skip_serialize` but not with
 //! `skip_deserialize`, which already fills the field.
+//!
+//! A default also covers a key that is present but cannot be decoded, such as
+//! one written with the wrong tag: the default then stands in for the value
+//! instead of failing the whole read. It works for borrowed fields as well as
+//! owned ones, because the fallback is built without borrowing the input —
+//! `Vec<T>::default()`, `Cow::Borrowed("")`, `&[]` or whatever the named
+//! function returns all outlive any borrow the struct carries.
 //!
 //! `skip_serializing_if` is likewise write-only: a read of bytes the predicate
 //! let through decodes the field as usual, and a read of bytes it dropped fails
@@ -127,8 +134,8 @@ struct FieldAttrs {
 /// How a field that is absent from the input is filled.
 #[derive(Clone)]
 enum DefaultSpec {
-    /// `#[nbt(default)]`: `Default::default()`, so the type must implement
-    /// [`Default`].
+    /// `#[nbt(default)]`: `<T as Default>::default()`, so the type must
+    /// implement [`Default`].
     Trait,
     /// `#[nbt(default = "path")]`: the named function, which is called with no
     /// arguments and need not relate to the type's `Default`.
@@ -864,13 +871,6 @@ fn expand_deserialize(input: &DeriveInput) -> syn::Result<TokenStream2> {
                  `Default::default()`",
             ));
         }
-        if attrs.default.is_some() && matches!(mode, FieldMode::BorrowedArray | FieldMode::Nested) {
-            return Err(syn::Error::new_spanned(
-                field,
-                "`#[nbt(default)]` is not supported on borrowed fields; \
-                 a borrowing value cannot be conjured when the key is absent",
-            ));
-        }
         if matches!(fields, Fields::Unnamed(_)) && attrs.default.is_some() {
             return Err(syn::Error::new_spanned(
                 field,
@@ -993,6 +993,22 @@ fn build_decode_impl(
                 let (name_len, name_bytes) = encode_name(&key)?;
                 name_max = name_max.max(usize::from(name_len));
                 let (expected, decode) = decode_parts(info, borrow_lifetime, &self_reader);
+                // Seeing the key fills `var`; when the field carries a default,
+                // a decode that fails is not fatal either, because the default
+                // then stands in for the value. `decode` is a `Result`, so the
+                // `?` is only added here, where it can be left out.
+                let store = info.attrs.default.as_ref().map_or_else(
+                    || quote!(::core::option::Option::Some(#decode?)),
+                    |default| {
+                        let fallback = default_init(default, ty);
+                        quote! {
+                            ::core::option::Option::Some(match #decode {
+                                ::core::result::Result::Ok(__nbt_value) => __nbt_value,
+                                ::core::result::Result::Err(_) => #fallback,
+                            })
+                        }
+                    },
+                );
 
                 match info.mode {
                     FieldMode::Owned => owned_types.push(ty.clone()),
@@ -1013,7 +1029,7 @@ fn build_decode_impl(
                                 actual: __nbt_tag.as_u8(),
                             });
                         }
-                        #var = ::core::option::Option::Some(#decode);
+                        #var = #store;
                     },
                 });
                 inits.push(info.attrs.default.as_ref().map_or_else(
@@ -1024,8 +1040,6 @@ fn build_decode_impl(
                     },
                     |default| {
                         let fallback = default_init(default, ty);
-                        // `var` holds a `Some` only when the key was seen; the
-                        // fallback must not run for a value that is present.
                         quote! {
                             #ident: match #var {
                                 ::core::option::Option::Some(__nbt_value) => __nbt_value,
@@ -1236,6 +1250,11 @@ fn build_decode_impl(
 /// generated code spells with an explicit bound so a type without it fails
 /// with a familiar trait error. `#[nbt(default = "f")]` calls `f()` instead,
 /// so the type needs no `Default` at all.
+///
+/// The expression names no lifetime of its own, so it is the same whether the
+/// field is decoded owned or borrowed: a `Vec<T>` default is built fresh, and
+/// a borrowed default such as `Cow::Borrowed("")` or `&[]` is promoted to a
+/// `'static` value that outlives any borrow the struct carries.
 fn default_init(default: &DefaultSpec, ty: &Type) -> TokenStream2 {
     match default {
         DefaultSpec::Trait => {
@@ -1245,6 +1264,10 @@ fn default_init(default: &DefaultSpec, ty: &Type) -> TokenStream2 {
     }
 }
 
+/// The expected tag of a field and the expression that decodes it as a
+/// [`nanonbt::Result`], without the `?`: the caller adds one for a plain field
+/// and leaves it off for a field with a default, whose fallback stands in for
+/// a failed decode.
 #[allow(clippy::option_if_let_else)]
 fn decode_parts(
     info: &FieldInfo,
@@ -1259,12 +1282,12 @@ fn decode_parts(
                 let route = array.route_type(ty);
                 (
                     quote_spanned!(span=> <#route as ::nanonbt::ArrayRoute>::TAG),
-                    quote_spanned!(span=> <#ty as ::nanonbt::DeserializeNbtArray<#route>>::deserialize_nbt_array(#reader)?),
+                    quote_spanned!(span=> <#ty as ::nanonbt::DeserializeNbtArray<#route>>::deserialize_nbt_array(#reader)),
                 )
             } else {
                 (
                     quote_spanned!(span=> <#ty as ::nanonbt::DeserializeNbt>::TAG),
-                    quote_spanned!(span=> <#ty as ::nanonbt::DeserializeNbt>::deserialize_nbt(#reader)?),
+                    quote_spanned!(span=> <#ty as ::nanonbt::DeserializeNbt>::deserialize_nbt(#reader)),
                 )
             }
         }
@@ -1278,14 +1301,14 @@ fn decode_parts(
                 .route_type(ty);
             (
                 quote_spanned!(span=> <#route as ::nanonbt::ArrayRoute>::TAG),
-                quote_spanned!(span=> <#ty as ::nanonbt::DeserializeNbtArrayRef<#lifetime, #route>>::deserialize_nbt_array_ref(#reader)?),
+                quote_spanned!(span=> <#ty as ::nanonbt::DeserializeNbtArrayRef<#lifetime, #route>>::deserialize_nbt_array_ref(#reader)),
             )
         }
         FieldMode::Nested => {
             let lifetime = borrow_lifetime.expect("nested field needs a lifetime");
             (
                 quote_spanned!(span=> <#ty as ::nanonbt::DeserializeNbtRef<#lifetime>>::TAG),
-                quote_spanned!(span=> <#ty as ::nanonbt::DeserializeNbtRef<#lifetime>>::deserialize_nbt_ref(#reader)?),
+                quote_spanned!(span=> <#ty as ::nanonbt::DeserializeNbtRef<#lifetime>>::deserialize_nbt_ref(#reader)),
             )
         }
         FieldMode::SelfBorrowed | FieldMode::SelfOwned => unreachable!(),
@@ -1386,6 +1409,30 @@ mod tests {
         );
         assert!(generated.contains("my :: fallback ()"), "{generated}");
         assert!(!generated.contains("MissingField"), "{generated}");
+    }
+
+    /// Borrowed fields accept a default too: the restriction is gone, and the
+    /// fallback is the same expression as for an owned field.
+    #[test]
+    fn borrowed_fields_accept_defaults() {
+        let input: DeriveInput = parse_quote! {
+            struct S<'de> {
+                #[nbt(array = int, default)]
+                slice: &'de [I32Be],
+                #[nbt(array = int, default = "my::cow")]
+                cow: Cow<'de, [I32Be]>,
+                #[nbt(default = "my::text")]
+                text: &'de str,
+            }
+        };
+        let generated = expand_deserialize(&input).unwrap().to_string();
+        assert!(!generated.contains("MissingField"), "{generated}");
+        assert!(generated.contains("my :: cow ()"), "{generated}");
+        assert!(generated.contains("my :: text ()"), "{generated}");
+        assert!(
+            generated.contains("as :: core :: default :: Default > :: default"),
+            "{generated}"
+        );
     }
 
     /// Absence without `#[nbt(default)]` stays an error.

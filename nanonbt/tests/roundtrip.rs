@@ -967,3 +967,35 @@ fn default_fills_keys_that_skip_serialize_leaves_out() {
         }
     );
 }
+
+/// Collections take a default like any other type: `Vec<T>` has no borrowed
+/// lifetime, so the trait form and the function form both fill it.
+#[derive(DeserializeNbt, Debug, PartialEq)]
+struct DefaultedVecs {
+    #[nbt(default)]
+    list: Vec<i32>,
+    #[nbt(array = int, default)]
+    array: Vec<i32>,
+    #[nbt(default = "two")]
+    by_function: Vec<i32>,
+    #[nbt(default = "crate::forty_two")]
+    number: i32,
+}
+
+fn two() -> Vec<i32> {
+    vec![2]
+}
+
+#[test]
+fn default_fills_collections() {
+    let bytes = to_bytes(&Nothing).unwrap();
+    assert_eq!(
+        from_bytes::<DefaultedVecs>(&bytes).unwrap(),
+        DefaultedVecs {
+            list: Vec::new(),
+            array: Vec::new(),
+            by_function: vec![2],
+            number: 42,
+        }
+    );
+}
