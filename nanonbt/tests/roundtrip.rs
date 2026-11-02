@@ -464,6 +464,173 @@ fn rename_is_an_alias_for_both_halves() {
     );
 }
 
+/// `status` on the wire, but a document may spell it `Status` too.
+#[derive(SerializeNbt, DeserializeNbt, Debug, PartialEq)]
+struct Aliased {
+    #[nbt(rename = "status", alias = "Status")]
+    status: String,
+}
+
+/// The shape whose writes produce a document an [`Aliased`] read accepts.
+#[derive(SerializeNbt)]
+struct AliasedWitness {
+    #[nbt(rename = "Status")]
+    status: String,
+}
+
+/// A compound entry's value, as [`compound`] writes it.
+#[derive(Clone, Copy)]
+enum Entry<'a> {
+    Text(&'a str),
+    Int(i32),
+}
+
+/// Builds a whole document — root tag, empty root name, then a compound of
+/// `(name, value)` pairs in the order given — so a duplicate name can be
+/// written where a struct never would.
+fn compound(entries: &[(&str, Entry<'_>)]) -> Vec<u8> {
+    let mut bytes = vec![Tag::Compound.as_u8(), 0, 0];
+    for (name, value) in entries {
+        bytes.push(match value {
+            Entry::Text(_) => Tag::String.as_u8(),
+            Entry::Int(_) => Tag::Int.as_u8(),
+        });
+        bytes.extend_from_slice(&(u16::try_from(name.len()).unwrap()).to_be_bytes());
+        bytes.extend_from_slice(name.as_bytes());
+        // The entry's tag byte is already written above; the payload follows
+        // the name without repeating it.
+        match value {
+            Entry::Text(text) => {
+                bytes.extend_from_slice(&(u16::try_from(text.len()).unwrap()).to_be_bytes());
+                bytes.extend_from_slice(text.as_bytes());
+            }
+            Entry::Int(int) => bytes.extend_from_slice(&int.to_be_bytes()),
+        }
+    }
+    bytes.push(Tag::End.as_u8());
+    bytes
+}
+
+#[test]
+fn alias_is_read_where_the_renamed_key_is() {
+    let value = Aliased {
+        status: "ok".to_owned(),
+    };
+    // Writing uses only the field's own key: an alias never reaches the wire.
+    let bytes = to_bytes(&value).unwrap();
+    assert!(bytes.windows(6).any(|window| window == b"status"));
+    assert!(!bytes.windows(6).any(|window| window == b"Status"));
+    assert_eq!(from_bytes::<Aliased>(&bytes).unwrap(), value);
+
+    // Either spelling on its own reads back to the same value.
+    let aliased = to_bytes(&AliasedWitness {
+        status: "ok".to_owned(),
+    })
+    .unwrap();
+    assert!(aliased.windows(6).any(|window| window == b"Status"));
+    assert_eq!(from_bytes::<Aliased>(&aliased).unwrap(), value);
+}
+
+#[test]
+fn a_field_set_under_two_names_is_an_error() {
+    // The key and its alias, in both orders.
+    let both = compound(&[("status", Entry::Text("a")), ("Status", Entry::Text("b"))]);
+    assert_eq!(
+        from_bytes::<Aliased>(&both),
+        Err(Error::DuplicateField("status"))
+    );
+    let reversed = compound(&[("Status", Entry::Text("b")), ("status", Entry::Text("a"))]);
+    assert_eq!(
+        from_bytes::<Aliased>(&reversed),
+        Err(Error::DuplicateField("status"))
+    );
+    // The same name twice is just as ambiguous.
+    let twice = compound(&[("status", Entry::Text("a")), ("status", Entry::Text("b"))]);
+    assert_eq!(
+        from_bytes::<Aliased>(&twice),
+        Err(Error::DuplicateField("status"))
+    );
+}
+
+/// A field name without `rename`, answered to under another spelling too.
+#[derive(SerializeNbt, DeserializeNbt, Debug, PartialEq)]
+struct AliasedIdent {
+    #[nbt(alias = "VALUE")]
+    value: i32,
+}
+
+/// The shape whose writes produce a document an [`AliasedIdent`] read accepts.
+#[derive(SerializeNbt)]
+struct AliasedIdentWitness {
+    #[nbt(rename = "VALUE")]
+    value: i32,
+}
+
+#[test]
+fn alias_applies_to_the_field_name_without_rename() {
+    let value = AliasedIdent { value: 7 };
+    assert_eq!(
+        from_bytes::<AliasedIdent>(&to_bytes(&value).unwrap()).unwrap(),
+        value
+    );
+    let aliased = to_bytes(&AliasedIdentWitness { value: 7 }).unwrap();
+    assert_eq!(from_bytes::<AliasedIdent>(&aliased).unwrap(), value);
+
+    // The key and its alias in one compound, in both orders.
+    let both = compound(&[("value", Entry::Int(7)), ("VALUE", Entry::Int(9))]);
+    assert_eq!(
+        from_bytes::<AliasedIdent>(&both),
+        Err(Error::DuplicateField("value"))
+    );
+    let reversed = compound(&[("VALUE", Entry::Int(9)), ("value", Entry::Int(7))]);
+    assert_eq!(
+        from_bytes::<AliasedIdent>(&reversed),
+        Err(Error::DuplicateField("value"))
+    );
+}
+
+/// `default` keeps a duplicate an error: neither name may quietly win.
+#[derive(DeserializeNbt, Debug, PartialEq)]
+struct AliasedDefault {
+    #[nbt(rename = "status", alias = "Status", default = "unset")]
+    status: String,
+}
+
+fn unset() -> String {
+    "unset".to_owned()
+}
+
+#[test]
+fn duplicates_are_reported_even_when_the_field_has_a_default() {
+    // Present once: the value, not the fallback.
+    let one = compound(&[("Status", Entry::Text("ok"))]);
+    assert_eq!(
+        from_bytes::<AliasedDefault>(&one).unwrap(),
+        AliasedDefault {
+            status: "ok".to_owned(),
+        }
+    );
+    // Absent: the fallback, as usual.
+    let none = compound(&[]);
+    assert_eq!(
+        from_bytes::<AliasedDefault>(&none).unwrap(),
+        AliasedDefault {
+            status: "unset".to_owned(),
+        }
+    );
+    // Renamed to the key and its alias: an error, not the second value.
+    let both = compound(&[("status", Entry::Text("a")), ("Status", Entry::Text("b"))]);
+    assert_eq!(
+        from_bytes::<AliasedDefault>(&both),
+        Err(Error::DuplicateField("status"))
+    );
+    let same = compound(&[("status", Entry::Text("a")), ("status", Entry::Text("b"))]);
+    assert_eq!(
+        from_bytes::<AliasedDefault>(&same),
+        Err(Error::DuplicateField("status"))
+    );
+}
+
 #[derive(SerializeNbt, DeserializeNbt, Debug, PartialEq, Default)]
 struct SkipSerialize {
     #[nbt(skip_serialize)]

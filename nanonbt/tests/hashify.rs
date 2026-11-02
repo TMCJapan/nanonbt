@@ -192,6 +192,36 @@ mphf!(
     f69 = 69,
 );
 
+/// Aliases are keys in the lookup like any other, and a document naming one
+/// field twice is still a duplicate once the lookup has found both.
+#[derive(SerializeNbt, DeserializeNbt, PartialEq, Debug)]
+struct Aliased {
+    #[nbt(rename = "status", alias = "Status", alias = "state")]
+    status: u8,
+    #[nbt(alias = "NAME")]
+    name: u8,
+}
+
+#[test]
+fn aliases_are_looked_up_like_keys() {
+    let value = Aliased { status: 1, name: 2 };
+    assert_eq!(
+        from_bytes::<Aliased>(&to_bytes(&value).unwrap()).unwrap(),
+        value
+    );
+
+    let mut bytes = to_bytes(&value).unwrap();
+    bytes.pop();
+    // A second spelling of `name`, so the lookup finds both and the read has
+    // to refuse the second.
+    bytes.extend_from_slice(&[nanonbt::Tag::Byte.as_u8(), 0, 4, b'N', b'A', b'M', b'E', 9]);
+    bytes.push(nanonbt::Tag::End.as_u8());
+    assert_eq!(
+        from_bytes::<Aliased>(&bytes).unwrap_err(),
+        nanonbt::Error::DuplicateField("name")
+    );
+}
+
 #[derive(SerializeNbt)]
 struct Unknown {
     many: u8,
