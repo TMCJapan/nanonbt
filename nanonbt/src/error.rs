@@ -29,6 +29,10 @@ pub enum Error {
     InvalidUtf8,
     /// A required compound field was missing.
     MissingField(&'static str),
+    /// A compound held a field's key more than once, either as the key itself
+    /// or through one of its `#[nbt(alias = "...")]` names, so the value the
+    /// field should take is ambiguous.
+    DuplicateField(&'static str),
     /// A serde `Serialize` or `Deserialize` implementation reported a custom
     /// error, such as a value that does not match the target type.
     #[cfg(feature = "serde")]
@@ -51,6 +55,12 @@ impl fmt::Display for Error {
             Self::InvalidUtf8 => formatter.write_str("NBT string is not valid modified UTF-8"),
             Self::MissingField(name) => {
                 write!(formatter, "missing NBT compound field `{name}`")
+            }
+            Self::DuplicateField(name) => {
+                write!(
+                    formatter,
+                    "NBT compound field `{name}` is set more than once"
+                )
             }
             #[cfg(feature = "serde")]
             Self::Message(message) => formatter.write_str(message),

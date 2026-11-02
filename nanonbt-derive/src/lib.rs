@@ -24,6 +24,16 @@
 //!   compound key. Like `skip_deserialize`, it is independent of the write
 //!   path, so setting only this one lets a value be written under one name and
 //!   read back from another.
+//! * `#[nbt(alias = "name")]` — accept an extra key when reading, in addition
+//!   to the one `rename` (or the field name) gives. It is read-only: a write
+//!   always uses the field's own key. Repeat the attribute for more names, as
+//!   in `#[nbt(rename = "status", alias = "Status", alias = "state")]`. A
+//!   document naming a field twice — under two of its names, or the same name
+//!   twice — fails with `nanonbt::Error::DuplicateField` instead of silently
+//!   keeping one value, so `"Status"` and `"status"` together are an error.
+//!   An alias shared with another field, or equal to the field's own read
+//!   name, is a compile error, as is using one on a field that
+//!   `skip_deserialize` takes off the read path.
 //! * `#[nbt(skip)]` — shorthand for `skip_serialize` plus `skip_deserialize`.
 //! * `#[nbt(skip_serialize)]` — omit the field when writing.
 //! * `#[nbt(skip_serializing_if = "path")]` — omit the field when writing only
@@ -128,6 +138,9 @@ struct FieldAttrs {
     default: Option<DefaultSpec>,
     rename_serialize: Option<String>,
     rename_deserialize: Option<String>,
+    /// Extra names a read accepts for the field. They are read-only: a write
+    /// always uses the field's own key, so they cannot collide.
+    aliases: Vec<String>,
     self_: bool,
 }
 
@@ -302,11 +315,21 @@ fn parse_field_attrs(field: &Field) -> syn::Result<FieldAttrs> {
                     "rename_deserialize",
                     &value,
                 )
+            } else if meta.path.is_ident("alias") {
+                let value: LitStr = meta.value()?.parse()?;
+                if attrs.aliases.contains(&value.value()) {
+                    return Err(syn::Error::new(
+                        value.span(),
+                        format!("duplicate alias `{}`", value.value()),
+                    ));
+                }
+                attrs.aliases.push(value.value());
+                Ok(())
             } else {
                 Err(meta.error(
                     "unsupported `nbt` attribute; expected `array`, `skip`, `skip_serialize`, \
                      `skip_serializing_if`, `skip_deserialize`, `default`, `rename`, \
-                     `rename_serialize`, `rename_deserialize`, or `self`",
+                     `rename_serialize`, `rename_deserialize`, `alias`, or `self`",
                 ))
             }
         })?;
@@ -480,6 +503,13 @@ fn expect_newtype<'a>(ident: &Ident, unnamed: &'a FieldsUnnamed) -> syn::Result<
 /// unique among themselves and the read names among themselves. A struct that
 /// merely swaps two fields' keys between the two directions is therefore fine;
 /// one whose keys collide on either path is refused.
+///
+/// An alias is a read name like any other, so it joins the read set: two
+/// fields answering to one name, or a field whose alias is another field's
+/// key, would make the read dispatch one of them quietly and never the other.
+/// Whether an alias equals its own field's key is [`check_aliases_fit`]'s
+/// business, since a field reached twice is a runtime duplicate, not a lost
+/// field.
 fn check_duplicate_keys(fields: &Fields) -> syn::Result<()> {
     let mut field_names: HashSet<String> = HashSet::new();
     let mut written: HashSet<String> = HashSet::new();
@@ -518,6 +548,57 @@ fn check_duplicate_keys(fields: &Fields) -> syn::Result<()> {
                     ),
                 ));
             }
+            for alias in &attrs.aliases {
+                if !read.insert(alias.clone()) {
+                    return Err(syn::Error::new_spanned(
+                        field,
+                        format!("duplicate NBT field name `{alias}` read by the struct"),
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Refuses an alias the field could never answer to.
+///
+/// An alias equal to the field's own key adds nothing: the key already
+/// matches, and a document holding it twice is caught by the duplicate check
+/// like any other. Since only read names reach the dispatch, a field that
+/// `skip_deserialize` fills never reads at all.
+fn check_aliases_fit(fields: &Fields) -> syn::Result<()> {
+    for field in field_list(fields) {
+        let attrs = parse_field_attrs(field)?;
+        if attrs.aliases.is_empty() {
+            continue;
+        }
+        let Some(ident) = field.ident.as_ref() else {
+            continue;
+        };
+        if attrs.skip_deserialize {
+            return Err(syn::Error::new_spanned(
+                field,
+                "`#[nbt(alias = \"...\")]` cannot be combined with `#[nbt(skip)]` or \
+                 `#[nbt(skip_deserialize)]`, which take the field off the read path",
+            ));
+        }
+        if attrs.self_ {
+            return Err(syn::Error::new_spanned(
+                field,
+                "`#[nbt(alias = \"...\")]` is not supported on `#[nbt(self)]` fields, \
+                 which capture the struct's own payload rather than a named entry",
+            ));
+        }
+        let key = attrs.deserialize_key(ident);
+        if let Some(alias) = attrs.aliases.iter().find(|alias| **alias == key.value()) {
+            return Err(syn::Error::new_spanned(
+                field,
+                format!(
+                    "alias `{alias}` is already the name the field is read under; \
+                     give it a different name or drop the alias"
+                ),
+            ));
         }
     }
     Ok(())
@@ -614,6 +695,7 @@ fn expand_serialize(input: &DeriveInput) -> syn::Result<TokenStream2> {
     let name = &input.ident;
     let fields = expect_struct(input)?;
     check_duplicate_keys(fields)?;
+    check_aliases_fit(fields)?;
     for field in field_list(fields) {
         let attrs = parse_field_attrs(field)?;
         if attrs.self_ {
@@ -766,6 +848,7 @@ fn expand_deserialize(input: &DeriveInput) -> syn::Result<TokenStream2> {
         expect_newtype(&input.ident, unnamed)?;
     }
     check_duplicate_keys(fields)?;
+    check_aliases_fit(fields)?;
 
     let borrow_lifetime = input
         .generics
@@ -1019,19 +1102,49 @@ fn build_decode_impl(
                 declarations.push(quote! {
                     let mut #var: ::core::option::Option<#ty> = ::core::option::Option::None;
                 });
+                // Every name the field answers to, its own key first, shares
+                // one arm body. The body records the sighting in a flag that
+                // outlives the entry, so a second name finding it set stops
+                // the read instead of letting the second value win. The check
+                // runs before `store`, so not even a `default` — which turns a
+                // failed decode into the fallback — can hide a duplicate.
+                let seen = format_ident!("__nbt_seen_{}", info.index);
+                declarations.push(quote! {
+                    let mut #seen = false;
+                });
+                let unique = quote! {
+                    if #seen {
+                        return ::core::result::Result::Err(
+                            ::nanonbt::Error::DuplicateField(#key),
+                        );
+                    }
+                    #seen = true;
+                };
+                let mut names = vec![name_bytes];
+                for alias in &info.attrs.aliases {
+                    let alias = LitStr::new(alias, key.span());
+                    let (alias_len, alias_bytes) = encode_name(&alias)?;
+                    name_max = name_max.max(usize::from(alias_len));
+                    names.push(alias_bytes);
+                }
                 // The comma matters to both dispatches: a plain `match` lets
                 // a block arm go without one, `hashify`'s parser does not.
-                arms.push(quote! {
-                    #name_bytes => {
-                        if __nbt_tag != #expected {
-                            return ::core::result::Result::Err(::nanonbt::Error::InvalidTag {
-                                expected: #expected,
-                                actual: __nbt_tag.as_u8(),
-                            });
-                        }
-                        #var = #store;
-                    },
-                });
+                for name_bytes in names {
+                    arms.push(quote! {
+                        #name_bytes => {
+                            if __nbt_tag != #expected {
+                                return ::core::result::Result::Err(
+                                    ::nanonbt::Error::InvalidTag {
+                                        expected: #expected,
+                                        actual: __nbt_tag.as_u8(),
+                                    },
+                                );
+                            }
+                            #unique
+                            #var = #store;
+                        },
+                    });
+                }
                 inits.push(info.attrs.default.as_ref().map_or_else(
                     || {
                         quote! {
@@ -1589,6 +1702,126 @@ mod tests {
                 #[nbt(rename_deserialize = "r")]
             }),
             ("w".to_owned(), "r".to_owned())
+        );
+    }
+
+    /// Aliases are collected in order, and only affect the read path.
+    #[test]
+    fn aliases_are_read_only_names() {
+        let field: Field = parse_quote! {
+            #[nbt(rename = "status", alias = "Status", alias = "state")]
+            status: i32
+        };
+        let attrs = parse_field_attrs(&field).unwrap();
+        assert_eq!(attrs.aliases, ["Status", "state"]);
+        let ident = field.ident.as_ref().unwrap();
+        assert_eq!(attrs.serialize_key(ident).value(), "status");
+
+        // The key and every alias become match arms; the write emits one name.
+        let input: DeriveInput = parse_quote! {
+            struct S {
+                #[nbt(rename = "status", alias = "Status", alias = "state")]
+                status: i32,
+            }
+        };
+        let read = expand_deserialize(&input).unwrap().to_string();
+        assert_eq!(read.matches("DuplicateField").count(), 3, "{read}");
+        assert!(read.contains(r#"b"Status""#), "{read}");
+        assert!(read.contains(r#"b"state""#), "{read}");
+        let write = expand_serialize(&input).unwrap().to_string();
+        assert!(!write.contains(r#"b"Status""#), "{write}");
+        assert!(!write.contains(r#"b"state""#), "{write}");
+    }
+
+    /// Repeating the same alias adds nothing and is refused.
+    #[test]
+    fn duplicate_aliases_are_refused() {
+        let field: Field = parse_quote! {
+            #[nbt(alias = "a", alias = "a")]
+            value: i32
+        };
+        assert!(parse_field_attrs(&field).is_err());
+    }
+
+    /// An alias that could never reach the field is a compile error rather
+    /// than a silent no-op.
+    #[test]
+    fn aliases_that_cannot_reach_the_field_are_refused() {
+        // The alias is the very name the field is already read under.
+        let same: DeriveInput = parse_quote! {
+            struct S {
+                #[nbt(alias = "value")]
+                value: i32,
+            }
+        };
+        assert!(expand_serialize(&same).is_err());
+        assert!(expand_deserialize(&same).is_err());
+
+        // `skip_deserialize` takes the field off the read path entirely.
+        let skipped: DeriveInput = parse_quote! {
+            struct S {
+                #[nbt(skip_deserialize, alias = "other")]
+                value: i32,
+            }
+        };
+        assert!(expand_deserialize(&skipped).is_err());
+
+        // A `self` field captures the payload, not a named entry.
+        let self_field: DeriveInput = parse_quote! {
+            struct S<'de> {
+                #[nbt(self, alias = "other")]
+                raw: &'de [u8],
+            }
+        };
+        assert!(expand_deserialize(&self_field).is_err());
+    }
+
+    /// An alias shares the read-name namespace, so it cannot shadow another
+    /// field's key.
+    #[test]
+    fn aliases_cannot_collide_with_another_fields_key() {
+        let collide: DeriveInput = parse_quote! {
+            struct S {
+                #[nbt(alias = "b")]
+                a: i32,
+                b: i32,
+            }
+        };
+        assert!(expand_deserialize(&collide).is_err());
+
+        let two_aliases: DeriveInput = parse_quote! {
+            struct S {
+                #[nbt(alias = "x")]
+                a: i32,
+                #[nbt(alias = "x")]
+                b: i32,
+            }
+        };
+        assert!(expand_deserialize(&two_aliases).is_err());
+    }
+
+    /// The flag that catches a field seen twice must outlive the arm that set
+    /// it: resetting it per entry is exactly the bug that made a duplicate
+    /// silently keep the last value.
+    #[test]
+    fn duplicate_check_persists_across_entries() {
+        let input: DeriveInput = parse_quote! {
+            struct S {
+                #[nbt(alias = "Other")]
+                value: i32,
+            }
+        };
+        let generated = expand_deserialize(&input).unwrap().to_string();
+        // Declared once, set on each hit, and never cleared again.
+        assert_eq!(
+            generated.matches("__nbt_seen_0 = false").count(),
+            1,
+            "{generated}"
+        );
+        assert_eq!(
+            generated.matches("__nbt_seen_0 = true").count(),
+            2,
+            "{generated}"
         );
     }
 
