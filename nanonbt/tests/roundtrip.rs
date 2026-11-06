@@ -1166,3 +1166,146 @@ fn default_fills_collections() {
         }
     );
 }
+
+/// A `#[nbt(default)]` field followed by another key, so a read that lost its
+/// place in the input would show up in `after`.
+#[derive(DeserializeNbt, Debug, PartialEq)]
+struct DefaultThenKey {
+    #[nbt(default)]
+    shorts: Vec<i16>,
+    #[nbt(default)]
+    after: i32,
+}
+
+/// A document holding `shorts` as an int (`outer = Int`) or a one-int list
+/// (`outer = List`), then `after = 42`.
+fn shorts_tagged(outer: Tag) -> Vec<u8> {
+    let mut bytes = vec![Tag::Compound.as_u8(), 0, 0, outer.as_u8(), 0, 6];
+    bytes.extend_from_slice(b"shorts");
+    if outer == Tag::List {
+        bytes.push(Tag::Int.as_u8());
+        bytes.extend_from_slice(&1i32.to_be_bytes());
+    }
+    bytes.extend_from_slice(&7i32.to_be_bytes());
+    bytes.extend_from_slice(&[Tag::Int.as_u8(), 0, 5]);
+    bytes.extend_from_slice(b"after");
+    bytes.extend_from_slice(&42i32.to_be_bytes());
+    bytes.push(Tag::End.as_u8());
+    bytes
+}
+
+#[test]
+fn default_skips_a_key_written_with_the_wrong_tag() {
+    assert_eq!(
+        from_bytes::<DefaultThenKey>(&shorts_tagged(Tag::Int)).unwrap(),
+        DefaultThenKey {
+            shorts: Vec::new(),
+            after: 42,
+        }
+    );
+}
+
+#[test]
+fn default_does_not_hide_a_value_that_fails_to_decode() {
+    // The list's tag matches, but its elements are ints. Falling back here
+    // would leave the reader inside the list, where the int's leading zero
+    // byte reads as the end of the compound and `after` is never seen.
+    assert_eq!(
+        from_bytes::<DefaultThenKey>(&shorts_tagged(Tag::List)),
+        Err(Error::InvalidTag {
+            expected: Tag::Short,
+            actual: Tag::Int.as_u8(),
+        })
+    );
+}
+
+#[test]
+fn duplicates_are_reported_before_tags_are_checked() {
+    let ident = compound(&[("value", Entry::Int(7)), ("VALUE", Entry::Text("x"))]);
+    assert_eq!(
+        from_bytes::<AliasedIdent>(&ident),
+        Err(Error::DuplicateField("value"))
+    );
+    let both = compound(&[("status", Entry::Int(1)), ("Status", Entry::Text("b"))]);
+    assert_eq!(
+        from_bytes::<AliasedDefault>(&both),
+        Err(Error::DuplicateField("status"))
+    );
+}
+
+#[test]
+fn default_skips_a_wrong_tag_under_an_alias() {
+    let skipped = compound(&[("Status", Entry::Int(1))]);
+    assert_eq!(
+        from_bytes::<AliasedDefault>(&skipped).unwrap(),
+        AliasedDefault {
+            status: "unset".to_owned(),
+        }
+    );
+}
+
+/// Writes `ints` as a `TAG_List`, which an `#[nbt(array = int)]` field does
+/// not accept.
+#[derive(SerializeNbt)]
+struct IntsAsList {
+    ints: Vec<i32>,
+    after: i32,
+}
+
+#[derive(DeserializeNbt, Debug, PartialEq)]
+struct DefaultIntArray {
+    #[nbt(array = int, default)]
+    ints: Vec<i32>,
+    after: i32,
+}
+
+#[test]
+fn default_skips_a_list_where_an_array_route_is_expected() {
+    let bytes = to_bytes(&IntsAsList {
+        ints: vec![1, 2],
+        after: 42,
+    })
+    .unwrap();
+    assert_eq!(
+        from_bytes::<DefaultIntArray>(&bytes).unwrap(),
+        DefaultIntArray {
+            ints: Vec::new(),
+            after: 42,
+        }
+    );
+}
+
+/// Writes `value` as a string, where [`DefaultWithSelf`] expects an int.
+#[derive(SerializeNbt)]
+struct ValueAsText {
+    value: String,
+    after: i32,
+}
+
+#[derive(DeserializeNbt, Debug, PartialEq)]
+struct DefaultWithSelf {
+    #[nbt(default)]
+    value: i32,
+    after: i32,
+    #[nbt(self)]
+    raw: Vec<u8>,
+}
+
+#[test]
+fn a_skipped_key_stays_in_the_captured_self_payload() {
+    let bytes = to_bytes(&ValueAsText {
+        value: "x".to_owned(),
+        after: 42,
+    })
+    .unwrap();
+    // An owned `raw` is captured by teeing every byte read, so the skip has
+    // to go through the tee as well.
+    assert_eq!(
+        from_bytes::<DefaultWithSelf>(&bytes).unwrap(),
+        DefaultWithSelf {
+            value: 0,
+            after: 42,
+            raw: bytes[3..].to_vec(),
+        }
+    );
+}

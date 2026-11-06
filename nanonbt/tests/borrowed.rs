@@ -249,3 +249,43 @@ fn nested_borrowing_fields_accept_defaults() {
     assert_eq!(decoded.inner, EMPTY_INNER);
     assert_eq!(decoded.trailing, []);
 }
+
+/// Writes every field as an int, the wrong tag for each borrowed field of
+/// [`BorrowedDefaults`].
+#[derive(nanonbt::SerializeNbt)]
+struct AllInts {
+    ints: i32,
+    text: i32,
+    after: i32,
+}
+
+#[derive(nanonbt::DeserializeNbt, Debug, PartialEq)]
+struct BorrowedDefaults<'de> {
+    #[nbt(array = int, default)]
+    ints: &'de [I32Be],
+    #[nbt(default)]
+    text: &'de str,
+    after: i32,
+    #[nbt(self)]
+    raw: &'de [u8],
+}
+
+#[test]
+fn borrowed_defaults_skip_keys_written_with_the_wrong_tag() {
+    let bytes = to_bytes(&AllInts {
+        ints: 1,
+        text: 2,
+        after: 42,
+    })
+    .unwrap();
+    let decoded: BorrowedDefaults<'_> = from_slice(&bytes).unwrap();
+    assert_eq!(
+        decoded,
+        BorrowedDefaults {
+            ints: &[],
+            text: "",
+            after: 42,
+            raw: &bytes[3..],
+        }
+    );
+}

@@ -6,8 +6,9 @@
 //! 1. **Derived compounds.** `#[derive(SerializeNbt, DeserializeNbt)]` turns a
 //!    struct into a `TAG_Compound`. Fields are matched by name on decode, so
 //!    field order does not matter and unknown fields are skipped, which keeps
-//!    decoding forward compatible. A key that is absent fails with
-//!    [`Error::MissingField`] unless the field carries `#[nbt(default)]` (fill
+//!    decoding forward compatible. An absent key fails with
+//!    [`Error::MissingField`] and a wrong-tagged one with
+//!    [`Error::InvalidTag`], unless the field carries `#[nbt(default)]` (fill
 //!    with [`Default::default()`]) or `#[nbt(default = "f")]` (fill with
 //!    `f()`).
 //! 2. **Explicit array routes.** `TAG_List` is the default encoding for
