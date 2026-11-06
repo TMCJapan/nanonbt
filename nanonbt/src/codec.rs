@@ -18,6 +18,26 @@ pub fn read_count<R: Read + ?Sized>(reader: &mut R) -> Result<usize> {
     usize::try_from(count).map_err(|_| Error::InvalidLength)
 }
 
+/// Reads a `TAG_List` header for `expected` elements and returns the count;
+/// an empty list passes with any element tag, since Minecraft sometimes writes
+/// them tagged `Byte`.
+#[cfg(feature = "alloc")]
+pub(crate) fn read_list_header<R: Read + ?Sized>(reader: &mut R, expected: Tag) -> Result<usize> {
+    let element = Tag::from_u8(reader.read_u8()?)?;
+    let len = read_count(reader)?;
+    if len == 0 || element == expected {
+        return Ok(len);
+    }
+    Err(if element == Tag::End {
+        Error::InvalidData("non-empty list with the `End` element tag")
+    } else {
+        Error::InvalidTag {
+            expected,
+            actual: element.as_u8(),
+        }
+    })
+}
+
 /// Writes a length prefix as a big-endian `i32`.
 #[inline]
 pub fn write_count<W: Write + ?Sized>(writer: &mut W, len: usize) -> Result<()> {

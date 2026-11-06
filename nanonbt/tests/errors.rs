@@ -1,5 +1,5 @@
 extern crate alloc;
-use nanonbt::{DeserializeNbt, Error, SerializeNbt, Tag, from_bytes, to_bytes};
+use nanonbt::{DeserializeNbt, Error, SerializeNbt, Tag, from_bytes, from_slice, to_bytes};
 
 #[derive(SerializeNbt)]
 struct Nested {
@@ -178,6 +178,15 @@ fn non_empty_lists_with_end_elements_are_rejected() {
         from_bytes::<Vec<i32>>(&bytes),
         Err(Error::InvalidData(_))
     ));
+}
+
+#[test]
+fn empty_lists_pass_whatever_their_element_tag() {
+    for element in [Tag::End, Tag::Byte, Tag::Long, Tag::Compound] {
+        let bytes = [Tag::List.as_u8(), 0, 0, element.as_u8(), 0, 0, 0, 0];
+        assert_eq!(from_bytes::<Vec<i32>>(&bytes), Ok(Vec::new()));
+        assert_eq!(from_slice::<Vec<&str>>(&bytes), Ok(Vec::new()));
+    }
 }
 
 #[test]

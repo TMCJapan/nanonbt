@@ -4,6 +4,8 @@ use alloc::borrow::Cow;
 use alloc::vec::Vec;
 
 use crate::codec::read_count;
+#[cfg(feature = "alloc")]
+use crate::codec::read_list_header;
 use crate::route::{ByteArray, IntArray, LongArray};
 use crate::wire::{I32Be, I64Be, Wire};
 use crate::{Error, ReadRef, Result, Tag};
@@ -142,23 +144,7 @@ impl<'de, T: DeserializeNbtRef<'de>> DeserializeNbtRef<'de> for Vec<T> {
     const TAG: Tag = Tag::List;
 
     fn deserialize_nbt_ref<R: ReadRef<'de> + ?Sized>(reader: &mut R) -> Result<Self> {
-        let element = Tag::from_u8(reader.read_u8()?)?;
-        let len = read_count(reader)?;
-        if element == Tag::End {
-            return if len == 0 {
-                Ok(Self::new())
-            } else {
-                Err(Error::InvalidData(
-                    "non-empty list with the `End` element tag",
-                ))
-            };
-        }
-        if element != T::TAG {
-            return Err(Error::InvalidTag {
-                expected: T::TAG,
-                actual: element.as_u8(),
-            });
-        }
+        let len = read_list_header(reader, T::TAG)?;
         if len > reader.remaining() {
             return Err(Error::UnexpectedEof);
         }

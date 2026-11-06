@@ -78,7 +78,7 @@
 //! * `Vec<T>` and `[T]` are a `TAG_List<T>`, including `Vec<u8>`; slices are
 //!   what `Box<[T]>`, `&[T]` and `Cow<[T]>` serialize through. Annotate with
 //!   `#[nbt(array = byte)]` to get a `TAG_Byte_Array`. Empty lists are written
-//!   with the `End` element tag.
+//!   with the `End` element tag and read whatever their element tag.
 //! * Strings are written as Java modified UTF-8 (CESU-8). Raw NUL bytes or
 //!   four-byte UTF-8 sequences are rejected on read, and their correct
 //!   modified spelling (`C0 80` and surrogate pairs) is produced on write.
