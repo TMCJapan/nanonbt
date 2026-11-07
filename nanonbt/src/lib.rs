@@ -6,8 +6,9 @@
 //! 1. **Derived compounds.** `#[derive(SerializeNbt, DeserializeNbt)]` turns a
 //!    struct into a `TAG_Compound`. Fields are matched by name on decode, so
 //!    field order does not matter and unknown fields are skipped, which keeps
-//!    decoding forward compatible. A key that is absent fails with
-//!    [`Error::MissingField`] unless the field carries `#[nbt(default)]` (fill
+//!    decoding forward compatible. An absent key fails with
+//!    [`Error::MissingField`] and a wrong-tagged one with
+//!    [`Error::InvalidTag`], unless the field carries `#[nbt(default)]` (fill
 //!    with [`Default::default()`]) or `#[nbt(default = "f")]` (fill with
 //!    `f()`).
 //! 2. **Explicit array routes.** `TAG_List` is the default encoding for
@@ -78,7 +79,7 @@
 //! * `Vec<T>` and `[T]` are a `TAG_List<T>`, including `Vec<u8>`; slices are
 //!   what `Box<[T]>`, `&[T]` and `Cow<[T]>` serialize through. Annotate with
 //!   `#[nbt(array = byte)]` to get a `TAG_Byte_Array`. Empty lists are written
-//!   with the `End` element tag.
+//!   with the `End` element tag and read whatever their element tag.
 //! * Strings are written as Java modified UTF-8 (CESU-8). Raw NUL bytes or
 //!   four-byte UTF-8 sequences are rejected on read, and their correct
 //!   modified spelling (`C0 80` and surrogate pairs) is produced on write.

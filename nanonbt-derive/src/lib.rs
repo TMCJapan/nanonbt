@@ -46,9 +46,10 @@
 //!   like any other unknown field, so setting only this one lets a value be
 //!   written but not read back.
 //! * `#[nbt(default)]` — write the field, but fill it with
-//!   `<T as Default>::default()` when the input lacks its key, instead of
-//!   failing with `nanonbt::Error::MissingField`. The type must implement
-//!   [`Default`].
+//!   `<T as Default>::default()` when its key is absent or has the wrong tag
+//!   (a wrong-tag value is skipped), instead of failing with
+//!   `nanonbt::Error::MissingField` or `nanonbt::Error::InvalidTag`. The type
+//!   must implement [`Default`].
 //! * `#[nbt(default = "path")]` — the same, but the value comes from calling
 //!   the named zero-argument function; the type needs no [`Default`].
 //!
@@ -58,12 +59,14 @@
 //! the read path, so it can be combined with `skip_serialize` but not with
 //! `skip_deserialize`, which already fills the field.
 //!
-//! A default also covers a key that is present but cannot be decoded, such as
-//! one written with the wrong tag: the default then stands in for the value
-//! instead of failing the whole read. It works for borrowed fields as well as
-//! owned ones, because the fallback is built without borrowing the input —
-//! `Vec<T>::default()`, `Cow::Borrowed("")`, `&[]` or whatever the named
-//! function returns all outlive any borrow the struct carries.
+//! Even with a default, a value with the right tag that fails to decode fails
+//! the read: the decode may stop partway through the value, so the next key
+//! cannot be found.
+//!
+//! A default works for borrowed fields as well as owned ones, because the
+//! fallback is built without borrowing the input — `Vec<T>::default()`,
+//! `Cow::Borrowed("")`, `&[]` or whatever the named function returns all
+//! outlive any borrow the struct carries.
 //!
 //! `skip_serializing_if` is likewise write-only: a read of bytes the predicate
 //! let through decodes the field as usual, and a read of bytes it dropped fails
@@ -144,7 +147,8 @@ struct FieldAttrs {
     self_: bool,
 }
 
-/// How a field that is absent from the input is filled.
+/// How a `#[nbt(default)]` field is filled when its key is absent or has the
+/// wrong tag.
 #[derive(Clone)]
 enum DefaultSpec {
     /// `#[nbt(default)]`: `<T as Default>::default()`, so the type must
@@ -1076,22 +1080,6 @@ fn build_decode_impl(
                 let (name_len, name_bytes) = encode_name(&key)?;
                 name_max = name_max.max(usize::from(name_len));
                 let (expected, decode) = decode_parts(info, borrow_lifetime, &self_reader);
-                // Seeing the key fills `var`; when the field carries a default,
-                // a decode that fails is not fatal either, because the default
-                // then stands in for the value. `decode` is a `Result`, so the
-                // `?` is only added here, where it can be left out.
-                let store = info.attrs.default.as_ref().map_or_else(
-                    || quote!(::core::option::Option::Some(#decode?)),
-                    |default| {
-                        let fallback = default_init(default, ty);
-                        quote! {
-                            ::core::option::Option::Some(match #decode {
-                                ::core::result::Result::Ok(__nbt_value) => __nbt_value,
-                                ::core::result::Result::Err(_) => #fallback,
-                            })
-                        }
-                    },
-                );
 
                 match info.mode {
                     FieldMode::Owned => owned_types.push(ty.clone()),
@@ -1105,9 +1093,9 @@ fn build_decode_impl(
                 // Every name the field answers to, its own key first, shares
                 // one arm body. The body records the sighting in a flag that
                 // outlives the entry, so a second name finding it set stops
-                // the read instead of letting the second value win. The check
-                // runs before `store`, so not even a `default` — which turns a
-                // failed decode into the fallback — can hide a duplicate.
+                // the read instead of letting the second value win. It runs
+                // before the tag check, so a duplicate is caught even under the
+                // wrong tag, default or not.
                 let seen = format_ident!("__nbt_seen_{}", info.index);
                 declarations.push(quote! {
                     let mut #seen = false;
@@ -1119,6 +1107,19 @@ fn build_decode_impl(
                         );
                     }
                     #seen = true;
+                };
+                // See the module docs for why only a wrong tag falls back.
+                let mismatch = if info.attrs.default.is_some() {
+                    quote!(::nanonbt::skip_nbt(#self_reader, __nbt_tag)?;)
+                } else {
+                    quote! {
+                        return ::core::result::Result::Err(
+                            ::nanonbt::Error::InvalidTag {
+                                expected: #expected,
+                                actual: __nbt_tag.as_u8(),
+                            },
+                        );
+                    }
                 };
                 let mut names = vec![name_bytes];
                 for alias in &info.attrs.aliases {
@@ -1132,16 +1133,12 @@ fn build_decode_impl(
                 for name_bytes in names {
                     arms.push(quote! {
                         #name_bytes => {
-                            if __nbt_tag != #expected {
-                                return ::core::result::Result::Err(
-                                    ::nanonbt::Error::InvalidTag {
-                                        expected: #expected,
-                                        actual: __nbt_tag.as_u8(),
-                                    },
-                                );
-                            }
                             #unique
-                            #var = #store;
+                            if __nbt_tag == #expected {
+                                #var = ::core::option::Option::Some(#decode);
+                            } else {
+                                #mismatch
+                            }
                         },
                     });
                 }
@@ -1357,17 +1354,16 @@ fn build_decode_impl(
     }
 }
 
-/// The expression produced when a `#[nbt(default)]` field's key is absent.
+/// The expression produced when a `#[nbt(default)]` field's key is absent or
+/// written with the wrong tag.
 ///
 /// `#[nbt(default)]` goes through the field type's [`Default`], which the
 /// generated code spells with an explicit bound so a type without it fails
 /// with a familiar trait error. `#[nbt(default = "f")]` calls `f()` instead,
 /// so the type needs no `Default` at all.
 ///
-/// The expression names no lifetime of its own, so it is the same whether the
-/// field is decoded owned or borrowed: a `Vec<T>` default is built fresh, and
-/// a borrowed default such as `Cow::Borrowed("")` or `&[]` is promoted to a
-/// `'static` value that outlives any borrow the struct carries.
+/// The expression names no lifetime, so it serves owned and borrowed fields
+/// alike.
 fn default_init(default: &DefaultSpec, ty: &Type) -> TokenStream2 {
     match default {
         DefaultSpec::Trait => {
@@ -1377,10 +1373,7 @@ fn default_init(default: &DefaultSpec, ty: &Type) -> TokenStream2 {
     }
 }
 
-/// The expected tag of a field and the expression that decodes it as a
-/// [`nanonbt::Result`], without the `?`: the caller adds one for a plain field
-/// and leaves it off for a field with a default, whose fallback stands in for
-/// a failed decode.
+/// The expected tag of a field and the expression that decodes it.
 #[allow(clippy::option_if_let_else)]
 fn decode_parts(
     info: &FieldInfo,
@@ -1395,12 +1388,12 @@ fn decode_parts(
                 let route = array.route_type(ty);
                 (
                     quote_spanned!(span=> <#route as ::nanonbt::ArrayRoute>::TAG),
-                    quote_spanned!(span=> <#ty as ::nanonbt::DeserializeNbtArray<#route>>::deserialize_nbt_array(#reader)),
+                    quote_spanned!(span=> <#ty as ::nanonbt::DeserializeNbtArray<#route>>::deserialize_nbt_array(#reader)?),
                 )
             } else {
                 (
                     quote_spanned!(span=> <#ty as ::nanonbt::DeserializeNbt>::TAG),
-                    quote_spanned!(span=> <#ty as ::nanonbt::DeserializeNbt>::deserialize_nbt(#reader)),
+                    quote_spanned!(span=> <#ty as ::nanonbt::DeserializeNbt>::deserialize_nbt(#reader)?),
                 )
             }
         }
@@ -1414,14 +1407,14 @@ fn decode_parts(
                 .route_type(ty);
             (
                 quote_spanned!(span=> <#route as ::nanonbt::ArrayRoute>::TAG),
-                quote_spanned!(span=> <#ty as ::nanonbt::DeserializeNbtArrayRef<#lifetime, #route>>::deserialize_nbt_array_ref(#reader)),
+                quote_spanned!(span=> <#ty as ::nanonbt::DeserializeNbtArrayRef<#lifetime, #route>>::deserialize_nbt_array_ref(#reader)?),
             )
         }
         FieldMode::Nested => {
             let lifetime = borrow_lifetime.expect("nested field needs a lifetime");
             (
                 quote_spanned!(span=> <#ty as ::nanonbt::DeserializeNbtRef<#lifetime>>::TAG),
-                quote_spanned!(span=> <#ty as ::nanonbt::DeserializeNbtRef<#lifetime>>::deserialize_nbt_ref(#reader)),
+                quote_spanned!(span=> <#ty as ::nanonbt::DeserializeNbtRef<#lifetime>>::deserialize_nbt_ref(#reader)?),
             )
         }
         FieldMode::SelfBorrowed | FieldMode::SelfOwned => unreachable!(),

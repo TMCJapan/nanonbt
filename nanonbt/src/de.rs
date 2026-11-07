@@ -8,9 +8,7 @@ use alloc::vec::Vec;
 #[cfg(feature = "alloc")]
 use crate::Error;
 #[cfg(feature = "alloc")]
-use crate::codec::read_count;
-#[cfg(feature = "alloc")]
-use crate::codec::read_string;
+use crate::codec::{read_count, read_list_header, read_string};
 use crate::route::ArrayRoute;
 #[cfg(feature = "alloc")]
 use crate::route::{ByteArray, IntArray, LongArray};
@@ -142,23 +140,7 @@ impl<T: DeserializeNbt> DeserializeNbt for Vec<T> {
     const TAG: Tag = Tag::List;
 
     fn deserialize_nbt<R: Read + ?Sized>(reader: &mut R) -> Result<Self> {
-        let element = Tag::from_u8(reader.read_u8()?)?;
-        let len = read_count(reader)?;
-        if element == Tag::End {
-            return if len == 0 {
-                Ok(Self::new())
-            } else {
-                Err(Error::InvalidData(
-                    "non-empty list with the `End` element tag",
-                ))
-            };
-        }
-        if element != T::TAG {
-            return Err(Error::InvalidTag {
-                expected: T::TAG,
-                actual: element.as_u8(),
-            });
-        }
+        let len = read_list_header(reader, T::TAG)?;
         // Every list element consumes at least one byte, so a count that
         // exceeds the remaining input can never be satisfied. Rejecting it
         // here keeps the length prefix from reserving more than the input
