@@ -18,9 +18,10 @@
 //!    `TAG_Long_Array`.
 //! 3. **Zero-copy decoding.** Readers that can hand out slices of their
 //!    backing buffer implement [`ReadRef`]. Array fields typed as
-//!    `&'de [u8]`, `&'de [I32Be]` or `&'de [I64Be]` then borrow directly from
-//!    the input. Readers that only implement [`Read`] (such as
-//!    [`VecReader`]) are restricted to owned decoding at compile time.
+//!    `&'de [u8]`, `&'de [I32Be]` or `&'de [I64Be]`, and fixed-width list
+//!    fields typed as `&'de [T]`, then borrow directly from the input.
+//!    Readers that only implement [`Read`] (such as [`VecReader`]) are
+//!    restricted to owned decoding at compile time.
 //!
 //! With the `hashify` feature (enable `nanonbt/hashify`), a derived read
 //! dispatches the names it sees through
@@ -74,19 +75,31 @@
 //! elements are already wire form — a `*Be` type, or plain `u8`/`i8` — needs
 //! no conversion and is written in a single call.
 //!
-//! NBT has no short array, so a `TAG_List<Short>` is instead borrowed as
-//! `&'de [I16Be]` or `Cow<'de, [I16Be]>`: its elements carry no per-element
-//! tag and lie back to back like an array's. A field of that type, or a
-//! nested one such as `Vec<&'de [I16Be]>`, needs no `#[nbt(array)]`. A
-//! borrowed `u8`, `i8`, [`I32Be`] or [`I64Be`] slice borrows only as an
-//! array, so it does:
+//! NBT has no short array, so a `TAG_List<Short>` is commonly borrowed as
+//! `&'de [I16Be]` or `Cow<'de, [I16Be]>`. The same works for every
+//! fixed-width list element: `u8`, `i8`, [`I16Be`], [`I32Be`], [`I64Be`],
+//! [`F32Be`] and [`F64Be`] all borrow a `TAG_List` as a slice, because the
+//! elements carry no per-element tag and lie back to back like an array's. A
+//! field of one of those types, or a nested one such as
+//! `Vec<&'de [I16Be]>`, needs no `#[nbt(array)]`.
 //!
-//! ```compile_fail
+//! The list form and the array form are different tags. Without an
+//! attribute, a borrowed `&'de [I32Be]` reads a `TAG_List<Int>`;
+//! `#[nbt(array = int)]` selects a `TAG_Int_Array` instead, and likewise for
+//! the other element types with an array route:
+//!
+//! ```
 //! use nanonbt::{DeserializeNbt, I32Be};
 //!
 //! #[derive(DeserializeNbt)]
-//! struct Scores<'de> {
-//!     values: &'de [I32Be], // needs `#[nbt(array = int)]`
+//! struct ListScores<'de> {
+//!     values: &'de [I32Be], // `TAG_List<Int>`
+//! }
+//!
+//! #[derive(DeserializeNbt)]
+//! struct ArrayScores<'de> {
+//!     #[nbt(array = int)]
+//!     values: &'de [I32Be], // `TAG_Int_Array`
 //! }
 //! ```
 //!

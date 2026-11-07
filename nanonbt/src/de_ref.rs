@@ -5,7 +5,7 @@ use alloc::vec::Vec;
 
 use crate::codec::{read_count, read_list_header};
 use crate::route::{ByteArray, IntArray, LongArray};
-use crate::wire::{I16Be, I32Be, I64Be, Wire};
+use crate::wire::{F32Be, F64Be, I16Be, I32Be, I64Be, Wire};
 use crate::{Error, ReadRef, Result, Tag};
 
 /// Decodes a value that borrows from the input buffer.
@@ -91,26 +91,43 @@ impl_borrowed_array!(ByteArray, i8);
 impl_borrowed_array!(IntArray, I32Be);
 impl_borrowed_array!(LongArray, I64Be);
 
-/// `TAG_List<Short>`, borrowed as wire-form shorts: the elements carry no
-/// per-element tag, so the payload borrows like an array.
-impl<'de> DeserializeNbtRef<'de> for &'de [I16Be] {
-    const TAG: Tag = Tag::List;
+/// Implements [`DeserializeNbtRef`] for a fixed-width `TAG_List` element.
+///
+/// List elements carry no per-element tag, so after checking the element tag
+/// the payload borrows like an array. Any fixed-width [`Wire`] element can
+/// use this path. `u8`, `i8`, `I32Be` and `I64Be` also have array routes; the
+/// derive selects those instead when `#[nbt(array = ...)]` is present.
+macro_rules! impl_borrowed_list {
+    ($tag:ident, $elem:ty) => {
+        impl<'de> DeserializeNbtRef<'de> for &'de [$elem] {
+            const TAG: Tag = Tag::List;
 
-    fn deserialize_nbt_ref<R: ReadRef<'de> + ?Sized>(reader: &mut R) -> Result<Self> {
-        let len = read_list_header(reader, Tag::Short)?;
-        borrow_elements(reader, len)
-    }
+            #[inline]
+            fn deserialize_nbt_ref<R: ReadRef<'de> + ?Sized>(reader: &mut R) -> Result<Self> {
+                let len = read_list_header(reader, Tag::$tag)?;
+                borrow_elements(reader, len)
+            }
+        }
+
+        #[cfg(feature = "alloc")]
+        impl<'de> DeserializeNbtRef<'de> for Cow<'de, [$elem]> {
+            const TAG: Tag = Tag::List;
+
+            #[inline]
+            fn deserialize_nbt_ref<R: ReadRef<'de> + ?Sized>(reader: &mut R) -> Result<Self> {
+                <&'de [$elem]>::deserialize_nbt_ref(reader).map(Cow::Borrowed)
+            }
+        }
+    };
 }
 
-#[cfg(feature = "alloc")]
-impl<'de> DeserializeNbtRef<'de> for Cow<'de, [I16Be]> {
-    const TAG: Tag = Tag::List;
-
-    #[inline]
-    fn deserialize_nbt_ref<R: ReadRef<'de> + ?Sized>(reader: &mut R) -> Result<Self> {
-        <&'de [I16Be]>::deserialize_nbt_ref(reader).map(Cow::Borrowed)
-    }
-}
+impl_borrowed_list!(Byte, u8);
+impl_borrowed_list!(Byte, i8);
+impl_borrowed_list!(Short, I16Be);
+impl_borrowed_list!(Int, I32Be);
+impl_borrowed_list!(Long, I64Be);
+impl_borrowed_list!(Float, F32Be);
+impl_borrowed_list!(Double, F64Be);
 
 impl<'de> DeserializeNbtRef<'de> for &'de nanocesu8::Cesu8 {
     const TAG: Tag = Tag::String;

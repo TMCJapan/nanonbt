@@ -94,10 +94,10 @@
 //!
 //! A borrowed slice, `&'de [T]` or `Cow<'de, [T]>`, is read as a `TAG_List`,
 //! as `SerializeNbt` writes it, unless `#[nbt(array = ...)]` selects an array
-//! route. Only `I16Be` elements borrow as a list, since NBT has no short
-//! array; a `u8`, `i8`, `I32Be` or `I64Be` slice borrows only as an array,
-//! so it needs `#[nbt(array = ...)]`, and leaving the attribute off is a
-//! compile error.
+//! route. The fixed-width wire element types `u8`, `i8`, `I16Be`, `I32Be`,
+//! `I64Be`, `F32Be` and `F64Be` borrow as a list. When an element type also
+//! has an array tag, `#[nbt(array = ...)]` takes precedence and reads that
+//! tag instead.
 //!
 //! Newtype structs are transparent (their payload is the inner value); unit
 //! structs are empty compounds. Enums, unions and multi-field tuple structs
@@ -648,26 +648,6 @@ fn is_cow_slice(ty: &Type) -> bool {
     matches!(cow_argument(ty), Some(Type::Slice(_)))
 }
 
-/// The element type of `&[T]` or `Cow<[T]>`.
-fn slice_element(ty: &Type) -> Option<&Type> {
-    let slice = match ty {
-        Type::Reference(reference) => &reference.elem,
-        _ => cow_argument(ty)?,
-    };
-    match slice {
-        Type::Slice(slice) => Some(&slice.elem),
-        _ => None,
-    }
-}
-
-/// Whether `ty` names an element with an array route but no borrowed list
-/// form, judged by the last path segment.
-fn borrows_only_as_array(ty: &Type) -> bool {
-    matches!(ty, Type::Path(path) if path.path.segments.last().is_some_and(|segment| {
-        matches!(segment.ident.to_string().as_str(), "u8" | "i8" | "I32Be" | "I64Be")
-    }))
-}
-
 fn is_u8_type(ty: &Type) -> bool {
     matches!(ty, Type::Path(path) if path.path.is_ident("u8"))
 }
@@ -930,13 +910,6 @@ fn expand_deserialize(input: &DeriveInput) -> syn::Result<TokenStream2> {
             borrowed = true;
             if attrs.array.is_some() {
                 FieldMode::BorrowedArray
-            } else if slice_element(&ty).is_some_and(borrows_only_as_array) {
-                return Err(syn::Error::new_spanned(
-                    field,
-                    "borrowed `u8`, `i8`, `I32Be` and `I64Be` slices require \
-                     `#[nbt(array = byte|int|long)]` (or `#[nbt(array)]`), \
-                     because they borrow only as arrays",
-                ));
             } else {
                 FieldMode::Nested
             }
@@ -1619,20 +1592,37 @@ mod tests {
         assert!(expand_deserialize(&bare).is_ok());
     }
 
-    /// A bare slice of an element that borrows only as an array is refused
-    /// with a pointer to the attribute, not left to a trait error.
+    /// A bare slice of a fixed-width element borrows as a list without an
+    /// array attribute.
     #[test]
-    fn bare_array_element_slices_require_the_array_attribute() {
-        let inputs: [DeriveInput; 4] = [
+    fn bare_fixed_width_slices_borrow_as_lists() {
+        let inputs: [DeriveInput; 7] = [
             parse_quote! { struct S<'de> { a: &'de [u8] } },
             parse_quote! { struct S<'de> { a: &'de [i8] } },
+            parse_quote! { struct S<'de> { a: &'de [I16Be] } },
             parse_quote! { struct S<'de> { a: &'de [nanonbt::I32Be] } },
             parse_quote! { struct S<'de> { a: Cow<'de, [I64Be]> } },
+            parse_quote! { struct S<'de> { a: &'de [F32Be] } },
+            parse_quote! { struct S<'de> { a: Cow<'de, [F64Be]> } },
         ];
         for input in &inputs {
-            let error = expand_deserialize(input).unwrap_err();
-            assert!(error.to_string().contains("#[nbt(array"), "{error}");
+            let generated = expand_deserialize(input).unwrap().to_string();
+            assert!(generated.contains("DeserializeNbtRef"), "{generated}");
+            assert!(!generated.contains("DeserializeNbtArrayRef"), "{generated}");
         }
+    }
+
+    /// `#[nbt(array)]` still selects the array route when it is present.
+    #[test]
+    fn array_attributes_still_select_the_array_route() {
+        let input: DeriveInput = parse_quote! {
+            struct S<'de> {
+                #[nbt(array = int)]
+                a: &'de [I32Be],
+            }
+        };
+        let generated = expand_deserialize(&input).unwrap().to_string();
+        assert!(generated.contains("DeserializeNbtArrayRef"), "{generated}");
     }
 
     /// The predicate wraps the whole entry, so nothing of it is written when
