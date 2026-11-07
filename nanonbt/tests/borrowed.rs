@@ -1,7 +1,7 @@
 extern crate alloc;
 use std::borrow::Cow;
 
-use nanonbt::{Error, I16Be, I32Be, I64Be, Tag, from_slice, to_bytes};
+use nanonbt::{Error, F32Be, F64Be, I16Be, I32Be, I64Be, Tag, from_slice, to_bytes};
 
 #[derive(nanonbt::SerializeNbt, nanonbt::DeserializeNbt, Debug, PartialEq)]
 struct Raw<'de> {
@@ -407,4 +407,63 @@ fn cow_short_list_fields_decode_as_borrowed() {
     let decoded: CowShortList<'_> = from_slice(&bytes).unwrap();
     assert_eq!(decoded, value);
     assert!(matches!(decoded.shorts, Cow::Borrowed(_)));
+}
+
+#[derive(nanonbt::SerializeNbt, nanonbt::DeserializeNbt, Debug, PartialEq)]
+struct AllListElements<'de> {
+    bytes: &'de [u8],
+    signed_bytes: &'de [i8],
+    shorts: &'de [I16Be],
+    ints: &'de [I32Be],
+    longs: &'de [I64Be],
+    floats: &'de [F32Be],
+    doubles: &'de [F64Be],
+}
+
+#[test]
+fn every_fixed_width_list_element_borrows_without_an_array_attribute() {
+    let value = AllListElements {
+        bytes: &[1, 2, 255],
+        signed_bytes: &[-1, 0, 1],
+        shorts: &[I16Be::new(-2), I16Be::new(3)],
+        ints: &[I32Be::new(-4), I32Be::new(5)],
+        longs: &[I64Be::new(-6), I64Be::new(7)],
+        floats: &[F32Be::new(1.5), F32Be::new(-2.25)],
+        doubles: &[F64Be::new(3.5), F64Be::new(-4.75)],
+    };
+    let bytes = to_bytes(&value).unwrap();
+    let decoded: AllListElements<'_> = from_slice(&bytes).unwrap();
+    assert_eq!(decoded, value);
+
+    let range = bytes.as_ptr() as usize..bytes.as_ptr() as usize + bytes.len();
+    for pointer in [
+        decoded.bytes.as_ptr() as usize,
+        decoded.signed_bytes.as_ptr() as usize,
+        decoded.shorts.as_ptr() as usize,
+        decoded.ints.as_ptr() as usize,
+        decoded.longs.as_ptr() as usize,
+        decoded.floats.as_ptr() as usize,
+        decoded.doubles.as_ptr() as usize,
+    ] {
+        assert!(range.contains(&pointer));
+    }
+}
+
+#[derive(nanonbt::SerializeNbt, nanonbt::DeserializeNbt, Debug, PartialEq)]
+struct CowListElements<'de> {
+    ints: Cow<'de, [I32Be]>,
+    doubles: Cow<'de, [F64Be]>,
+}
+
+#[test]
+fn cow_fixed_width_list_fields_decode_as_borrowed() {
+    let value = CowListElements {
+        ints: Cow::Owned(vec![I32Be::new(8), I32Be::new(-9)]),
+        doubles: Cow::Owned(vec![F64Be::new(10.5), F64Be::new(-11.25)]),
+    };
+    let bytes = to_bytes(&value).unwrap();
+    let decoded: CowListElements<'_> = from_slice(&bytes).unwrap();
+    assert_eq!(decoded, value);
+    assert!(matches!(decoded.ints, Cow::Borrowed(_)));
+    assert!(matches!(decoded.doubles, Cow::Borrowed(_)));
 }
