@@ -1,7 +1,7 @@
 extern crate alloc;
 use std::borrow::Cow;
 
-use nanonbt::{I32Be, I64Be, from_slice, to_bytes};
+use nanonbt::{Error, I16Be, I32Be, I64Be, Tag, from_slice, to_bytes};
 
 #[derive(nanonbt::SerializeNbt, nanonbt::DeserializeNbt, Debug, PartialEq)]
 struct Raw<'de> {
@@ -288,4 +288,123 @@ fn borrowed_defaults_skip_keys_written_with_the_wrong_tag() {
             raw: &bytes[3..],
         }
     );
+}
+
+#[derive(nanonbt::SerializeNbt, nanonbt::DeserializeNbt, Debug, PartialEq)]
+struct ShortLists<'de> {
+    lists: Vec<&'de [I16Be]>,
+}
+
+#[derive(nanonbt::DeserializeNbt, Debug, PartialEq)]
+struct ShortListsOwned {
+    lists: Vec<Vec<i16>>,
+}
+
+#[test]
+fn nested_short_lists_borrow_from_the_input() {
+    let first = [I16Be::new(1), I16Be::new(-2)];
+    let last = [I16Be::new(i16::MAX)];
+    let value = ShortLists {
+        lists: vec![&first, &[], &last],
+    };
+    let bytes = to_bytes(&value).unwrap();
+    let decoded: ShortLists<'_> = from_slice(&bytes).unwrap();
+    assert_eq!(decoded, value);
+
+    let range = bytes.as_ptr() as usize..bytes.as_ptr() as usize + bytes.len();
+    assert!(range.contains(&(decoded.lists[0].as_ptr() as usize)));
+    assert!(range.contains(&(decoded.lists[2].as_ptr() as usize)));
+
+    let owned: ShortListsOwned = nanonbt::from_bytes(&bytes).unwrap();
+    assert_eq!(owned.lists, [vec![1, -2], vec![], vec![i16::MAX]]);
+}
+
+/// A root `TAG_List` with an empty name, followed by `payload`.
+fn root_list(payload: &[u8]) -> Vec<u8> {
+    let mut bytes = vec![Tag::List.as_u8(), 0, 0];
+    bytes.extend_from_slice(payload);
+    bytes
+}
+
+#[test]
+fn empty_short_lists_pass_whatever_their_element_tag() {
+    for element in [Tag::End, Tag::Short, Tag::Byte] {
+        let bytes = root_list(&[element.as_u8(), 0, 0, 0, 0]);
+        assert_eq!(from_slice::<&[I16Be]>(&bytes), Ok(&[][..]));
+    }
+}
+
+#[test]
+fn non_empty_short_lists_with_end_elements_are_rejected() {
+    let bytes = root_list(&[Tag::End.as_u8(), 0, 0, 0, 1]);
+    assert!(matches!(
+        from_slice::<&[I16Be]>(&bytes),
+        Err(Error::InvalidData(_))
+    ));
+}
+
+#[test]
+fn short_list_element_tag_mismatches_are_reported() {
+    let bytes = root_list(&[Tag::Int.as_u8(), 0, 0, 0, 1, 0, 0, 0, 1]);
+    assert_eq!(
+        from_slice::<&[I16Be]>(&bytes),
+        Err(Error::InvalidTag {
+            expected: Tag::Short,
+            actual: Tag::Int.as_u8(),
+        })
+    );
+}
+
+#[test]
+fn truncated_short_lists_are_rejected() {
+    // Two shorts announced, one present.
+    let bytes = root_list(&[Tag::Short.as_u8(), 0, 0, 0, 2, 0, 1]);
+    assert_eq!(from_slice::<&[I16Be]>(&bytes), Err(Error::UnexpectedEof));
+}
+
+#[derive(nanonbt::SerializeNbt, nanonbt::DeserializeNbt, Debug, PartialEq)]
+struct BareShortList<'de> {
+    shorts: &'de [I16Be],
+    #[nbt(default)]
+    absent: &'de [I16Be],
+}
+
+/// Only `shorts` is written, so `absent` exercises the default.
+#[derive(nanonbt::SerializeNbt)]
+struct ShortsOnly<'a> {
+    shorts: &'a [I16Be],
+}
+
+#[test]
+fn bare_short_list_fields_borrow_without_an_array_attribute() {
+    let shorts = [I16Be::new(3), I16Be::new(-4)];
+    let bytes = to_bytes(&ShortsOnly { shorts: &shorts }).unwrap();
+    let decoded: BareShortList<'_> = from_slice(&bytes).unwrap();
+    assert_eq!(decoded.shorts, shorts);
+    assert_eq!(decoded.absent, []);
+
+    let range = bytes.as_ptr() as usize..bytes.as_ptr() as usize + bytes.len();
+    assert!(range.contains(&(decoded.shorts.as_ptr() as usize)));
+
+    let reencoded = to_bytes(&decoded).unwrap();
+    assert_eq!(
+        from_slice::<BareShortList<'_>>(&reencoded).unwrap(),
+        decoded
+    );
+}
+
+#[derive(nanonbt::SerializeNbt, nanonbt::DeserializeNbt, Debug, PartialEq)]
+struct CowShortList<'de> {
+    shorts: Cow<'de, [I16Be]>,
+}
+
+#[test]
+fn cow_short_list_fields_decode_as_borrowed() {
+    let value = CowShortList {
+        shorts: Cow::Owned(vec![I16Be::new(5), I16Be::new(6)]),
+    };
+    let bytes = to_bytes(&value).unwrap();
+    let decoded: CowShortList<'_> = from_slice(&bytes).unwrap();
+    assert_eq!(decoded, value);
+    assert!(matches!(decoded.shorts, Cow::Borrowed(_)));
 }

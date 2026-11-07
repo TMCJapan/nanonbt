@@ -74,6 +74,22 @@
 //! elements are already wire form — a `*Be` type, or plain `u8`/`i8` — needs
 //! no conversion and is written in a single call.
 //!
+//! NBT has no short array, so a `TAG_List<Short>` is instead borrowed as
+//! `&'de [I16Be]` or `Cow<'de, [I16Be]>`: its elements carry no per-element
+//! tag and lie back to back like an array's. A field of that type, or a
+//! nested one such as `Vec<&'de [I16Be]>`, needs no `#[nbt(array)]`. A
+//! borrowed `u8`, `i8`, [`I32Be`] or [`I64Be`] slice borrows only as an
+//! array, so it does:
+//!
+//! ```compile_fail
+//! use nanonbt::{DeserializeNbt, I32Be};
+//!
+//! #[derive(DeserializeNbt)]
+//! struct Scores<'de> {
+//!     values: &'de [I32Be], // needs `#[nbt(array = int)]`
+//! }
+//! ```
+//!
 //! # Encoding notes
 //!
 //! * `Vec<T>` and `[T]` are a `TAG_List<T>`, including `Vec<u8>`; slices are

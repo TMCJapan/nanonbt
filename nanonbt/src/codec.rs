@@ -21,7 +21,6 @@ pub fn read_count<R: Read + ?Sized>(reader: &mut R) -> Result<usize> {
 /// Reads a `TAG_List` header for `expected` elements and returns the count;
 /// an empty list passes with any element tag, since Minecraft sometimes writes
 /// them tagged `Byte`.
-#[cfg(feature = "alloc")]
 pub(crate) fn read_list_header<R: Read + ?Sized>(reader: &mut R, expected: Tag) -> Result<usize> {
     let element = Tag::from_u8(reader.read_u8()?)?;
     let len = read_count(reader)?;

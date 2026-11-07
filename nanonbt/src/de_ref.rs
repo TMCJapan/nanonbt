@@ -3,11 +3,9 @@ use alloc::borrow::Cow;
 #[cfg(feature = "alloc")]
 use alloc::vec::Vec;
 
-use crate::codec::read_count;
-#[cfg(feature = "alloc")]
-use crate::codec::read_list_header;
+use crate::codec::{read_count, read_list_header};
 use crate::route::{ByteArray, IntArray, LongArray};
-use crate::wire::{I32Be, I64Be, Wire};
+use crate::wire::{I16Be, I32Be, I64Be, Wire};
 use crate::{Error, ReadRef, Result, Tag};
 
 /// Decodes a value that borrows from the input buffer.
@@ -22,6 +20,9 @@ use crate::{Error, ReadRef, Result, Tag};
 ///
 /// Use [`from_slice`](crate::from_slice) to decode a complete document this
 /// way.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` cannot be decoded by borrowing from the NBT input"
+)]
 pub trait DeserializeNbtRef<'de>: Sized {
     /// The NBT tag this type expects at the root.
     const TAG: Tag;
@@ -47,6 +48,15 @@ where
     P: Wire,
 {
     let len = read_count(reader)?;
+    borrow_elements(reader, len)
+}
+
+/// Borrows `len` back-to-back wire elements from `reader`.
+fn borrow_elements<'de, R, P>(reader: &mut R, len: usize) -> Result<&'de [P]>
+where
+    R: ReadRef<'de> + ?Sized,
+    P: Wire,
+{
     let byte_len = len.checked_mul(P::SIZE).ok_or(Error::InvalidLength)?;
     let bytes = reader.read_borrowed(byte_len)?;
     P::cast_from_bytes(bytes)
@@ -80,6 +90,27 @@ impl_borrowed_array!(ByteArray, u8);
 impl_borrowed_array!(ByteArray, i8);
 impl_borrowed_array!(IntArray, I32Be);
 impl_borrowed_array!(LongArray, I64Be);
+
+/// `TAG_List<Short>`, borrowed as wire-form shorts: the elements carry no
+/// per-element tag, so the payload borrows like an array.
+impl<'de> DeserializeNbtRef<'de> for &'de [I16Be] {
+    const TAG: Tag = Tag::List;
+
+    fn deserialize_nbt_ref<R: ReadRef<'de> + ?Sized>(reader: &mut R) -> Result<Self> {
+        let len = read_list_header(reader, Tag::Short)?;
+        borrow_elements(reader, len)
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl<'de> DeserializeNbtRef<'de> for Cow<'de, [I16Be]> {
+    const TAG: Tag = Tag::List;
+
+    #[inline]
+    fn deserialize_nbt_ref<R: ReadRef<'de> + ?Sized>(reader: &mut R) -> Result<Self> {
+        <&'de [I16Be]>::deserialize_nbt_ref(reader).map(Cow::Borrowed)
+    }
+}
 
 impl<'de> DeserializeNbtRef<'de> for &'de nanocesu8::Cesu8 {
     const TAG: Tag = Tag::String;
