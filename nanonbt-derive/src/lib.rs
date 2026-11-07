@@ -88,9 +88,14 @@
 //! `&'de Cesu8`, `&'de str`, `Cow<'de, Cesu8>`, or a nested borrowing struct
 //! gets an implementation of
 //! `DeserializeNbtRef<'de>` instead of `DeserializeNbt`, so it can only be
-//! decoded from a reader that supports zero-copy. Borrowed fields must carry
-//! `#[nbt(array = ...)]`, and the struct must declare the lifetime used for
-//! borrowing (by convention `'de`, the first lifetime parameter).
+//! decoded from a reader that supports zero-copy. The struct must declare the
+//! lifetime used for borrowing (by convention `'de`, the first lifetime
+//! parameter).
+//!
+//! A borrowed slice, `&'de [T]` or `Cow<'de, [T]>`, is read as a `TAG_List`,
+//! as `SerializeNbt` writes it, unless `#[nbt(array = ...)]` selects an array
+//! route. Only `I16Be` elements borrow as a list, since NBT has no short
+//! array; `u8`, `i8`, `I32Be` and `I64Be` borrow only as arrays.
 //!
 //! Newtype structs are transparent (their payload is the inner value); unit
 //! structs are empty compounds. Enums, unions and multi-field tuple structs
@@ -832,9 +837,11 @@ enum FieldMode {
     SelfOwned,
     /// Decoded with `DeserializeNbt`.
     Owned,
-    /// `&'de [T]` / `Cow<'de, [T]>`, decoded with `DeserializeNbtArrayRef`.
+    /// `&'de [T]` / `Cow<'de, [T]>` under `#[nbt(array)]`, decoded with
+    /// `DeserializeNbtArrayRef`.
     BorrowedArray,
-    /// A nested borrowing type, decoded with `DeserializeNbtRef`.
+    /// Any other borrowing type, bare slices included, decoded with
+    /// `DeserializeNbtRef`.
     Nested,
 }
 
@@ -891,8 +898,19 @@ fn expand_deserialize(input: &DeriveInput) -> syn::Result<TokenStream2> {
                 FieldMode::SelfOwned
             }
         } else if is_slice_reference(&ty) || is_cow_slice(&ty) {
+            if borrow_lifetime.is_none() {
+                return Err(syn::Error::new_spanned(
+                    field,
+                    "borrowed fields require the struct to declare a lifetime, \
+                     such as `struct S<'de> { ... }`",
+                ));
+            }
             borrowed = true;
-            FieldMode::BorrowedArray
+            if attrs.array.is_some() {
+                FieldMode::BorrowedArray
+            } else {
+                FieldMode::Nested
+            }
         } else if let Some(lifetime) = &borrow_lifetime {
             if type_mentions_lifetime(&ty, lifetime) {
                 borrowed = true;
@@ -917,35 +935,6 @@ fn expand_deserialize(input: &DeriveInput) -> syn::Result<TokenStream2> {
                 return Err(syn::Error::new_spanned(
                     field,
                     "borrowed `#[nbt(self)]` fields must wrap `u8`",
-                ));
-            }
-        }
-
-        if mode == FieldMode::BorrowedArray {
-            if attrs.array.is_none() {
-                return Err(syn::Error::new_spanned(
-                    field,
-                    "borrowed fields require `#[nbt(array = byte|int|long)]` (or `#[nbt(array)]`), \
-                     because a slice cannot be decoded as a list without copying",
-                ));
-            }
-            if is_reference(&ty) && !is_slice_reference(&ty) {
-                return Err(syn::Error::new_spanned(
-                    field,
-                    "borrowed fields must be slice references such as `&'de [u8]`",
-                ));
-            }
-            if is_cow(&ty) && !is_cow_slice(&ty) {
-                return Err(syn::Error::new_spanned(
-                    field,
-                    "borrowed `Cow` fields must wrap a slice, such as `Cow<'de, [u8]>`",
-                ));
-            }
-            if borrow_lifetime.is_none() {
-                return Err(syn::Error::new_spanned(
-                    field,
-                    "borrowed fields require the struct to declare a lifetime, \
-                     such as `struct S<'de> { ... }`",
                 ));
             }
         }
@@ -1576,6 +1565,29 @@ mod tests {
             struct S(#[nbt(default)] i32);
         };
         assert!(expand_deserialize(&newtype).is_err());
+    }
+
+    /// A slice is borrowed with or without `#[nbt(array)]`, so either way the
+    /// struct must name the lifetime it borrows for.
+    #[test]
+    fn borrowed_slices_require_a_lifetime() {
+        let inputs: [DeriveInput; 3] = [
+            parse_quote! { struct S { a: &'static [u8] } },
+            parse_quote! { struct S { #[nbt(array = byte)] a: &'static [u8] } },
+            parse_quote! { struct S { a: Cow<'static, [u8]> } },
+        ];
+        for input in &inputs {
+            let error = expand_deserialize(input).unwrap_err();
+            assert!(error.to_string().contains("declare a lifetime"), "{error}");
+        }
+
+        let bare: DeriveInput = parse_quote! {
+            struct S<'de> {
+                a: &'de [I16Be],
+                b: Cow<'de, [I16Be]>,
+            }
+        };
+        assert!(expand_deserialize(&bare).is_ok());
     }
 
     /// The predicate wraps the whole entry, so nothing of it is written when

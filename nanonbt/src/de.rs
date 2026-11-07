@@ -144,7 +144,7 @@ impl<T: DeserializeNbt> DeserializeNbt for Vec<T> {
         // Every list element consumes at least one byte, so a count that
         // exceeds the remaining input can never be satisfied. Rejecting it
         // here keeps the length prefix from reserving more than the input
-        // could possibly contain. `element` is not `End` at this point.
+        // could possibly contain.
         if len > reader.remaining() {
             return Err(Error::UnexpectedEof);
         }
